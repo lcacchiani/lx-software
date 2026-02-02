@@ -1,4 +1,4 @@
-alembic==1.18.1
+alembic==1.18.3
 boto3==1.42.36
 pyjwt[crypto]==2.10.1
 pydantic==2.12.5
