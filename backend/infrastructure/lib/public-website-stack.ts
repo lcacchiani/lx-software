@@ -39,8 +39,15 @@ export class PublicWebsiteStack extends cdk.Stack {
     ].join("-");
 
     // S3 bucket for CloudFront access logs (CKV_AWS_86)
+    // Bucket name: lxsoftware-public-www-logs-{account}-{region}
+    const logsBucketName = [
+      "lxsoftware-public-www-logs",
+      cdk.Aws.ACCOUNT_ID,
+      cdk.Aws.REGION,
+    ].join("-");
+
     this.accessLogsBucket = new s3.Bucket(this, "CloudFrontAccessLogsBucket", {
-      bucketName: `${bucketName}-cf-logs`,
+      bucketName: logsBucketName,
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
