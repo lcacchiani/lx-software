@@ -1,0 +1,110 @@
+name: Deploy Mobile App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/siutindei_app/**"
+      - "packages/flutter_ui/**"
+      - "packages/api_client_dart/**"
+      - "packages/models_shared/**"
+      - "scripts/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-mobile
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      KEYSTORE_PATH: app/keystore.p12
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Configure Android signing
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "Skipping Android signing (missing secrets)"
+            exit 0
+          fi
+          mkdir -p apps/siutindei_app/android/app
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > apps/siutindei_app/android/app/keystore.p12
+          chmod 600 apps/siutindei_app/android/app/keystore.p12
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+      - name: Install dependencies
+        run: flutter pub get
+        working-directory: apps/siutindei_app
+
+      - name: Build release AAB
+        run: |
+          flutter build appbundle --release \
+            --dart-define=AMPLIFY_API_KEY=${{ secrets.AMPLIFY_API_KEY }} \
+            --dart-define=FIREBASE_API_KEY=${{ vars.FIREBASE_API_KEY }} \
+            --dart-define=FIREBASE_PROJECT_ID=${{ vars.FIREBASE_PROJECT_ID }} \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID=${{ vars.FIREBASE_MESSAGING_SENDER_ID }} \
+            --dart-define=FIREBASE_ANDROID_APP_ID=${{ vars.FIREBASE_ANDROID_APP_ID }} \
+            --dart-define=FIREBASE_STORAGE_BUCKET=${{ vars.FIREBASE_STORAGE_BUCKET }} \
+            --dart-define=FIREBASE_APP_CHECK_DEBUG=${{ vars.FIREBASE_APP_CHECK_DEBUG }}
+        working-directory: apps/siutindei_app
+
+      - name: Check Play Store upload prerequisites
+        id: playstore
+        run: |
+          if [ -z "$GOOGLE_PLAY_SERVICE_ACCOUNT" ] || [ -z "$ANDROID_PACKAGE_NAME" ] || [ -z "$ANDROID_RELEASE_TRACK" ]; then
+            echo "Skipping Play Store upload (missing config)"
+            echo "should_upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ]; then
+            echo "Skipping Play Store upload (missing Android signing secrets)"
+            echo "should_upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_upload=true" >> "$GITHUB_OUTPUT"
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          ANDROID_PACKAGE_NAME: ${{ vars.ANDROID_PACKAGE_NAME }}
+          ANDROID_RELEASE_TRACK: ${{ vars.ANDROID_RELEASE_TRACK }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+
+      - name: Upload AAB to Play Store
+        if: ${{ steps.playstore.outputs.should_upload == 'true' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          packageName: ${{ vars.ANDROID_PACKAGE_NAME }}
+          releaseFiles: apps/siutindei_app/build/app/outputs/bundle/release/app-release.aab
+          track: ${{ vars.ANDROID_RELEASE_TRACK }}
+
+      - name: Deploy mobile artifacts
+        run: |
+          if [ -f "scripts/deploy/deploy-mobile.sh" ]; then
+            bash "scripts/deploy/deploy-mobile.sh"
+          else
+            echo "Deploy script not found: scripts/deploy/deploy-mobile.sh"
+          fi

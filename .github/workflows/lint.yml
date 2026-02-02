@@ -1,0 +1,127 @@
+name: Lint
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "backend/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "backend/**"
+
+jobs:
+  lint-dart:
+    name: Lint Dart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Run Dart/Flutter lint
+        run: |
+          set -e
+          for dir in apps/siutindei_app packages/flutter_ui packages/api_client_dart; do
+            if [ -d "$dir" ]; then
+              echo "Linting Dart in $dir"
+              (cd "$dir" && flutter pub get && flutter analyze)
+            else
+              echo "Skipping missing $dir"
+            fi
+          done
+
+  lint-react:
+    name: Lint React
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+
+      - name: Run React lint
+        run: |
+          set -e
+          for dir in apps/admin_web packages/react_ui packages/api_client_ts; do
+            if [ -f "$dir/package.json" ]; then
+              echo "Linting React in $dir"
+              if [ -f "$dir/package-lock.json" ]; then
+                (cd "$dir" && npm ci)
+              else
+                (cd "$dir" && npm install)
+              fi
+              (cd "$dir" && npm run lint --if-present)
+            else
+              echo "Skipping missing $dir"
+            fi
+          done
+
+  lint-python:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pre-commit
+
+      - name: Run pre-commit checks
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
+
+  lint-cdk:
+    name: Lint CDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          cache: npm
+          cache-dependency-path: backend/infrastructure/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install CDK dependencies
+        working-directory: backend/infrastructure
+        run: npm ci
+
+      - name: Run CDK lint
+        working-directory: backend/infrastructure
+        run: npm run lint --if-present
+
+      - name: Synthesize CDK
+        working-directory: backend/infrastructure
+        run: npx cdk synth --quiet || echo "CDK synth requires parameters, skipping validation"

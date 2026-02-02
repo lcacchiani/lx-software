@@ -1,0 +1,142 @@
+name: Test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "backend/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "backend/**"
+
+jobs:
+  test-flutter:
+    name: Test Flutter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Run Flutter tests
+        run: |
+          set -e
+          shopt -s globstar nullglob
+          for dir in apps/siutindei_app packages/flutter_ui packages/api_client_dart; do
+            if [ -f "$dir/pubspec.yaml" ]; then
+              test_files=($dir/test/**/*_test.dart)
+              if [ "${#test_files[@]}" -eq 0 ]; then
+                echo "No Flutter tests found in $dir"
+                continue
+              fi
+              echo "Testing Flutter in $dir"
+              (cd "$dir" && flutter pub get && flutter test)
+            else
+              echo "Skipping missing $dir"
+            fi
+          done
+
+  test-node:
+    name: Test Node
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+
+      - name: Run Node tests
+        run: |
+          set -e
+          for dir in apps/admin_web packages/react_ui packages/api_client_ts; do
+            if [ -f "$dir/package.json" ]; then
+              echo "Testing Node in $dir"
+              if [ -f "$dir/package-lock.json" ]; then
+                (cd "$dir" && npm ci)
+              else
+                (cd "$dir" && npm install)
+              fi
+              (cd "$dir" && npm run test --if-present)
+            else
+              echo "Skipping missing $dir"
+            fi
+          done
+
+  test-python:
+    name: Test Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+
+      - name: Install backend dependencies
+        run: |
+          if [ -f "backend/requirements.txt" ]; then
+            python -m pip install -r backend/requirements.txt
+          else
+            echo "No backend/requirements.txt found"
+          fi
+
+      - name: Run Python tests
+        run: |
+          shopt -s globstar nullglob
+          tests=(tests/test_*.py tests/**/*.py backend/**/test_*.py backend/**/tests/*.py backend/**/tests/**/*.py)
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "No Python tests found"
+            exit 0
+          fi
+          python -m pytest tests backend
+
+  test-infrastructure:
+    name: Test Infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+
+      - name: Install infrastructure dependencies
+        run: |
+          if [ -f "backend/infrastructure/package.json" ]; then
+            cd backend/infrastructure
+            npm ci
+          else
+            echo "Missing backend/infrastructure/package.json"
+          fi
+
+      - name: Run infrastructure tests
+        run: |
+          if [ -f "backend/infrastructure/package.json" ]; then
+            cd backend/infrastructure
+            npm run test:infra
+          else
+            echo "Missing backend/infrastructure/package.json"
+          fi

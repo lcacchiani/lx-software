@@ -1,0 +1,123 @@
+# Dependabot configuration for automated dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+
+version: 2
+
+updates:
+  # GitHub Actions - keep CI secure and up to date
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # NPM - CDK infrastructure
+  - package-ecosystem: "npm"
+    directory: "/backend/infrastructure"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "infrastructure"
+    groups:
+      aws-cdk:
+        patterns:
+          - "aws-cdk*"
+          - "@aws-cdk/*"
+          - "constructs"
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "aws-cdk*"
+          - "@aws-cdk/*"
+          - "constructs"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Ignore major version updates - review manually
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Python - Lambda backend
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "backend"
+    groups:
+      aws:
+        patterns:
+          - "boto3"
+          - "botocore"
+          - "aws*"
+      database:
+        patterns:
+          - "sqlalchemy*"
+          - "alembic"
+          - "psycopg*"
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "boto3"
+          - "botocore"
+          - "aws*"
+          - "sqlalchemy*"
+          - "alembic"
+          - "psycopg*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Pub - Flutter mobile app
+  - package-ecosystem: "pub"
+    directory: "/apps/siutindei_app"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "mobile"
+    groups:
+      flutter:
+        patterns:
+          - "flutter*"
+          - "cupertino*"
+      firebase:
+        patterns:
+          - "firebase*"
+          - "cloud_firestore"
+      amplify:
+        patterns:
+          - "amplify*"
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "flutter*"
+          - "firebase*"
+          - "amplify*"
+        update-types:
+          - "minor"
+          - "patch"

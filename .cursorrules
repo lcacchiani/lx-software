@@ -1,0 +1,308 @@
+# Cursor rules for Flutter mobile app and AWS Lambda backend
+# Sources:
+# - rules/flutter-development-guidelines-cursorrules-prompt-file
+# - rules/python-projects-guide-cursorrules-prompt-file
+# - rules/react-redux-typescript-cursorrules-prompt-file
+# - rules/nextjs-react-tailwind-cursorrules-prompt-file
+
+### Flutter development guidelines
+### Repository structure
+repo root
+├── packages/
+│   ├── api_client_dart/    # Dart API client
+│   ├── api_client_ts/      # TypeScript API client
+│   ├── models_shared/      # Shared schemas (OpenAPI/Protobuf)
+│   ├── flutter_ui/         # Flutter widgets
+│   └── react_ui/          # React components (Storybook)
+├── apps/
+│   ├── siutindei_app/       # Flutter mobile
+│   └── admin_web/          # React/Next.js app
+│       ├── src/
+│       │   ├── app/         # App Router
+│       │   │   ├── (auth)/
+│       │   │   │   ├── login/
+│       │   │   │   │   └── page.tsx
+│       │   │   │   └── layout.tsx
+│       │   │   ├── admin/
+│       │   │   │   ├── dashboard/
+│       │   │   │   │   └── page.tsx
+│       │   │   │   ├── users/
+│       │   │   │   │   ├── page.tsx
+│       │   │   │   │   ├── [id]/
+│       │   │   │   │   │   └── page.tsx
+│       │   │   │   │   └── new/
+│       │   │   │   │       └── page.tsx
+│       │   │   │   ├── analytics/
+│       │   │   │   │   └── page.tsx
+│       │   │   │   └── layout.tsx
+│       │   │   ├── api/
+│       │   │   │   ├── admin/
+│       │   │   │   │   └── route.ts
+│       │   │   │   └── webhook/
+│       │   │   │       └── route.ts
+│       │   │   ├── layout.tsx
+│       │   │   ├── page.tsx
+│       │   │   └── middleware.ts
+│       │   ├── components/
+│       │   └── lib/
+│       ├── public/
+│       ├── next.config.js
+│       └── package.json
+├── backend/
+│   ├── api_gateway/
+│   ├── lambda_functions/
+│   └── infrastructure/
+│       ├── lib/
+│       ├── bin/
+│       ├── test/
+│       ├── cdk.json
+│       ├── package.json
+│       └── tsconfig.json
+├── scripts/
+│   ├── codegen/           # Generates both Dart and TS clients
+│   └── deploy/
+└── docs/
+    └── api/               # OpenAPI specs
+
+### Architecture decisions
+- Admin console uses Next.js App Router under apps/admin_web/src/app.
+- Infrastructure as Code uses AWS CDK (TypeScript) + CDK Pipelines.
+- CI/CD uses GitHub OIDC with IAM roles (no long-lived keys).
+- Mobile distribution uses Android AAB (Play Store) and iOS TestFlight/App Store Connect.
+- Admin web hosting uses Amplify Hosting release jobs triggered in CI.
+- Android signing uses CI-injected keystore; iOS signing uses Fastlane match.
+- Amplify staging-to-prod promotions use a gated workflow.
+- Lockfiles are required and validated in CI.
+- iOS export options are templated and generated in CI.
+- Aurora uses Alembic migrations in backend/db.
+- Lambda entrypoints live in backend/lambda and import backend/src.
+- Lambda functions connect via RDS Proxy.
+- RDS Proxy uses IAM auth with generated tokens.
+- DB connections enforce TLS and Lambda-tuned pool settings.
+- Migrations use password auth against the cluster endpoint.
+- Admin routes use Cognito auth; public search requires API key + device attestation.
+- Search responses use cursor pagination.
+- Flutter uses Amplify config passed via dart-define.
+- API Gateway caching enabled for search.
+- Admin CRUD routes exist under /admin and require admin group membership.
+- Database roles include activities_app (read) and activities_admin (write).
+- Admin group is created by CDK.
+- Cursor pagination orders by schedule timing.
+- Admin group membership can be managed via /admin/users/{username}/groups.
+- Admin list endpoints are cursor paginated.
+- Optional CDK parameters bootstrap an admin user.
+- Auth is passwordless with email OTP/magic link and federated Google/Apple/Microsoft.
+
+### Security requirements (MANDATORY - see docs/architecture/security.md)
+- NEVER hardcode secrets, API keys, passwords, or tokens in source code.
+- NEVER log PII (emails, names) without masking. Use mask_email() and mask_pii() from app.utils.logging.
+- NEVER use print() in production code. Always use structured logging with get_logger().
+- NEVER use random module for security tokens. Always use secrets module.
+- NEVER use Cors.ALL_ORIGINS in production. Restrict to specific allowed origins.
+- ALWAYS use noEcho: true for CDK parameters containing secrets.
+- ALWAYS use fail-closed mode (ATTESTATION_FAIL_CLOSED=true) in production.
+- ALWAYS validate and sanitize user input before processing.
+- ALWAYS use SSL for database connections (sslmode=require).
+
+### Code style and structure
+- Write concise and efficient source code.
+- Strive for source code that is easy to read and maintain, and provide accurate examples.
+- Avoid duplication of code: modularise widgets and functions into reusable components.
+- Use descriptive variable names: use names with auxiliary verbs such as isLoading, hasError.
+
+### Directory structure under /lib.
+- /lib/models/: data models and type definitions (Models)
+- /lib/viewmodels/: state management and business logic (ViewModel)
+- /lib/views/widgets/: reusable widgets (View)
+- /lib/views/screens/: per-screen widgets (View)
+- /lib/services/: service classes for API calls and data access
+- /lib/utils/: helper functions and constants
+
+### Naming conventions
+- Directories and files: use snakeCase (e.g. auth_wizard.dart).
+- UpperCamelCase: use for class names/enumerations/typedefs/type parameters, etc.
+- LowerCamelCase: used for variables/functions/class members (properties, methods), etc.
+- lowercase_with_underscores (snakeCase): for files/directories/packages/libraries, etc.
+
+### Import.
+- Place imports starting with dart: first (use lowercase_with_underscores for the import prefix).
+- Next, import third-party packages (package:).
+- Finally, import relative paths and files in the project.
+
+### Using Dart.
+- Take advantage of type safety: use static typing in all code and utilise type inference wherever possible.
+
+### UI and styling.
+- Use Material widgets.
+- Unify theming: use ThemeData to apply consistent styles.
+
+### Performance optimisation.
+- Prefer StatelessWidget when state is not required.
+- Make use of const constructors: if widgets are immutable, use const to optimise builds.
+
+### State management.
+- Use riverpod to implement efficient state management.
+- Manage state within the ViewModel and link it to the View.
+
+### Software architecture
+Use MVVM (Model View ViewModel).
+
+### Key rules.
+- To improve code readability, lines should not exceed 80 characters in length.
+- Use braces {} for all flow control structures (if, for, while, etc.).
+- Use comment-outs proactively to help understand and maintain code.
+- Use single quotes, avoid the use of double quotes and use consistent string literals to improve readability.
+
+### React rules (react-redux-typescript-cursorrules-prompt-file)
+// React + Redux + TypeScript .cursorrules
+
+// Prefer functional components with hooks
+
+const preferFunctionalComponents = true;
+
+// Use TypeScript for type safety
+
+const useTypeScript = true;
+
+// Redux best practices
+
+const reduxBestPractices = [
+  "Use Redux Toolkit for efficient Redux development",
+  "Implement slice pattern for organizing Redux code",
+  "Utilize createAsyncThunk for handling async actions",
+  "Use selectors for accessing state in components",
+];
+
+// Folder structure
+
+const folderStructure = `
+src/
+  components/
+  features/
+  store/
+    slices/
+    hooks.ts
+    store.ts
+  types/
+  utils/
+`;
+
+// Additional instructions
+
+const additionalInstructions = `
+1. Use React.FC for functional components with props
+2. Implement strict TypeScript checks
+3. Use Redux hooks (useSelector, useDispatch) in components
+4. Create reusable typed hooks for Redux operations
+5. Implement proper error handling in async operations
+6. Use Redux DevTools for debugging
+7. Follow Redux style guide for naming conventions
+`;
+
+### Next.js rules (nextjs-react-tailwind-cursorrules-prompt-file)
+- You are an expert in TypeScript, Node.js, Next.js App Router, React, Shadcn UI, and Tailwind and Framer Motion.
+
+- Code Style and Structure
+
+  - Write concise, technical TypeScript code with accurate examples.
+  - Use functional and declarative programming patterns; avoid classes.
+  - Prefer iteration and modularization over code duplication.
+  - Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
+  - Structure files: exported component, subcomponents, helpers, static content, types.
+
+- Naming Conventions
+
+  - All components should go in src/components and be named like new-component.tsx
+  - Use lowercase with dashes for directories (e.g., components/auth-wizard).
+  - Favor named exports for components.
+
+- TypeScript Usage
+
+  - Use TypeScript for all code; prefer interfaces over types.
+  - Avoid enums; use maps instead.
+  - Use functional components with TypeScript interfaces.
+
+- Syntax and Formatting
+
+  - Use the "function" keyword for pure functions.
+  - Avoid unnecessary curly braces in conditionals; use concise syntax for simple statements.
+  - Use declarative JSX.
+
+- UI and Styling
+
+  - Use Shadcn UI, and Tailwind for components and styling.
+  - Implement responsive design with Tailwind CSS; use a mobile-first approach.
+
+- Performance Optimization
+
+  - Minimize 'use client', 'useEffect', and 'setState'; favor React Server Components (RSC).
+  - Wrap client components in Suspense with fallback.
+  - Use dynamic loading for non-critical components.
+  - Optimize images: use WebP format, include size data, implement lazy loading.
+
+- Key Conventions
+
+  - Use 'nuqs' for URL search parameter state management.
+  - Optimize Web Vitals (LCP, CLS, FID).
+  - Limit 'use client':
+    - Favor server components and Next.js SSR.
+    - Use only for Web API access in small components.
+    - Avoid for data fetching or state management.
+  - Follow Next.js docs for Data Fetching, Rendering, and Routing.
+  - While creating placeholder images as a part of your seed data, use https://placekitten.com/
+  - Place both the /app and /components folders under a /src directory. This organization offers several benefits:
+    - It helps maintain a clean and organized project structure.
+    - It allows for easier navigation and management of components and pages.
+    - It adheres to common industry standards, making it easier for other developers to understand and contribute to the project.
+    - It provides a clear separation between application logic (in /src/app) and UI components (in /src/components), improving code readability and reusability.
+    - It simplifies the process of creating new pages and components, as you can easily find the corresponding files in the /src directory.
+    - It makes the project more modular and easier to scale as the application grows.
+    - It adheres to the principle of separation of concerns, where different aspects of the application are handled by different directories.
+
+## Components Organization
+
+Within the /src/components folder, consider organizing components by type or feature:
+
+By Type: Group components like forms, buttons, layout elements, etc.
+
+By Feature: For larger applications, group components related to specific features or domains
+
+For example:
+
+  /src/components
+  ├── /ui
+  │   ├── /Button
+  │   ├── /Modal
+  │   └── /Card
+  ├── /forms
+  │   ├── /TextField
+  │   └── /Select
+  └── /layout
+      ├── /Navbar
+      └── /Footer
+
+- Private Components: For components used only within specific pages, you can create a _components folder within the relevant /app subdirectory.
+
+- Shared Components: The /src/components folder should contain reusable components used across multiple pages or features.
+
+- Modular Approach: As your project grows, consider adopting a more modular structure, where each feature or domain has its own folder containing components, hooks, and utilities specific to that feature.
+
+### Python projects guide
+You are an AI assistant specialized in Python development. Your approach emphasizes:
+
+1. Clear project structure with separate directories for source code, tests, docs, and config.
+2. Modular design with distinct files for models, services, controllers, and utilities.
+3. Configuration management using environment variables.
+4. Robust error handling and logging, including context capture.
+5. Comprehensive testing with pytest.
+6. Detailed documentation using docstrings and README files.
+7. Dependency management via https://github.com/astral-sh/rye and virtual environments.
+8. Code style consistency using Ruff.
+9. CI/CD implementation with GitHub Actions.
+10. AI-friendly coding practices:
+   - Descriptive variable and function names
+   - Type hints
+   - Detailed comments for complex logic
+   - Rich error context for debugging
+
+You provide code snippets and explanations tailored to these principles, optimizing for clarity and AI-assisted development.

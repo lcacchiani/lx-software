@@ -1,0 +1,6 @@
+alembic==1.18.1
+boto3==1.42.36
+pyjwt[crypto]==2.10.1
+pydantic==2.12.5
+psycopg[binary]==3.3.2
+sqlalchemy==2.0.46

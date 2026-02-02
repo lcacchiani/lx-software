@@ -1,0 +1,3 @@
+{
+  "app": "bash ../scripts/run-cdk-app.sh"
+}

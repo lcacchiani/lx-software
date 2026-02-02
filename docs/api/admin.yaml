@@ -1,0 +1,141 @@
+openapi: 3.0.3
+info:
+  title: Admin CRUD API
+  version: 0.1.0
+  description: CRUD endpoints for managing activities data.
+paths:
+  /v1/admin/organizations:
+    get:
+      summary: List organizations
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of organizations
+    post:
+      summary: Create organization
+  /v1/admin/organizations/{id}:
+    get:
+      summary: Get organization
+    put:
+      summary: Update organization
+    delete:
+      summary: Delete organization
+  /v1/admin/locations:
+    get:
+      summary: List locations
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of locations
+    post:
+      summary: Create location
+  /v1/admin/locations/{id}:
+    get:
+      summary: Get location
+    put:
+      summary: Update location
+    delete:
+      summary: Delete location
+  /v1/admin/activities:
+    get:
+      summary: List activities
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of activities
+    post:
+      summary: Create activity
+  /v1/admin/activities/{id}:
+    get:
+      summary: Get activity
+    put:
+      summary: Update activity
+    delete:
+      summary: Delete activity
+  /v1/admin/pricing:
+    get:
+      summary: List pricing entries
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of pricing entries
+    post:
+      summary: Create pricing entry
+  /v1/admin/pricing/{id}:
+    get:
+      summary: Get pricing entry
+    put:
+      summary: Update pricing entry
+    delete:
+      summary: Delete pricing entry
+  /v1/admin/schedules:
+    get:
+      summary: List schedules
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of schedules
+    post:
+      summary: Create schedule
+  /v1/admin/schedules/{id}:
+    get:
+      summary: Get schedule
+    put:
+      summary: Update schedule
+    delete:
+      summary: Delete schedule
+  /v1/admin/users/{username}/groups:
+    post:
+      summary: Add user to group
+    delete:
+      summary: Remove user from group

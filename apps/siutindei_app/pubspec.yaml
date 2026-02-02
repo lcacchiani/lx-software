@@ -1,0 +1,25 @@
+name: siutindei_app
+description: Flutter app for parents to find activities.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.10.3 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^3.2.0
+  amplify_flutter: ^2.9.0
+  amplify_auth_cognito: ^2.9.0
+  amplify_api: ^2.9.0
+  firebase_core: ^4.4.0
+  firebase_app_check: ^0.4.1+4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

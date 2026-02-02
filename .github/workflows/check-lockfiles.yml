@@ -1,0 +1,129 @@
+name: Check Lockfiles
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  flutter-lockfiles:
+    name: Check Flutter lockfiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Validate pubspec.lock
+        run: |
+          if [ -f "apps/siutindei_app/pubspec.yaml" ]; then
+            cd apps/siutindei_app
+            flutter pub get
+            if [ ! -f "pubspec.lock" ]; then
+              echo "pubspec.lock is missing"
+              exit 1
+            fi
+            if ! git diff --exit-code pubspec.lock; then
+              echo "pubspec.lock is out of sync with pubspec.yaml"
+              exit 1
+            fi
+          else
+            echo "Skipping Flutter lockfile check (apps/siutindei_app missing)"
+          fi
+
+  node-lockfiles:
+    name: Check Node.js lockfiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+
+      - name: Validate package-lock.json
+        run: |
+          set -e
+          for dir in apps/admin_web packages/react_ui packages/api_client_ts backend/infrastructure; do
+            if [ -f "$dir/package.json" ]; then
+              if [ ! -f "$dir/package-lock.json" ]; then
+                echo "Missing package-lock.json in $dir"
+                exit 1
+              fi
+              (cd "$dir" && npm ci)
+              if ! git diff --exit-code "$dir/package-lock.json"; then
+                echo "package-lock.json is out of sync in $dir"
+                exit 1
+              fi
+            else
+              echo "Skipping Node lockfile check for $dir"
+            fi
+          done
+
+  ios-lockfiles:
+    name: Check iOS lockfiles
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+
+      - name: Validate Podfile.lock
+        run: |
+          if [ -f "apps/siutindei_app/ios/Podfile" ]; then
+            cd apps/siutindei_app/ios
+            if [ ! -f "Podfile.lock" ]; then
+              echo "Podfile.lock is missing"
+              exit 1
+            fi
+            pod install --repo-update
+            if ! git diff --exit-code Podfile.lock; then
+              echo "Podfile.lock is out of sync with Podfile"
+              exit 1
+            fi
+          else
+            echo "Skipping iOS lockfile check (Podfile missing)"
+          fi
+
+  python-requirements:
+    name: Check Python requirements
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate requirements.txt pins
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("backend/requirements.txt")
+          if not path.exists():
+              raise SystemExit("backend/requirements.txt is missing")
+
+          errors = []
+          for line in path.read_text(encoding="utf-8").splitlines():
+              stripped = line.strip()
+              if not stripped or stripped.startswith("#"):
+                  continue
+              if "==" not in stripped:
+                  errors.append(stripped)
+
+          if errors:
+              print("Unpinned requirements found:")
+              for entry in errors:
+                  print(f"- {entry}")
+              raise SystemExit(1)
+          print("All requirements are pinned.")
+          PY

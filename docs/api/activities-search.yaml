@@ -1,0 +1,239 @@
+openapi: 3.0.3
+info:
+  title: Activities Search API
+  version: 0.1.0
+  description: Search activities with filters for age, district, price, time, and language.
+paths:
+  /v1/activities/search:
+    get:
+      summary: Search activities
+      security:
+        - ApiKeyAuth: []
+          DeviceAttestation: []
+      parameters:
+        - name: age
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: district
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pricing_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [per_class, per_month, per_sessions]
+        - name: price_min
+          in: query
+          required: false
+          schema:
+            type: number
+            format: decimal
+        - name: price_max
+          in: query
+          required: false
+          schema:
+            type: number
+            format: decimal
+        - name: schedule_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [weekly, monthly, date_specific]
+        - name: day_of_week_utc
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 6
+          description: 0=Sunday ... 6=Saturday
+        - name: day_of_month
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 31
+        - name: start_minutes_utc
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 1439
+        - name: end_minutes_utc
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 1439
+        - name: start_at_utc
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: end_at_utc
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: language
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor returned from the previous page (ordered by schedule time).
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivitySearchResponse"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+    DeviceAttestation:
+      type: apiKey
+      in: header
+      name: x-device-attestation
+  schemas:
+    ActivitySearchResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivitySearchResult"
+        next_cursor:
+          type: string
+          nullable: true
+    ActivitySearchResult:
+      type: object
+      properties:
+        activity:
+          $ref: "#/components/schemas/Activity"
+        organization:
+          $ref: "#/components/schemas/Organization"
+        location:
+          $ref: "#/components/schemas/Location"
+        pricing:
+          $ref: "#/components/schemas/Pricing"
+        schedule:
+          $ref: "#/components/schemas/Schedule"
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+    Location:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        district:
+          type: string
+        address:
+          type: string
+          nullable: true
+        lat:
+          type: number
+          nullable: true
+        lng:
+          type: number
+          nullable: true
+    Activity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        age_min:
+          type: integer
+        age_max:
+          type: integer
+    Pricing:
+      type: object
+      properties:
+        pricing_type:
+          type: string
+          enum: [per_class, per_month, per_sessions]
+        amount:
+          type: number
+        currency:
+          type: string
+        sessions_count:
+          type: integer
+          nullable: true
+    Schedule:
+      type: object
+      properties:
+        schedule_type:
+          type: string
+          enum: [weekly, monthly, date_specific]
+        day_of_week_utc:
+          type: integer
+          nullable: true
+        day_of_month:
+          type: integer
+          nullable: true
+        start_minutes_utc:
+          type: integer
+          nullable: true
+        end_minutes_utc:
+          type: integer
+          nullable: true
+        start_at_utc:
+          type: string
+          format: date-time
+          nullable: true
+        end_at_utc:
+          type: string
+          format: date-time
+          nullable: true
+        languages:
+          type: array
+          items:
+            type: string
