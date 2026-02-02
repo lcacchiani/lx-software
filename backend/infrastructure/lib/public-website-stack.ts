@@ -51,6 +51,7 @@ export class PublicWebsiteStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
+      versioned: true, // CKV_AWS_21: Enable versioning for the S3 bucket
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       lifecycleRules: [
