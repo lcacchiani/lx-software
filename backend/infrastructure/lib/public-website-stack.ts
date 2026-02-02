@@ -15,7 +15,7 @@ export class PublicWebsiteStack extends cdk.Stack {
     cdk.Tags.of(this).add("Organization", "LX Software");
     cdk.Tags.of(this).add("Project", "Public Website");
 
-    const resourcePrefix = "lxsoftware-public-website";
+    const resourcePrefix = "lxsw-www";
     const name = (suffix: string) => `${resourcePrefix}-${suffix}`;
 
     const domainName = new cdk.CfnParameter(this, "PublicWebsiteDomainName", {
@@ -32,8 +32,9 @@ export class PublicWebsiteStack extends cdk.Stack {
       }
     );
 
+    // Bucket name: lxsw-www-bucket-{account}-{region} (must be ≤63 chars)
     const bucketName = [
-      name("public-www"),
+      name("bucket"),
       cdk.Aws.ACCOUNT_ID,
       cdk.Aws.REGION,
     ].join("-");
