@@ -1,4 +1,4 @@
-name: CDK Deploy
+name: Deploy Backend
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: cdk-deploy
+  group: deploy-backend
   cancel-in-progress: false
 
 jobs:
