@@ -50,78 +50,47 @@ When reporting a vulnerability, please include:
 
 ### Code Security
 
-- Never commit secrets, API keys, or credentials to the repository
-- Use environment variables for sensitive configuration
-- Follow the principle of least privilege in IAM policies
-- Validate and sanitize all user inputs
-- Use parameterized queries to prevent SQL injection
+- Never commit secrets, API keys, or credentials to the repository.
+- Use environment variables or GitHub Secrets for sensitive configuration.
+- Keep public site content free of PII or internal-only details.
 
 ### Dependency Management
 
-- Keep dependencies up to date (Dependabot is configured for this)
-- Review dependency updates before merging
-- Monitor for security advisories in dependencies
+- Keep dependencies up to date (Dependabot is configured for this).
+- Review dependency updates before merging.
+- Monitor for security advisories in dependencies.
 
 ### Infrastructure Security
 
-- Use IAM roles with minimum required permissions
-- Enable encryption at rest and in transit
-- Configure security groups with least privilege
-- Use VPC endpoints for AWS service access
-- Enable audit logging where applicable
+- Use IAM roles with minimum required permissions.
+- Keep the S3 bucket private and serve content via CloudFront.
+- Enable encryption at rest and in transit.
+- Enable audit logging where applicable.
 
 ## Security Features
 
 This project implements the following security measures:
 
-### Authentication & Authorization
-- AWS Cognito for user authentication (passwordless OTP/magic link)
-- JWT-based authorization with API Gateway
-- Admin group membership verification for protected routes
-- API key validation for public endpoints
-
-### Database Security
-- Aurora PostgreSQL with encryption at rest
-- RDS Proxy with IAM authentication
-- TLS-enforced database connections
-- Database in private subnets (no public access)
-- Secrets Manager for credential storage
-
-### Network Security
-- VPC with public/private subnet separation
-- Security groups restricting traffic to required ports
-- VPC endpoints for AWS service access (no internet traversal)
-- Lambda functions in private subnets
-
-### API Security
-- Input validation and sanitization
-- Proper error handling (no sensitive data in errors)
-- CORS configuration (review for production use)
-- Rate limiting via API Gateway (configurable)
+- GitHub OIDC for CI/CD AWS access (no long-lived keys).
+- Private S3 bucket with CloudFront as the public edge.
+- HTTPS enforcement via CloudFront.
 
 ## Known Limitations
 
 Please review the following when deploying to production:
 
-1. **CORS Configuration**: Default configuration uses wildcard (`*`) for allowed origins. Restrict this for production deployments.
-
-2. **MFA**: Cognito MFA is currently set to OFF. Consider enabling for sensitive applications.
-
-3. **API Rate Limiting**: Configure API Gateway throttling based on your requirements.
-
-4. **WAF**: Consider adding AWS WAF for additional API protection.
-
-5. **CloudTrail**: Ensure CloudTrail is enabled for audit logging.
+1. **WAF**: Consider adding AWS WAF for additional protection.
+2. **CloudTrail**: Ensure CloudTrail is enabled for audit logging.
 
 ## Automated Security Scanning
 
 This repository uses the following automated security tools:
 
 - **Dependabot**: Automated dependency updates and security alerts
-- **CodeQL**: Static code analysis for security vulnerabilities (see workflows)
-- **pip-audit**: Python dependency vulnerability scanning
-- **Bandit**: Python security linter
+- **CodeQL**: Static code analysis for security vulnerabilities
 - **Checkov**: Infrastructure as Code security scanning
+- **Semgrep**: SAST scanning
+- **Gitleaks**: Secret scanning
 
 ## License
 

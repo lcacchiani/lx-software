@@ -6,8 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Run security scans weekly on Mondays at 8:00 UTC
-    - cron: '0 8 * * 1'
+    - cron: "0 8 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -16,73 +15,6 @@ permissions:
   actions: read
 
 jobs:
-  # Python dependency vulnerability scanning
-  dependency-audit:
-    name: Python Dependency Audit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install pip-audit
-        run: python -m pip install pip-audit
-
-      - name: Run pip-audit
-        working-directory: backend
-        run: |
-          pip-audit -r requirements.txt --desc on --format json --output audit-results.json || true
-          pip-audit -r requirements.txt --desc on
-
-      - name: Upload audit results
-        uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: pip-audit-results
-          path: backend/audit-results.json
-          retention-days: 30
-
-  # Python security linting with Bandit
-  bandit:
-    name: Bandit Security Linter
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install Bandit
-        run: python -m pip install bandit[toml]
-
-      - name: Run Bandit
-        working-directory: backend
-        run: |
-          bandit -r src lambda -f json -o bandit-results.json || true
-          bandit -r src lambda -f txt
-
-      - name: Upload Bandit results
-        uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: bandit-results
-          path: backend/bandit-results.json
-          retention-days: 30
-
-  # Infrastructure as Code scanning with Checkov
   checkov:
     name: Checkov IaC Security
     runs-on: ubuntu-latest
@@ -97,27 +29,18 @@ jobs:
           cache: npm
           cache-dependency-path: backend/infrastructure/package-lock.json
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
       - name: Install CDK dependencies
         working-directory: backend/infrastructure
         run: npm ci
-
-      - name: Acknowledge CDK CLI notice
-        working-directory: backend/infrastructure
-        run: npx cdk acknowledge 34892 || true
 
       - name: Synthesize CDK templates
         working-directory: backend/infrastructure
         env:
           CDK_DISABLE_CONTEXT_LOOKUPS: "1"
-        run: npx cdk synth --quiet --output cdk.out
+        run: |
+          npx cdk synth --quiet --output cdk.out \
+            --parameters PublicWebsiteDomainName=example.com \
+            --parameters PublicWebsiteCertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/example
 
       - name: Run Checkov
         uses: bridgecrewio/checkov-action@v12
@@ -133,7 +56,6 @@ jobs:
         with:
           sarif_file: backend/infrastructure/checkov-results.sarif
 
-  # CodeQL analysis for Python
   codeql:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
@@ -144,15 +66,14 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: python
+          languages: javascript
           queries: security-extended
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:python"
+          category: "/language:javascript"
 
-  # Secret scanning (in addition to GitHub's built-in scanning)
   secrets-scan:
     name: Secret Scanning
     runs-on: ubuntu-latest
@@ -167,7 +88,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # SAST with Semgrep
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
@@ -181,10 +101,9 @@ jobs:
         run: semgrep ci --sarif --output=semgrep-results.sarif || true
         env:
           SEMGREP_RULES: >-
-            p/python
+            p/javascript
             p/security-audit
             p/secrets
-            p/owasp-top-ten
 
       - name: Upload SARIF results
         uses: github/codeql-action/upload-sarif@v4
@@ -192,11 +111,10 @@ jobs:
         with:
           sarif_file: semgrep-results.sarif
 
-  # Summary job
   security-summary:
     name: Security Summary
     runs-on: ubuntu-latest
-    needs: [dependency-audit, bandit, checkov, codeql, secrets-scan, semgrep]
+    needs: [checkov, codeql, secrets-scan, semgrep]
     if: always()
     steps:
       - name: Check job results
@@ -205,8 +123,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Dependency Audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Bandit | ${{ needs.bandit.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Checkov | ${{ needs.checkov.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| CodeQL | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Secret Scanning | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY

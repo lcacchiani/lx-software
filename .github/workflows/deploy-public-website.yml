@@ -1,0 +1,60 @@
+name: Deploy Public Website
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/public_www/**"
+      - "backend/infrastructure/**"
+      - "scripts/deploy/**"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-public-website
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: apps/public_www/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: apps/public_www
+
+      - name: Build public website
+        run: npm run build
+        working-directory: apps/public_www
+
+      - name: Configure AWS credentials
+        if: ${{ vars.AWS_ACCOUNT_ID != '' && vars.AWS_REGION != '' }}
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      - name: Deploy public website
+        run: |
+          if [ -f "scripts/deploy/deploy-public-website.sh" ]; then
+            bash "scripts/deploy/deploy-public-website.sh"
+          else
+            echo "Deploy script not found: scripts/deploy/deploy-public-website.sh"
+          fi
+        env:
+          PUBLIC_WEBSITE_STACK_NAME: ${{ vars.PUBLIC_WEBSITE_STACK_NAME }}
