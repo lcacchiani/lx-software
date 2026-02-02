@@ -124,3 +124,4 @@ jobs:
         env:
           CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
           CDK_DESTROY_BEFORE_DEPLOY: ${{ inputs.destroy_before_deploy }}
+          CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}

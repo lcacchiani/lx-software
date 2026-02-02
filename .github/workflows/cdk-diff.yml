@@ -130,3 +130,4 @@ jobs:
         env:
           CDK_STACKS: ${{ inputs.stacks }}
           CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
+          CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}
