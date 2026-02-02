@@ -1,4 +1,4 @@
 {
   "PublicWebsiteDomainName": "www.lx-software.com",
-  "PublicWebsiteCertificateArn": "arn:aws:acm:us-east-1:588024549699:certificate/ea553e5a-e7ad-43ba-bdd4-d46e2f8458aa"
+  "PublicWebsiteCertificateArn": "arn:aws:acm:us-east-1:588024549699:certificate/ea553e5a-e7af-43ba-bdd4-d46e2f8458aa"
 }
