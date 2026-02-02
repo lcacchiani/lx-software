@@ -1,32 +1,73 @@
-export function AboutPage() {
+export function ProjectsPage() {
+  const projects = [
+    {
+      name: 'Public Website Infrastructure',
+      tech: 'AWS CDK, CloudFront, S3',
+      description:
+        'Scalable and secure static site hosting with global CDN distribution',
+    },
+    {
+      name: 'Modern Web Applications',
+      tech: 'React, TypeScript, Vite',
+      description:
+        'Fast, type-safe web applications with modern tooling and best practices',
+    },
+    {
+      name: 'Content Management Systems',
+      tech: 'Headless CMS, REST APIs',
+      description:
+        'Flexible content solutions that separate presentation from data',
+    },
+    {
+      name: 'CI/CD Pipelines',
+      tech: 'GitHub Actions, OIDC',
+      description:
+        'Automated deployment workflows with secure authentication',
+    },
+  ]
+
   return (
-    <section className="container py-5">
-      <div className="row g-4">
-        <div className="col-12 col-lg-7">
-          <h1 className="display-6 fw-semibold">About LX Software</h1>
-          <p className="text-muted">
-            We partner with teams that need a public website that is polished,
-            fast, and easy to evolve. Our work blends product thinking, clean
-            engineering, and modern delivery practices.
-          </p>
-          <p className="text-muted">
-            This site is built on Vite, React Router, TanStack Query, and
-            Bootstrap 5, making it lightweight to maintain while keeping the
-            experience responsive and reliable.
-          </p>
-        </div>
-        <div className="col-12 col-lg-5">
-          <div className="bg-white border rounded-4 p-4 shadow-sm">
-            <h2 className="h5 fw-semibold mb-3">Focus areas</h2>
-            <ul className="list-unstyled mb-0">
-              <li className="mb-2">Public website strategy</li>
-              <li className="mb-2">Content and messaging systems</li>
-              <li className="mb-2">Infrastructure-ready delivery</li>
-              <li>Performance and accessibility</li>
-            </ul>
-          </div>
-        </div>
+    <div>
+      <div style={{ marginBottom: '3rem' }}>
+        <h1 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Projects</h1>
+        <p className="text-muted" style={{ fontSize: '1rem', maxWidth: '700px' }}>
+          Selected work and capabilities in web development and infrastructure
+        </p>
       </div>
-    </section>
+
+      <div>
+        {projects.map((project, index) => (
+          <div
+            key={project.name}
+            style={{
+              marginBottom: '2.5rem',
+              paddingBottom: '2rem',
+              borderBottom:
+                index < projects.length - 1 ? '1px solid #006600' : 'none',
+            }}
+          >
+            <h2 style={{ fontSize: '1.3rem', marginBottom: '0.5rem' }}>
+              {project.name}
+            </h2>
+            <div
+              className="text-dim"
+              style={{ fontSize: '0.875rem', marginBottom: '1rem' }}
+            >
+              [{project.tech}]
+            </div>
+            <p className="text-muted" style={{ fontSize: '1rem', maxWidth: '700px' }}>
+              {project.description}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-dim" style={{ marginTop: '3rem', fontSize: '0.875rem' }}>
+        &gt; Interested in working together?{' '}
+        <a href="/contact" style={{ color: '#00ff00' }}>
+          Get in touch
+        </a>
+      </div>
+    </div>
   )
 }

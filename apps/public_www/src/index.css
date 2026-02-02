@@ -1,9 +1,9 @@
 :root {
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: 'Courier New', 'Courier', monospace;
   line-height: 1.6;
   font-weight: 400;
-  color: #0f172a;
-  background-color: #f8f9fa;
+  color: #00ff00;
+  background-color: #000000;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -13,16 +13,18 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #f8f9fa;
+  background-color: #000000;
 }
 
 a {
-  color: inherit;
+  color: #00ff00;
   text-decoration: none;
+  transition: color 0.2s ease;
 }
 
 a:hover {
-  color: inherit;
+  color: #00cc00;
+  text-decoration: underline;
 }
 
 #root {
@@ -30,11 +32,53 @@ a:hover {
 }
 
 .text-muted {
-  color: #6c757d;
+  color: #00aa00;
 }
 
-.highlight-item:last-of-type {
-  border-bottom: 0 !important;
-  padding-bottom: 0 !important;
-  margin-bottom: 0 !important;
+.text-dim {
+  color: #006600;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #00ff00;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.nav-link {
+  color: #00ff00;
+  display: block;
+  padding: 0.5rem 0;
+  border-left: 3px solid transparent;
+  padding-left: 1rem;
+  transition: all 0.2s ease;
+}
+
+.nav-link:hover {
+  border-left-color: #00ff00;
+  color: #00ff00;
+  text-decoration: none;
+}
+
+.nav-link.active {
+  border-left-color: #00ff00;
+  color: #00ff00;
+  font-weight: 700;
+}
+
+.ascii-art {
+  color: #00aa00;
+  white-space: pre;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  overflow-x: auto;
+}
+
+.terminal-cursor {
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
