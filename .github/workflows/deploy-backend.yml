@@ -58,6 +58,7 @@ jobs:
         run: |
           cd backend/infrastructure
           npx cdk acknowledge 34892 || true
+          STACK_NAME="lxsoftware-public-www"
 
           # Prepare parameter arguments
           PARAM_ARGS=()
@@ -89,10 +90,10 @@ jobs:
           fi
 
           if [ "${CDK_DESTROY_BEFORE_DEPLOY:-false}" = "true" ]; then
-            npx cdk destroy --force --all
+            npx cdk destroy --force "$STACK_NAME"
           fi
 
-          npx cdk deploy --require-approval "never" "${PARAM_ARGS[@]}" --all
+          npx cdk deploy --require-approval "never" "${PARAM_ARGS[@]}" "$STACK_NAME"
         env:
           CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
           CDK_DESTROY_BEFORE_DEPLOY: ${{ inputs.destroy_before_deploy }}

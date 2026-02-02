@@ -63,7 +63,7 @@ If you do not see `GitHubActionsRole`, create it:
 - `AWS_REGION`
 - `CDK_BOOTSTRAP_QUALIFIER` (optional)
 - `CDK_PARAM_FILE` (e.g. `backend/infrastructure/params/production.json`)
-- `PUBLIC_WEBSITE_STACK_NAME` (optional, defaults to `lxsoftware-public-website`)
+- `PUBLIC_WEBSITE_STACK_NAME` (optional, defaults to `lxsoftware-public-www`)
 
 ### Secrets
 

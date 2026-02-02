@@ -8,7 +8,7 @@ if (bootstrapQualifier) {
   app.node.setContext("@aws-cdk/core:bootstrapQualifier", bootstrapQualifier);
 }
 
-new PublicWebsiteStack(app, "lxsoftware-public-website", {
+new PublicWebsiteStack(app, "lxsoftware-public-www", {
   description: "LX Software Public Website",
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,

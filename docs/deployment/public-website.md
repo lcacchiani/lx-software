@@ -16,7 +16,7 @@ Use the deployment script, which syncs the build directory to the S3 bucket and
 invalidates the CloudFront distribution:
 
 ```bash
-PUBLIC_WEBSITE_STACK_NAME=lxsoftware-public-website \
+PUBLIC_WEBSITE_STACK_NAME=lxsoftware-public-www \
   bash scripts/deploy/deploy-public-website.sh
 ```
 
