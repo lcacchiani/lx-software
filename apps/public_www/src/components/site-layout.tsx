@@ -1,15 +1,13 @@
 import { Outlet } from 'react-router-dom'
-import { SiteFooter } from './site-footer'
-import { SiteHeader } from './site-header'
+import { Sidebar } from './sidebar'
 
 export function SiteLayout() {
   return (
-    <div className="min-vh-100 d-flex flex-column">
-      <SiteHeader />
-      <main className="flex-grow-1">
+    <div className="site-container">
+      <Sidebar />
+      <main className="main-content">
         <Outlet />
       </main>
-      <SiteFooter />
     </div>
   )
 }

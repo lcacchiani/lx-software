@@ -1,28 +1,49 @@
 export function ContactPage() {
   return (
-    <section className="container py-5">
-      <div className="row g-4">
-        <div className="col-12 col-lg-6">
-          <h1 className="display-6 fw-semibold">Contact</h1>
-          <p className="text-muted">
-            Share your goals and timelines, and we will respond with a focused
-            plan for your public website.
-          </p>
+    <div className="fade-in">
+      <h1 className="page-title">contact</h1>
+      <p className="page-description">
+        Interested in working together? Get in touch and we will respond within 
+        two business days.
+      </p>
+
+      <hr />
+
+      <div className="contact-grid stagger-in">
+        <div className="contact-row">
+          <span className="contact-label">email</span>
+          <span className="contact-value">
+            <a href="mailto:hello@lx-software.com">hello@lx-software.com</a>
+          </span>
         </div>
-        <div className="col-12 col-lg-6">
-          <div className="bg-white border rounded-4 p-4 shadow-sm">
-            <h2 className="h5 fw-semibold mb-3">Reach us</h2>
-            <dl className="row mb-0">
-              <dt className="col-4 text-muted">Email</dt>
-              <dd className="col-8 mb-2">hello@lx-software.com</dd>
-              <dt className="col-4 text-muted">Location</dt>
-              <dd className="col-8 mb-2">Hong Kong</dd>
-              <dt className="col-4 text-muted">Response</dt>
-              <dd className="col-8">Within 2 business days</dd>
-            </dl>
-          </div>
+
+        <div className="contact-row">
+          <span className="contact-label">location</span>
+          <span className="contact-value">Hong Kong</span>
+        </div>
+
+        <div className="contact-row">
+          <span className="contact-label">github</span>
+          <span className="contact-value">
+            <a href="https://github.com/lx-software" target="_blank" rel="noopener noreferrer">
+              github.com/lx-software
+            </a>
+          </span>
+        </div>
+
+        <div className="contact-row">
+          <span className="contact-label">response</span>
+          <span className="contact-value">within 2 business days</span>
         </div>
       </div>
-    </section>
+
+      <hr />
+
+      <p className="page-description" style={{ marginTop: '1rem' }}>
+        We are always open to discussing new projects, creative ideas, or 
+        opportunities to be part of something meaningful. Whether you have a 
+        question or just want to say hello, feel free to reach out.
+      </p>
+    </div>
   )
 }
