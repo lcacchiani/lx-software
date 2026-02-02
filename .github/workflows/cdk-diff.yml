@@ -120,4 +120,3 @@ jobs:
         env:
           CDK_STACKS: ${{ inputs.stacks }}
           CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
-*** End Patch"}}
