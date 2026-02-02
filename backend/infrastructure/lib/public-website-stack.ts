@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
@@ -36,17 +37,16 @@ export class PublicWebsiteStack extends cdk.Stack {
       cdk.Aws.REGION,
     ].join("-");
 
-    // Import existing bucket if it exists, otherwise create new
-    this.bucket = s3.Bucket.fromBucketName(this, "PublicWebsiteBucket", bucketName);
-
-    const originAccessIdentity = new cloudfront.OriginAccessIdentity(
-      this,
-      "PublicWebsiteOai",
-      {
-        comment: "OAI for public website CloudFront distribution.",
-      }
-    );
-    this.bucket.grantRead(originAccessIdentity);
+    // Import existing bucket using attributes so we have the ARN for policy creation
+    this.bucket = s3.Bucket.fromBucketAttributes(this, "PublicWebsiteBucket", {
+      bucketName: bucketName,
+      bucketArn: cdk.Arn.format({
+        service: "s3",
+        resource: bucketName,
+        region: "",
+        account: "",
+      }, this),
+    });
 
     const certificate = acm.Certificate.fromCertificateArn(
       this,
@@ -54,12 +54,9 @@ export class PublicWebsiteStack extends cdk.Stack {
       certificateArn.valueAsString
     );
 
-    const origin = origins.S3BucketOrigin.withOriginAccessIdentity(
-      this.bucket,
-      {
-        originAccessIdentity,
-      }
-    );
+    // Use Origin Access Control (OAC) - the recommended approach for S3 origins
+    // OAC is more secure than the legacy OAI and supports additional features
+    const origin = origins.S3BucketOrigin.withOriginAccessControl(this.bucket);
 
     this.distribution = new cloudfront.Distribution(
       this,
@@ -90,6 +87,32 @@ export class PublicWebsiteStack extends cdk.Stack {
           },
         ],
       }
+    );
+
+    // Add explicit bucket policy to grant CloudFront OAC access to the imported bucket.
+    // This is required because CDK cannot auto-add policies to imported buckets.
+    const bucketPolicy = new s3.BucketPolicy(this, "PublicWebsiteBucketPolicy", {
+      bucket: this.bucket,
+    });
+
+    bucketPolicy.document.addStatements(
+      new iam.PolicyStatement({
+        sid: "AllowCloudFrontServicePrincipalReadOnly",
+        effect: iam.Effect.ALLOW,
+        actions: ["s3:GetObject"],
+        resources: [this.bucket.arnForObjects("*")],
+        principals: [new iam.ServicePrincipal("cloudfront.amazonaws.com")],
+        conditions: {
+          StringEquals: {
+            "AWS:SourceArn": cdk.Arn.format({
+              service: "cloudfront",
+              resource: "distribution",
+              resourceName: this.distribution.distributionId,
+              region: "",
+            }, this),
+          },
+        },
+      })
     );
 
     new cdk.CfnOutput(this, "PublicWebsiteBucketName", {
