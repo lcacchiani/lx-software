@@ -73,25 +73,7 @@ jobs:
               RESOLVED_PARAM_FILE=$(resolve_param_file "$CDK_PARAM_FILE" || true)
               if [ -n "$RESOLVED_PARAM_FILE" ]; then
                 PARAM_ARGS_FILE="$(mktemp)"
-                PARAM_FILE="$RESOLVED_PARAM_FILE" python3 - <<'PY' > "$PARAM_ARGS_FILE"
-          import json
-          import os
-
-          path = os.environ["PARAM_FILE"]
-          with open(path, "r", encoding="utf-8") as handle:
-              params = json.load(handle)
-
-          for key, value in params.items():
-              if value is None:
-                  continue
-              value_str = str(value)
-              value_str = value_str.replace("\r\n", "\n").replace("\r", "\n")
-              value_str = value_str.replace("\n", "\\n").strip()
-              if not value_str:
-                  continue
-              print("--parameters")
-              print(f"{key}={value_str}")
-          PY
+                jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PARAM_ARGS_FILE"
                 readarray -t PARAM_ARGS < "$PARAM_ARGS_FILE"
               else
                 echo "CDK_PARAM_FILE '$CDK_PARAM_FILE' not found"

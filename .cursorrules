@@ -1,8 +1,4 @@
 # Cursor rules for LX Software public website + CDK infrastructure
-#
-# Sources:
-# - rules/react-redux-typescript-cursorrules-prompt-file (adapted)
-# - rules/nextjs-react-tailwind-cursorrules-prompt-file (adapted)
 
 ### Repository structure
 repo root
