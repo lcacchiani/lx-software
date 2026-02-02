@@ -6,7 +6,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
 export class PublicWebsiteStack extends cdk.Stack {
-  public readonly bucket: s3.Bucket;
+  public readonly bucket: s3.IBucket;
   public readonly distribution: cloudfront.Distribution;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -36,14 +36,8 @@ export class PublicWebsiteStack extends cdk.Stack {
       cdk.Aws.REGION,
     ].join("-");
 
-    this.bucket = new s3.Bucket(this, "PublicWebsiteBucket", {
-      bucketName,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      enforceSSL: true,
-      versioned: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
+    // Import existing bucket if it exists, otherwise create new
+    this.bucket = s3.Bucket.fromBucketName(this, "PublicWebsiteBucket", bucketName);
 
     const originAccessIdentity = new cloudfront.OriginAccessIdentity(
       this,
