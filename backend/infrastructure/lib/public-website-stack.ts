@@ -9,6 +9,7 @@ import { Construct } from "constructs";
 export class PublicWebsiteStack extends cdk.Stack {
   public readonly bucket: s3.IBucket;
   public readonly distribution: cloudfront.Distribution;
+  public readonly accessLogsBucket: s3.Bucket;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -36,6 +37,30 @@ export class PublicWebsiteStack extends cdk.Stack {
       cdk.Aws.ACCOUNT_ID,
       cdk.Aws.REGION,
     ].join("-");
+
+    // S3 bucket for CloudFront access logs (CKV_AWS_86)
+    // Bucket name: lxsoftware-public-www-logs-{account}-{region}
+    const logsBucketName = [
+      "lxsoftware-public-www-logs",
+      cdk.Aws.ACCOUNT_ID,
+      cdk.Aws.REGION,
+    ].join("-");
+
+    this.accessLogsBucket = new s3.Bucket(this, "CloudFrontAccessLogsBucket", {
+      bucketName: logsBucketName,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      lifecycleRules: [
+        {
+          id: "ExpireOldLogs",
+          enabled: true,
+          expiration: cdk.Duration.days(90),
+        },
+      ],
+    });
 
     // Import existing bucket using attributes so we have the ARN for policy creation
     this.bucket = s3.Bucket.fromBucketAttributes(this, "PublicWebsiteBucket", {
@@ -86,6 +111,10 @@ export class PublicWebsiteStack extends cdk.Stack {
             ttl: cdk.Duration.minutes(5),
           },
         ],
+        // CloudFront access logging (CKV_AWS_86)
+        enableLogging: true,
+        logBucket: this.accessLogsBucket,
+        logFilePrefix: "cloudfront/",
       }
     );
 
@@ -125,6 +154,10 @@ export class PublicWebsiteStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "PublicWebsiteDistributionDomain", {
       value: this.distribution.distributionDomainName,
+    });
+
+    new cdk.CfnOutput(this, "CloudFrontAccessLogsBucketName", {
+      value: this.accessLogsBucket.bucketName,
     });
   }
 }

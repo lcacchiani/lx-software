@@ -1,0 +1,10 @@
+# Checkov configuration for LX Software infrastructure
+# https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+
+skip-check:
+  # CKV_AWS_68: CloudFront Distribution should have WAF enabled
+  # Justification: This is a read-only static website served from S3 with no
+  # dynamic content, APIs, user input, or server-side processing. WAF provides
+  # minimal security benefit for static content while adding unnecessary cost.
+  # CloudFront includes AWS Shield Standard for DDoS protection.
+  - CKV_AWS_68
