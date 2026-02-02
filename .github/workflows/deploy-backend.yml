@@ -3,14 +3,11 @@ name: Deploy Backend
 on:
   workflow_dispatch:
     inputs:
-      stacks:
-        description: "Optional space/comma-separated CDK stack names"
+      destroy_before_deploy:
+        description: "Run ‘cdk destroy’ before deploy"
+        type: boolean
         required: false
-        default: ""
-      require_approval:
-        description: "Require approval for changes (never/any-change/broadening)"
-        required: false
-        default: "never"
+        default: false
 
 permissions:
   contents: read
@@ -61,6 +58,7 @@ jobs:
         run: |
           cd backend/infrastructure
           npx cdk acknowledge 34892 || true
+          STACK_NAME="lxsoftware-public-www"
 
           # Prepare parameter arguments
           PARAM_ARGS=()
@@ -91,27 +89,11 @@ jobs:
             fi
           fi
 
-          # Prepare stack arguments
-          STACK_ARGS=()
-          if [ -n "${CDK_STACKS:-}" ]; then
-            IFS=$', \n\t' read -r -a STACK_LIST <<< "$CDK_STACKS"
-            for stack in "${STACK_LIST[@]}"; do
-              trimmed="${stack#"${stack%%[![:space:]]*}"}"
-              trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-              if [ -n "$trimmed" ]; then
-                STACK_ARGS+=("$trimmed")
-              fi
-            done
+          if [ "${CDK_DESTROY_BEFORE_DEPLOY:-false}" = "true" ]; then
+            npx cdk destroy --force "$STACK_NAME"
           fi
 
-          # Run CDK deploy
-          APPROVAL="${CDK_REQUIRE_APPROVAL:-never}"
-          if [ ${#STACK_ARGS[@]} -gt 0 ]; then
-            npx cdk deploy --require-approval "$APPROVAL" "${PARAM_ARGS[@]}" "${STACK_ARGS[@]}"
-          else
-            npx cdk deploy --require-approval "$APPROVAL" "${PARAM_ARGS[@]}" --all
-          fi
+          npx cdk deploy --require-approval "never" "${PARAM_ARGS[@]}" "$STACK_NAME"
         env:
-          CDK_STACKS: ${{ inputs.stacks }}
           CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
-          CDK_REQUIRE_APPROVAL: ${{ inputs.require_approval }}
+          CDK_DESTROY_BEFORE_DEPLOY: ${{ inputs.destroy_before_deploy }}
