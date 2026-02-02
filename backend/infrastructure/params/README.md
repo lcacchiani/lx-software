@@ -2,6 +2,31 @@
 
 Use `production.json` as a template for the public website parameters.
 
+## Prerequisites: CDK Bootstrap
+
+Before deploying for the first time, you must bootstrap the AWS environment. CDK
+bootstrap creates the necessary resources (S3 bucket, IAM roles, SSM parameter)
+that CDK uses to deploy stacks.
+
+### Bootstrap via GitHub Actions (recommended)
+
+1. Go to **Actions** > **CDK Bootstrap** workflow
+2. Click **Run workflow**
+3. Select the branch and click **Run workflow**
+
+The workflow uses the `AWS_ACCOUNT_ID` and `AWS_REGION` repository variables.
+
+### Bootstrap locally
+
+```bash
+cd backend/infrastructure
+npm ci
+npx cdk bootstrap aws://ACCOUNT_ID/REGION
+```
+
+Replace `ACCOUNT_ID` and `REGION` with your target AWS account and region
+(e.g., `aws://588024549699/ap-southeast-1`).
+
 ## Local deploy
 
 ```bash
