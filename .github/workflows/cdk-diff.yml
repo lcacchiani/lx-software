@@ -47,6 +47,28 @@ jobs:
             echo "Missing backend/infrastructure/package.json"
           fi
 
+      - name: Check CDK bootstrap status
+        if: ${{ vars.AWS_ACCOUNT_ID != '' && vars.AWS_REGION != '' }}
+        run: |
+          QUALIFIER="${CDK_BOOTSTRAP_QUALIFIER:-hnb659fds}"
+          SSM_PARAM="/cdk-bootstrap/${QUALIFIER}/version"
+          echo "Checking for CDK bootstrap in account $AWS_ACCOUNT_ID region $AWS_REGION..."
+          if ! aws ssm get-parameter --name "$SSM_PARAM" --query "Parameter.Value" --output text 2>/dev/null; then
+            echo ""
+            echo "::error::CDK bootstrap not found. The SSM parameter '$SSM_PARAM' does not exist."
+            echo "::error::Please run the 'CDK Bootstrap' workflow first to bootstrap account $AWS_ACCOUNT_ID in region $AWS_REGION."
+            echo ""
+            echo "To bootstrap manually, run:"
+            echo "  npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION"
+            echo ""
+            exit 1
+          fi
+          echo "CDK bootstrap found. Proceeding with diff..."
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}
+
       - name: Run CDK diff
         run: |
           if [ -f "backend/infrastructure/package.json" ]; then
