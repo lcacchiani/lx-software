@@ -106,3 +106,28 @@ different repository.
 
 See [Security docs](../architecture/security.md#githubactionsrole-iam-requirements)
 for complete IAM policy requirements.
+
+### Cloudflare redirect from apex to www not working
+
+If you're using Cloudflare for DNS and have configured a redirect rule from
+`lx-software.com` to `www.lx-software.com`, but it's not working, the most
+common cause is that the **proxy is disabled** on the root domain's A record.
+
+**Symptoms:**
+- Visiting `https://lx-software.com` shows a connection error or times out
+- The Cloudflare redirect rule appears correctly configured
+
+**Cause:**
+When the Cloudflare proxy is disabled (`cf-proxied:false` / gray cloud), DNS
+queries return the IP address directly and traffic bypasses Cloudflare entirely.
+Redirect rules only work when traffic passes through Cloudflare's proxy.
+
+**Fix:**
+1. Go to **Cloudflare Dashboard** > **DNS** > **Records**
+2. Find the A record for the root domain (`lx-software.com`)
+3. Click **Edit** and toggle **Proxy status** to **Proxied** (orange cloud)
+4. Save the record
+
+The redirect rule will start working once the proxy is enabled. Note that the
+`www` subdomain CNAME pointing to CloudFront can remain DNS-only since
+CloudFront handles that traffic directly.
