@@ -8,8 +8,7 @@
     "build": "tsc",
     "cdk": "cdk",
     "synth": "cdk synth",
-    "deploy": "cdk deploy",
-    "test:infra": "ts-node scripts/assert-existing-db.ts"
+    "deploy": "cdk deploy"
   },
   "keywords": [],
   "author": "",

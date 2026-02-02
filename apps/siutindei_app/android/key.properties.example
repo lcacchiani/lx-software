@@ -1,4 +1,0 @@
-storePassword=changeme
-keyPassword=changeme
-keyAlias=changeme
-storeFile=keystore.p12

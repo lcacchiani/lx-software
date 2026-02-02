@@ -43,7 +43,7 @@ jobs:
             if [ -z "$RULESETS" ]; then
               echo "❌ ERROR: No branch protection configured for 'main'"
               echo ""
-              echo "Please configure branch protection. See docs/architecture/github-rulesets.md"
+              echo "Please configure branch protection in GitHub settings."
               exit 1
             fi
           else
@@ -115,7 +115,7 @@ jobs:
 
             if [ "$TAG_PROTECTION" = "NOT_FOUND" ] || [ "$TAG_PROTECTION" = "[]" ]; then
               echo "⚠️  WARNING: No tag protection configured"
-              echo "   Consider protecting 'v*' tags. See docs/architecture/github-rulesets.md"
+              echo "   Consider protecting 'v*' tags in GitHub settings."
             else
               echo "✅ Legacy tag protection is configured"
             fi
@@ -130,9 +130,6 @@ jobs:
           echo "========================================"
           echo "GitHub Rulesets Verification Complete"
           echo "========================================"
-          echo ""
-          echo "For setup instructions, see:"
-          echo "  docs/architecture/github-rulesets.md"
           echo ""
           echo "To configure via GitHub UI:"
           echo "  Settings → Rules → Rulesets"

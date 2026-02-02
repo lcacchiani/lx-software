@@ -1,6 +1,6 @@
 # CDK parameter files
 
-Use `production.json` as a template for CDK parameters.
+Use `production.json` as a template for the public website parameters.
 
 ## Local deploy
 
@@ -15,5 +15,9 @@ npx cdk deploy --require-approval never
 Set the repository variable `CDK_PARAM_FILE` to the path you want CI to use
 (`params/production.json` by default).
 
-> Keep secrets out of the repo. For production, use a private parameter file
-> stored outside of git or generated in CI from secrets.
+The only required values are:
+- `PublicWebsiteDomainName`
+- `PublicWebsiteCertificateArn`
+
+Keep secrets out of the repo. For production, store parameter files securely
+outside of git or generate them in CI.

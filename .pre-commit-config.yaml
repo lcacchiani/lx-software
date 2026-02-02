@@ -3,28 +3,6 @@
 # Run manually: pre-commit run --all-files
 
 repos:
-  # Python formatting and linting with Ruff
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-        files: ^backend/
-      - id: ruff-format
-        files: ^backend/
-
-  # Python type checking with mypy
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
-    hooks:
-      - id: mypy
-        files: ^backend/src/
-        additional_dependencies:
-          - pydantic>=2.0
-          - sqlalchemy>=2.0
-          - types-boto3
-        args: [--ignore-missing-imports]
-
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -44,21 +22,11 @@ repos:
   # TypeScript/JavaScript linting
   - repo: local
     hooks:
-      - id: eslint-cdk
-        name: ESLint CDK
-        entry: bash -c 'cd backend/infrastructure && npm run lint --if-present || true'
+      - id: eslint-public-website
+        name: ESLint Public Website
+        entry: bash -c 'cd apps/public_www && npm run lint --if-present || true'
         language: system
-        files: ^backend/infrastructure/.*\.(ts|js)$
-        pass_filenames: false
-
-  # Flutter/Dart analysis
-  - repo: local
-    hooks:
-      - id: flutter-analyze
-        name: Flutter Analyze
-        entry: bash -c 'cd apps/siutindei_app && flutter analyze --no-fatal-infos || true'
-        language: system
-        files: ^apps/siutindei_app/.*\.dart$
+        files: ^apps/public_www/.*\.(ts|tsx|js|jsx)$
         pass_filenames: false
 
 # Configuration for specific tools

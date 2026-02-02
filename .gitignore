@@ -16,8 +16,6 @@ eggs/
 .eggs/
 lib/
 lib64/
-!apps/admin_web/src/lib/
-!apps/admin_web/src/lib/**
 parts/
 sdist/
 var/
@@ -192,22 +190,17 @@ cython_debug/
 
 # Node
 node_modules/
-apps/admin_web/.next/
-apps/admin_web/out/
+apps/public_www/dist/
+apps/public_www/.vite/
 
 # CDK
 **/cdk.out/
-
-# Local Lambda bundling
-backend/.lambda-build/
 
 # Allow CDK source under backend/infrastructure
 !backend/infrastructure/lib/
 !backend/infrastructure/lib/**
 !backend/infrastructure/bin/
 !backend/infrastructure/bin/**
-!apps/siutindei_app/lib/
-!apps/siutindei_app/lib/**
 
 # Ruff stuff:
 .ruff_cache/
@@ -221,30 +214,6 @@ backend/.lambda-build/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-
-# Flutter
-.dart_tool/
-.flutter-plugins
-.flutter-plugins-dependencies
-.packages
-.fvm/
-apps/siutindei_app/android/local.properties
-apps/siutindei_app/android/app/src/main/java/io/flutter/plugins/
-apps/siutindei_app/ios/Flutter/Generated.xcconfig
-apps/siutindei_app/ios/Flutter/flutter_export_environment.sh
-apps/siutindei_app/ios/Flutter/ephemeral/
-apps/siutindei_app/ios/Runner/GeneratedPluginRegistrant.h
-apps/siutindei_app/ios/Runner/GeneratedPluginRegistrant.m
-
-# Flutter signing artifacts
-apps/siutindei_app/android/key.properties
-apps/siutindei_app/android/keystore.jks
-apps/siutindei_app/android/keystore.jks*
-apps/siutindei_app/android/keystore.p12
-apps/siutindei_app/android/keystore.p12*
-apps/siutindei_app/android/app/keystore.jks
-apps/siutindei_app/android/app/keystore.p12
-apps/siutindei_app/ios/ExportOptions.plist
 
 # Marimo
 marimo/_static/
