@@ -55,11 +55,17 @@ jobs:
           echo "Checking for CDK bootstrap in account $AWS_ACCOUNT_ID region $AWS_REGION..."
           if ! aws ssm get-parameter --name "$SSM_PARAM" --query "Parameter.Value" --output text 2>/dev/null; then
             echo ""
-            echo "::error::CDK bootstrap not found. The SSM parameter '$SSM_PARAM' does not exist."
-            echo "::error::Please run the 'CDK Bootstrap' workflow first to bootstrap account $AWS_ACCOUNT_ID in region $AWS_REGION."
+            echo "::error::CDK bootstrap not found or not accessible."
+            echo "::error::The SSM parameter '$SSM_PARAM' could not be read."
             echo ""
-            echo "To bootstrap manually, run:"
-            echo "  npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION"
+            echo "Possible causes:"
+            echo "  1. Bootstrap not run: Run 'cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION'"
+            echo "  2. Permission denied: GitHubActionsRole needs ssm:GetParameter on /cdk-bootstrap/*"
+            echo "  3. Wrong region: Verify AWS_REGION matches the bootstrapped region"
+            echo ""
+            echo "If bootstrap was run from another repo, ensure GitHubActionsRole has:"
+            echo "  - sts:AssumeRole on cdk-${QUALIFIER}-*-role-* resources"
+            echo "  - ssm:GetParameter on /cdk-bootstrap/* parameters"
             echo ""
             exit 1
           fi

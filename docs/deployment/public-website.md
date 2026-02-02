@@ -68,6 +68,41 @@ The script expects the CloudFormation stack to expose:
 
 ### "SSM parameter /cdk-bootstrap/hnb659fds/version not found"
 
-This error means the CDK bootstrap has not been run for the target
-account/region. Run the **CDK Bootstrap** workflow or bootstrap manually as
-described in the prerequisites section above.
+This error means either:
+
+1. **Bootstrap not run**: The CDK bootstrap has not been run for the target
+   account/region. Run the **CDK Bootstrap** workflow or bootstrap manually.
+
+2. **Permission denied**: The `GitHubActionsRole` doesn't have permission to
+   read the SSM parameter. Add this permission to the role:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": "ssm:GetParameter",
+     "Resource": "arn:aws:ssm:*:ACCOUNT_ID:parameter/cdk-bootstrap/*"
+   }
+   ```
+
+### "current credentials could not be used to assume ... deploy-role"
+
+This error occurs when the `GitHubActionsRole` cannot assume the CDK deployment
+roles created by bootstrap. This is common when bootstrap was run from a
+different repository.
+
+**Fix**: Add `sts:AssumeRole` permission to the GitHubActionsRole:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "sts:AssumeRole",
+  "Resource": [
+    "arn:aws:iam::ACCOUNT_ID:role/cdk-hnb659fds-deploy-role-*",
+    "arn:aws:iam::ACCOUNT_ID:role/cdk-hnb659fds-lookup-role-*",
+    "arn:aws:iam::ACCOUNT_ID:role/cdk-hnb659fds-file-publishing-role-*",
+    "arn:aws:iam::ACCOUNT_ID:role/cdk-hnb659fds-image-publishing-role-*"
+  ]
+}
+```
+
+See [Security docs](../architecture/security.md#githubactionsrole-iam-requirements)
+for complete IAM policy requirements.
