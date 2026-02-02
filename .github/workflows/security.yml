@@ -46,6 +46,7 @@ jobs:
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: backend/infrastructure/cdk.out
+          config_file: backend/infrastructure/.checkov.yaml
           framework: cloudformation
           output_format: cli,sarif
           output_file_path: console,backend/infrastructure/checkov-results.sarif
