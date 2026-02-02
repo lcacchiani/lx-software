@@ -29,9 +29,9 @@ export class PublicWebsiteStack extends cdk.Stack {
       }
     );
 
-    // Bucket name: lxsoftware-public-website-{account}-{region} (56 chars)
+    // Bucket name: lxsoftware-public-www-{account}-{region} (49 chars)
     const bucketName = [
-      "lxsoftware-public-website",
+      "lxsoftware-public-www",
       cdk.Aws.ACCOUNT_ID,
       cdk.Aws.REGION,
     ].join("-");
