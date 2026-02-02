@@ -51,6 +51,7 @@ export class PublicWebsiteStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
+      versioned: true, // CKV_AWS_21: Enable versioning for the S3 bucket
       objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       lifecycleRules: [
@@ -58,6 +59,21 @@ export class PublicWebsiteStack extends cdk.Stack {
           id: "ExpireOldLogs",
           enabled: true,
           expiration: cdk.Duration.days(90),
+        },
+      ],
+    });
+
+    // CKV_AWS_18: Skip access logging check for the logs bucket itself.
+    // This bucket is the designated destination for CloudFront access logs.
+    // Enabling access logging on it would create circular/infinite logging.
+    const cfnLogsBucket = this.accessLogsBucket.node
+      .defaultChild as cdk.CfnResource;
+    cfnLogsBucket.addMetadata("checkov", {
+      skip: [
+        {
+          id: "CKV_AWS_18",
+          comment:
+            "This is the access logs bucket; enabling logging here would cause circular logging",
         },
       ],
     });
