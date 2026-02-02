@@ -1,0 +1,117 @@
+name: Deploy Backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      stacks:
+        description: "Optional space/comma-separated CDK stack names"
+        required: false
+        default: ""
+      require_approval:
+        description: "Require approval for changes (never/any-change/broadening)"
+        required: false
+        default: "never"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: backend/infrastructure/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      - name: Install CDK dependencies
+        run: |
+          if [ -f "backend/infrastructure/package.json" ]; then
+            cd backend/infrastructure
+            npm ci
+          else
+            echo "Missing backend/infrastructure/package.json"
+            exit 1
+          fi
+
+      - name: Build CDK app
+        run: |
+          cd backend/infrastructure
+          npm run build --if-present
+
+      - name: Deploy CDK stacks
+        run: |
+          cd backend/infrastructure
+          npx cdk acknowledge 34892 || true
+
+          # Prepare parameter arguments
+          PARAM_ARGS=()
+          resolve_param_file() {
+            local path="$1"
+            if [ -z "$path" ]; then
+              return 1
+            fi
+            if [ -f "$path" ]; then
+              echo "$path"
+              return 0
+            fi
+            if [ -n "$GITHUB_WORKSPACE" ] && [ -f "$GITHUB_WORKSPACE/$path" ]; then
+              echo "$GITHUB_WORKSPACE/$path"
+              return 0
+            fi
+            return 1
+          }
+          if [ -n "${CDK_PARAM_FILE:-}" ]; then
+            RESOLVED_PARAM_FILE=$(resolve_param_file "$CDK_PARAM_FILE" || true)
+            if [ -n "$RESOLVED_PARAM_FILE" ]; then
+              PARAM_ARGS_FILE="$(mktemp)"
+              jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PARAM_ARGS_FILE"
+              readarray -t PARAM_ARGS < "$PARAM_ARGS_FILE"
+            else
+              echo "CDK_PARAM_FILE '$CDK_PARAM_FILE' not found"
+              exit 1
+            fi
+          fi
+
+          # Prepare stack arguments
+          STACK_ARGS=()
+          if [ -n "${CDK_STACKS:-}" ]; then
+            IFS=$', \n\t' read -r -a STACK_LIST <<< "$CDK_STACKS"
+            for stack in "${STACK_LIST[@]}"; do
+              trimmed="${stack#"${stack%%[![:space:]]*}"}"
+              trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+              if [ -n "$trimmed" ]; then
+                STACK_ARGS+=("$trimmed")
+              fi
+            done
+          fi
+
+          # Run CDK deploy
+          APPROVAL="${CDK_REQUIRE_APPROVAL:-never}"
+          if [ ${#STACK_ARGS[@]} -gt 0 ]; then
+            npx cdk deploy --require-approval "$APPROVAL" "${PARAM_ARGS[@]}" "${STACK_ARGS[@]}"
+          else
+            npx cdk deploy --require-approval "$APPROVAL" "${PARAM_ARGS[@]}" --all
+          fi
+        env:
+          CDK_STACKS: ${{ inputs.stacks }}
+          CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
+          CDK_REQUIRE_APPROVAL: ${{ inputs.require_approval }}
