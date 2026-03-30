@@ -42,8 +42,6 @@ jobs:
             --parameters PublicWebsiteDomainName=example.com \
             --parameters PublicWebsiteCertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/example
 
-      # Checkov 3.2.x no longer accepts comma-separated -o (e.g. cli,sarif); use -o twice.
-      # bridgecrewio/checkov-action forwards output_format as a single arg, which fails the job.
       - name: Run Checkov
         run: |
           docker run --rm \
