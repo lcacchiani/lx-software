@@ -43,14 +43,18 @@ jobs:
             --parameters PublicWebsiteCertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/example
 
       - name: Run Checkov
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: backend/infrastructure/cdk.out
-          config_file: backend/infrastructure/.checkov.yaml
-          framework: cloudformation
-          output_format: cli,sarif
-          output_file_path: console,backend/infrastructure/checkov-results.sarif
-          soft_fail: true
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace/backend/infrastructure \
+            ghcr.io/bridgecrewio/checkov:3.2.513 \
+            -d cdk.out \
+            --config-file .checkov.yaml \
+            --framework cloudformation \
+            -o cli \
+            -o sarif \
+            --output-file-path console,checkov-results.sarif \
+            --soft-fail
 
       - name: Upload SARIF results
         uses: github/codeql-action/upload-sarif@v4
