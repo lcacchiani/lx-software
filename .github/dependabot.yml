@@ -73,8 +73,4 @@ updates:
       # Ignore major version updates - review manually
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-      # aws-cdk-lib currently vendors brace-expansion 5.0.3 as an in-bundle
-      # transitive dependency. Dependabot security updates cannot upgrade
-      # bundled transitive npm dependencies and currently crashes trying to.
-      - dependency-name: "brace-expansion"
 
