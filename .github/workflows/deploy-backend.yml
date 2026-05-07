@@ -5,12 +5,6 @@ on:
     branches: [main]
     paths: ["backend/infrastructure/**"]
   workflow_dispatch:
-    inputs:
-      destroy_before_deploy:
-        description: "Run ‘cdk destroy’ on the public website stack before deploy (lxsoftware-public-www only)"
-        type: boolean
-        required: false
-        default: false
 
 permissions:
   contents: read
@@ -85,13 +79,6 @@ jobs:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}
-
-      - name: Destroy public website stack (optional)
-        if: github.event_name == 'workflow_dispatch' && inputs.destroy_before_deploy
-        working-directory: backend/infrastructure
-        run: |
-          echo "Destroying lxsoftware-public-www (admin stacks are not destroyed by this step)"
-          npx cdk destroy --force lxsoftware-public-www
 
       - name: Deploy CDK stacks
         working-directory: backend/infrastructure
