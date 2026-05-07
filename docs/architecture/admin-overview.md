@@ -1,6 +1,6 @@
 # Admin console architecture
 
-The admin experience is a private Vite + React SPA (`apps/admin_www`) backed by
+The admin experience is a private Vite + React SPA (`apps/admin_web`) backed by
 dedicated AWS CDK stacks. Traffic flows from operators through Cloudflare DNS
 (gray cloud) to CloudFront, which serves static files from private S3. API
 calls go to API Gateway HTTP API with a Cognito JWT authorizer; Lambda

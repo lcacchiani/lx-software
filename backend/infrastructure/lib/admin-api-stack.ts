@@ -35,7 +35,7 @@ export class AdminApiStack extends cdk.Stack {
      * Contract: jwtAudience is the Cognito app client ID, which matches the
      * `aud` claim on **ID tokens** only. Access tokens use `client_id` instead
      * of `aud`, so the SPA must send ID tokens in Authorization (see
-     * apps/admin_www/src/lib/apiAdminClient.ts). Switching to access tokens
+     * apps/admin_web/src/lib/apiAdminClient.ts). Switching to access tokens
      * requires a different authorizer configuration.
      */
     const jwtAuthorizer = new HttpJwtAuthorizer("cognito-jwt", issuer, {

@@ -5,14 +5,14 @@ on:
   pull_request:
     paths:
       - "apps/public_www/**"
-      - "apps/admin_www/**"
+      - "apps/admin_web/**"
       - "backend/infrastructure/**"
   push:
     branches:
       - main
     paths:
       - "apps/public_www/**"
-      - "apps/admin_www/**"
+      - "apps/admin_web/**"
       - "backend/infrastructure/**"
 
 jobs:
@@ -38,8 +38,8 @@ jobs:
         run: npm run lint --if-present
         working-directory: apps/public_www
 
-  lint-admin-www:
-    name: Lint Admin Website
+  lint-admin-web:
+    name: Lint Admin Web
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -50,15 +50,15 @@ jobs:
         with:
           node-version: "lts/*"
           cache: "npm"
-          cache-dependency-path: apps/admin_www/package-lock.json
+          cache-dependency-path: apps/admin_web/package-lock.json
 
       - name: Install dependencies
         run: npm ci
-        working-directory: apps/admin_www
+        working-directory: apps/admin_web
 
       - name: Run lint
         run: npm run lint --if-present
-        working-directory: apps/admin_www
+        working-directory: apps/admin_web
 
   build-cdk:
     name: Build CDK

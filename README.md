@@ -15,12 +15,12 @@ npm run dev
 ## Quick start (admin console)
 
 ```bash
-cd apps/admin_www
+cd apps/admin_web
 npm install
 npm run dev
 ```
 
-Copy `apps/admin_www/.env.example` to `.env` and fill in Cognito and API values.
+Copy `apps/admin_web/.env.example` to `.env` and fill in Cognito and API values.
 
 Infra deploy expects GitHub variables **`ADMIN_GOOGLE_CLIENT_SECRET_ARN`** (Secrets Manager) and **`ADMIN_FEDERATED_EMAIL_ALLOWLIST`** (comma-separated admin emails); see `docs/deployment/admin-website.md`.
 

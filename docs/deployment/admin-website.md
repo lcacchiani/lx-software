@@ -83,7 +83,7 @@ deploy.
 
 ## 7. Deploy the admin SPA
 
-Run **Deploy Admin Web**. The workflow builds `apps/admin_www` with production
+Run **Deploy Admin Web**. The workflow builds `apps/admin_web` with production
 `VITE_*` values. The deploy script uploads hashed `dist/assets/**` with a long
 immutable cache, then uploads `index.html` with `no-cache`, then invalidates
 CloudFront.
