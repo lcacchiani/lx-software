@@ -23,7 +23,7 @@ jobs:
       - name: Validate package-lock.json
         run: |
           set -e
-          for dir in apps/public_www backend/infrastructure; do
+          for dir in apps/public_www apps/admin_www backend/infrastructure; do
             if [ -f "$dir/package.json" ]; then
               if [ ! -f "$dir/package-lock.json" ]; then
                 echo "Missing package-lock.json in $dir"
