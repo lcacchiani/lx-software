@@ -54,18 +54,18 @@ jobs:
           cd backend/infrastructure
           npm run build --if-present
 
-      - name: Check CDK bootstrap status
+      - name: Check CDK Bootstrap status
         run: |
           QUALIFIER="${CDK_BOOTSTRAP_QUALIFIER:-hnb659fds}"
           SSM_PARAM="/cdk-bootstrap/${QUALIFIER}/version"
-          echo "Checking for CDK bootstrap in account $AWS_ACCOUNT_ID region $AWS_REGION..."
+          echo "Checking for CDK Bootstrap in account $AWS_ACCOUNT_ID region $AWS_REGION..."
           if ! aws ssm get-parameter --name "$SSM_PARAM" --query "Parameter.Value" --output text 2>/dev/null; then
             echo ""
-            echo "::error::CDK bootstrap not found or not accessible."
+            echo "::error::CDK Bootstrap not found or not accessible."
             echo "::error::The SSM parameter '$SSM_PARAM' could not be read."
             echo ""
             echo "Possible causes:"
-            echo "  1. Bootstrap not run: Run 'cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION'"
+            echo "  1. CDK Bootstrap missing: run 'cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION'"
             echo "  2. Permission denied: GitHubActionsRole needs ssm:GetParameter on /cdk-bootstrap/*"
             echo "  3. Wrong region: Verify AWS_REGION matches the bootstrapped region"
             echo ""
@@ -75,7 +75,7 @@ jobs:
             echo ""
             exit 1
           fi
-          echo "CDK bootstrap found (version: $(aws ssm get-parameter --name "$SSM_PARAM" --query "Parameter.Value" --output text)). Proceeding with deployment..."
+          echo "CDK Bootstrap found (version: $(aws ssm get-parameter --name "$SSM_PARAM" --query "Parameter.Value" --output text)). Proceeding with deployment..."
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           AWS_REGION: ${{ vars.AWS_REGION }}

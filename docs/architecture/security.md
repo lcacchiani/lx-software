@@ -20,9 +20,9 @@ and its infrastructure.
 The `GitHubActionsRole` used by GitHub Actions workflows requires these
 permissions for CDK deployments:
 
-### CDK bootstrap role assumption
+### CDK Bootstrap role assumption
 
-CDK deployments use roles created by `cdk bootstrap`. The GitHubActionsRole must
+CDK deployments use roles created when you run `cdk bootstrap` (CDK Bootstrap). The GitHubActionsRole must
 be able to assume these roles:
 
 ```json
@@ -56,13 +56,13 @@ manage them alongside the public site. Typical additions include:
 - **Cognito**: `cognito-idp:DescribeUserPool`, `cognito-idp:DescribeUserPoolClient`,
   and related read-only calls if you add verification jobs (optional).
 
-The **Deploy Admin Infra** workflow runs `cdk deploy` for five stacks; the role
-must still be able to assume CDK bootstrap deployment roles and publish assets,
+The **Deploy Backend Infra** workflow runs `cdk deploy` for five stacks; the role
+must still be able to assume CDK Bootstrap deployment roles and publish assets,
 as described above.
 
 ### SSM parameter read access
 
-For bootstrap status checks:
+For CDK Bootstrap status checks:
 
 ```json
 {
@@ -74,7 +74,7 @@ For bootstrap status checks:
 
 ### Cross-repository bootstrap
 
-If CDK bootstrap was run from a different repository, verify that:
+If CDK Bootstrap was run from a different repository, verify that:
 
 1. The bootstrap roles' trust policy allows the GitHubActionsRole to assume them
 2. The GitHubActionsRole has the permissions listed above

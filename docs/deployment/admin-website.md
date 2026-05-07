@@ -1,12 +1,12 @@
 # Deploying the admin website and infrastructure
 
-This runbook follows the same ordering as production bring-up: bootstrap CDK,
+This runbook follows the same ordering as production bring-up: CDK Bootstrap,
 issue the ACM certificate, deploy infrastructure, configure GitHub and Cognito,
 then deploy the SPA.
 
 ## Pre-deploy checklist (junior dev)
 
-Before triggering **Deploy Admin Infra**:
+Before triggering **Deploy Backend Infra**:
 
 1. **GitHub environment** — set `AWS_ACCOUNT_ID`, `AWS_REGION`, optional
    **`CDK_BOOTSTRAP_QUALIFIER`** (only if you did not use the default `hnb659fds`),
@@ -20,14 +20,14 @@ Before triggering **Deploy Admin Infra**:
 2. **Bootstrap password** — must satisfy the pool policy (14+ chars with mixed
    classes) or `adminCreateUser` fails.
 3. **Region** — `AWS_REGION` for GitHub Actions must match the region where the
-   stacks deploy (same as the public site). **CDK must be bootstrapped in that
-   same region** (SSM `/cdk-bootstrap/<qualifier>/version` must exist), or
-   **Deploy Admin Infra** will fail. Cross-stack CSP wiring assumes this region.
+   stacks deploy (same as the public site). **CDK Bootstrap** must be complete in
+   that same region (SSM `/cdk-bootstrap/<qualifier>/version` must exist), or
+   **Deploy Backend Infra** will fail. Cross-stack CSP wiring assumes this region.
 4. **GitHubActionsRole** — must be allowed to `sts:AssumeRole` the CDK asset
    publishing / deploy roles (`cdk-hnb659fds-*` or your `CDK_BOOTSTRAP_QUALIFIER`)
    and `ssm:GetParameter` on `/cdk-bootstrap/*`. If logs show “could not be used
-   to assume … file-publishing-role” and deploy fails on missing bootstrap SSM,
-   fix bootstrap + IAM trust first.
+   to assume … file-publishing-role” and deploy fails on missing CDK Bootstrap SSM,
+   fix CDK Bootstrap + IAM trust first.
 5. **ACM** — `ADMIN_ACM_CERT_ARN` must be **ISSUED** in **us-east-1** (CloudFront).
 6. **Cloudflare** — proxy **OFF** (gray cloud) for ACM validation and for the
    `admin` CNAME.
@@ -37,9 +37,9 @@ Before triggering **Deploy Admin Infra**:
 After the first deploy, **verify** that `AdminFederatedEmailAllowlist` includes
 every Google operator; otherwise they authenticate but the API returns **403**.
 
-## 1. CDK bootstrap
+## 1. CDK Bootstrap
 
-Bootstrap the target region used by the stacks (match the public site region),
+Run **CDK Bootstrap** for the target region used by the stacks (match the public site region),
 and **us-east-1** for ACM certificates used by CloudFront:
 
 ```bash
@@ -62,7 +62,7 @@ as described in the checklist above and in `docs/architecture/security.md`.
 
 ## 4. Deploy admin infrastructure
 
-Run the **Deploy Admin Infra** workflow (or invoke CDK locally with the same
+Run the **Deploy Backend Infra** workflow (or invoke CDK locally with the same
 parameters). Confirm all five stacks finish successfully:
 
 - `lx-admin-auth`

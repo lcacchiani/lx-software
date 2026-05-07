@@ -25,7 +25,7 @@ npx cdk bootstrap aws://ACCOUNT_ID/REGION
 Replace `ACCOUNT_ID` and `REGION` with your AWS account ID and region
 (e.g., `aws://588024549699/ap-southeast-1`).
 
-You only need to bootstrap once per account/region combination.
+You only need to run CDK Bootstrap once per account/region combination.
 
 ### 2. GitHub repository variables
 
@@ -70,7 +70,7 @@ The script expects the CloudFormation stack to expose:
 
 This error means either:
 
-1. **Bootstrap not run**: The CDK bootstrap has not been run for the target
+1. **Bootstrap not run**: CDK Bootstrap has not been run for the target
    account/region. Run the **CDK Bootstrap** workflow or bootstrap manually.
 
 2. **Permission denied**: The `GitHubActionsRole` doesn't have permission to
@@ -86,7 +86,7 @@ This error means either:
 ### "current credentials could not be used to assume ... deploy-role"
 
 This error occurs when the `GitHubActionsRole` cannot assume the CDK deployment
-roles created by bootstrap. This is common when bootstrap was run from a
+roles created by CDK Bootstrap. This is common when CDK Bootstrap was run from a
 different repository.
 
 **Fix**: Add `sts:AssumeRole` permission to the GitHubActionsRole:
