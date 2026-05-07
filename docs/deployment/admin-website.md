@@ -9,13 +9,12 @@ then deploy the SPA.
 Before triggering **Deploy Admin Infra**:
 
 1. **GitHub environment** — set `AWS_ACCOUNT_ID`, `AWS_REGION`, `ADMIN_ACM_CERT_ARN`,
-   `ADMIN_GOOGLE_CLIENT_ID`, **`ADMIN_GOOGLE_CLIENT_SECRET_ARN`** (Secrets Manager
-   ARN holding the Google client secret as a plain string),
-   **`ADMIN_FEDERATED_EMAIL_ALLOWLIST`** (comma-separated lower-case emails that
-   should receive `admin` via Pre Token Generation — include every Google admin
-   and the bootstrap email), `ADMIN_BOOTSTRAP_EMAIL`, secrets
-   `ADMIN_BOOTSTRAP_TEMP_PASSWORD`, and (after first deploy) SPA vars
-   `ADMIN_COGNITO_*`, `ADMIN_API_BASE_URL`.
+   `ADMIN_GOOGLE_CLIENT_ID`, **`ADMIN_FEDERATED_EMAIL_ALLOWLIST`** (comma-separated
+   lower-case emails that should receive `admin` via Pre Token Generation — include
+   every Google admin and the bootstrap email), `ADMIN_BOOTSTRAP_EMAIL`, and
+   (after first deploy) SPA vars `ADMIN_COGNITO_*`, `ADMIN_API_BASE_URL`. Set
+   **secrets** `ADMIN_GOOGLE_CLIENT_SECRET` (Google OAuth client secret) and
+   `ADMIN_BOOTSTRAP_TEMP_PASSWORD` (bootstrap user password; CDK `noEcho`).
 2. **Bootstrap password** — must satisfy the pool policy (14+ chars with mixed
    classes) or `adminCreateUser` fails.
 3. **Region** — `AWS_REGION` for GitHub Actions must match the region where the

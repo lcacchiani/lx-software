@@ -22,7 +22,7 @@ npm run dev
 
 Copy `apps/admin_web/.env.example` to `.env` and fill in Cognito and API values.
 
-Infra deploy expects GitHub variables **`ADMIN_GOOGLE_CLIENT_SECRET_ARN`** (Secrets Manager) and **`ADMIN_FEDERATED_EMAIL_ALLOWLIST`** (comma-separated admin emails); see `docs/deployment/admin-website.md`.
+Infra deploy expects GitHub variable **`ADMIN_GOOGLE_CLIENT_ID`**, secret **`ADMIN_GOOGLE_CLIENT_SECRET`** (Google OAuth client secret, passed to CDK with `noEcho`), and variable **`ADMIN_FEDERATED_EMAIL_ALLOWLIST`**; see `docs/deployment/admin-website.md`.
 
 ## Documentation
 

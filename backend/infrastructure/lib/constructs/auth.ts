@@ -3,7 +3,6 @@ import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as iam from "aws-cdk-lib/aws-iam";
-import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as path from "node:path";
 import { Construct } from "constructs";
 import { createPythonLambda } from "./python-lambda";
@@ -11,8 +10,8 @@ import { createPythonLambda } from "./python-lambda";
 export interface AuthConstructProps {
   readonly adminWebDomainParameter: cdk.CfnParameter;
   readonly googleClientIdParameter: cdk.CfnParameter;
-  /** Full ARN of a Secrets Manager secret holding the Google OAuth client secret (plain string). */
-  readonly googleClientSecretArnParameter: cdk.CfnParameter;
+  /** Google OAuth client secret (`noEcho` CloudFormation parameter). */
+  readonly googleClientSecretParameter: cdk.CfnParameter;
   readonly cognitoDomainPrefixParameter: cdk.CfnParameter;
   readonly adminBootstrapEmailParameter: cdk.CfnParameter;
   readonly adminBootstrapTempPasswordParameter: cdk.CfnParameter;
@@ -45,12 +44,6 @@ export class AuthConstruct extends Construct {
       props.adminWebDomainParameter.valueAsString,
       "/",
     ]);
-
-    const googleSecret = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      "GoogleOAuthClientSecret",
-      props.googleClientSecretArnParameter.valueAsString
-    );
 
     this.userPool = new cognito.UserPool(this, "UserPool", {
       userPoolName: "lx-admin-user-pool",
@@ -98,7 +91,9 @@ export class AuthConstruct extends Construct {
       {
         userPool: this.userPool,
         clientId: props.googleClientIdParameter.valueAsString,
-        clientSecretValue: googleSecret.secretValue,
+        clientSecretValue: cdk.SecretValue.cfnParameter(
+          props.googleClientSecretParameter
+        ),
         scopes: ["profile", "email", "openid"],
         attributeMapping: {
           email: cognito.ProviderAttribute.GOOGLE_EMAIL,

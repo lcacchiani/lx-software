@@ -68,16 +68,18 @@ updating dependent stacks so the CSP stays accurate.
 - GitHub Actions uses **OIDC** into `GitHubActionsRole`; extend that role’s
   inline or attached policies so it can deploy the new stacks and invalidate the
   admin distribution. See `docs/architecture/security.md`.
-- The Google OAuth **client secret** is read from **Secrets Manager** at deploy
-  time via **ARN parameter** (not passed on the shell as a raw secret). The
-  deploy role needs `secretsmanager:GetSecretValue` on that secret.
+- The Google OAuth **client secret** is supplied as a **GitHub Actions secret**
+  and passed into CDK as a CloudFormation parameter with **`noEcho: true`** (same
+  pattern as evolvesprouts). GitHub redacts it in logs, but like any CLI deploy it
+  can appear briefly in the runner process environment; prefer rotating the
+  secret in Google Cloud if it is ever exposed.
 
 ## Operational notes
 
 - **Bootstrap password** is supplied as a CDK parameter with `noEcho: true`.
   **AwsCustomResource** only runs `adminSetUserPassword` / `adminAddUserToGroup`
-  on **Create**, not on **Update**, so rotating the password in Secrets Manager
-  / GitHub and redeploying does **not** reset the live Cognito password.
+  on **Create**, not on **Update**, so rotating the password in GitHub and
+  redeploying does **not** reset the live Cognito password.
 - **Cloudflare** must use **DNS-only (gray cloud)** for the ACM validation record
   and for the `admin` CNAME to CloudFront so TLS and renewals behave correctly.
 

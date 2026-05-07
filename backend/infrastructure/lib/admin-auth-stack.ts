@@ -22,15 +22,11 @@ export class AdminAuthStack extends cdk.Stack {
       description: "Google OAuth client ID for Cognito federation.",
     });
 
-    const googleClientSecretArn = new cdk.CfnParameter(
-      this,
-      "GoogleClientSecretArn",
-      {
-        type: "String",
-        description:
-          "Secrets Manager secret ARN holding the Google OAuth client secret (plain string body).",
-      }
-    );
+    const googleClientSecret = new cdk.CfnParameter(this, "GoogleClientSecret", {
+      type: "String",
+      description: "Google OAuth client secret for Cognito federation.",
+      noEcho: true,
+    });
 
     const adminFederatedEmailAllowlist = new cdk.CfnParameter(
       this,
@@ -67,7 +63,7 @@ export class AdminAuthStack extends cdk.Stack {
     this.auth = new AuthConstruct(this, "Auth", {
       adminWebDomainParameter: adminWebDomainName,
       googleClientIdParameter: googleClientId,
-      googleClientSecretArnParameter: googleClientSecretArn,
+      googleClientSecretParameter: googleClientSecret,
       cognitoDomainPrefixParameter: cognitoDomainPrefix,
       adminBootstrapEmailParameter: adminBootstrapEmail,
       adminBootstrapTempPasswordParameter: adminBootstrapTempPassword,

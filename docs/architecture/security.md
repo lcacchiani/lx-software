@@ -55,8 +55,6 @@ manage them alongside the public site. Typical additions include:
   (output `AdminWebDistributionId` / distribution ARN).
 - **Cognito**: `cognito-idp:DescribeUserPool`, `cognito-idp:DescribeUserPoolClient`,
   and related read-only calls if you add verification jobs (optional).
-- **Secrets Manager**: `secretsmanager:GetSecretValue` on the Google OAuth client
-  secret ARN referenced by `lx-admin-auth` (`GoogleClientSecretArn` parameter).
 
 The **Deploy Admin Infra** workflow runs `cdk deploy` for five stacks; the role
 must still be able to assume CDK bootstrap deployment roles and publish assets,
