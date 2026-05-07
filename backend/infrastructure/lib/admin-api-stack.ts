@@ -5,6 +5,8 @@ import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations
 import { HttpJwtAuthorizer } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as iam from "aws-cdk-lib/aws-iam";
+import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
 import { createPythonLambda } from "./constructs/python-lambda";
@@ -29,6 +31,13 @@ export class AdminApiStack extends cdk.Stack {
     const region = cdk.Stack.of(this).region;
     const issuer = `https://cognito-idp.${region}.amazonaws.com/${props.userPool.userPoolId}`;
 
+    /**
+     * Contract: jwtAudience is the Cognito app client ID, which matches the
+     * `aud` claim on **ID tokens** only. Access tokens use `client_id` instead
+     * of `aud`, so the SPA must send ID tokens in Authorization (see
+     * apps/admin_www/src/lib/apiAdminClient.ts). Switching to access tokens
+     * requires a different authorizer configuration.
+     */
     const jwtAuthorizer = new HttpJwtAuthorizer("cognito-jwt", issuer, {
       jwtAudience: [props.userPoolClient.userPoolClientId],
     });
@@ -39,6 +48,7 @@ export class AdminApiStack extends cdk.Stack {
         RECORDS_TABLE_NAME: props.recordsTable.tableName,
         AUDIT_LOG_TABLE_NAME: props.auditLogTable.tableName,
         ASSETS_BUCKET_NAME: props.assetsBucket.bucketName,
+        ASSET_MAX_BYTES: String(20 * 1024 * 1024),
       },
     });
 
@@ -63,6 +73,33 @@ export class AdminApiStack extends cdk.Stack {
         allowCredentials: false,
       },
     });
+
+    const accessLogGroup = new logs.LogGroup(this, "HttpApiAccessLogs", {
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    accessLogGroup.addToResourcePolicy(
+      new iam.PolicyStatement({
+        principals: [new iam.ServicePrincipal("apigateway.amazonaws.com")],
+        actions: ["logs:CreateLogStream", "logs:PutLogEvents"],
+        resources: [`${accessLogGroup.logGroupArn}:*`],
+      })
+    );
+
+    const defaultStage = this.httpApi.defaultStage?.node
+      .defaultChild as apigwv2.CfnStage;
+    defaultStage.accessLogSettings = {
+      destinationArn: accessLogGroup.logGroupArn,
+      format: JSON.stringify({
+        requestId: "$context.requestId",
+        routeKey: "$context.routeKey",
+        status: "$context.status",
+        integrationError: "$context.integrationErrorMessage",
+        httpMethod: "$context.httpMethod",
+        path: "$context.path",
+      }),
+    };
 
     this.httpApi.addRoutes({
       path: "/health",
@@ -93,7 +130,11 @@ export class AdminApiStack extends cdk.Stack {
 
     this.httpApi.addRoutes({
       path: "/records",
-      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.PUT,
+      ],
       integration,
       authorizer: jwtAuthorizer,
     });

@@ -1,26 +1,10 @@
 import { getAdminConfig } from "./config";
+import { readIdTokenExpiryMs } from "./jwt";
 
 const STORAGE_ID = "lx_admin_id_token";
 const STORAGE_ACCESS = "lx_admin_access_token";
 const STORAGE_REFRESH = "lx_admin_refresh_token";
 const STORAGE_EXPIRES_AT = "lx_admin_expires_at";
-
-function decodeJwtExpMs(idToken: string): number | null {
-  try {
-    const [, payload] = idToken.split(".");
-    if (!payload) {
-      return null;
-    }
-    const padded = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(atob(padded)) as { exp?: number };
-    if (!json.exp) {
-      return null;
-    }
-    return json.exp * 1000;
-  } catch {
-    return null;
-  }
-}
 
 export interface StoredOAuthTokens {
   readonly id_token: string;
@@ -35,7 +19,7 @@ export function saveTokensFromOAuthResponse(data: StoredOAuthTokens): void {
   if (data.refresh_token) {
     sessionStorage.setItem(STORAGE_REFRESH, data.refresh_token);
   }
-  const fromJwt = decodeJwtExpMs(data.id_token);
+  const fromJwt = readIdTokenExpiryMs(data.id_token);
   const fromTtl = Date.now() + data.expires_in * 1000;
   const expMs = fromJwt ?? fromTtl;
   sessionStorage.setItem(STORAGE_EXPIRES_AT, String(expMs));
@@ -47,6 +31,7 @@ export function clearStoredSession(): void {
   sessionStorage.removeItem(STORAGE_REFRESH);
   sessionStorage.removeItem(STORAGE_EXPIRES_AT);
   sessionStorage.removeItem("lx_admin_pkce_verifier");
+  sessionStorage.removeItem("lx_admin_oauth_state");
 }
 
 export function getStoredIdToken(): string | null {

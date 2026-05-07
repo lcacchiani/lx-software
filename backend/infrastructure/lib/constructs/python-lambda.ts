@@ -30,34 +30,37 @@ function requirementsNeedPip(reqPath: string): boolean {
   return nonComment.length > 0;
 }
 
-function tryLocalPythonBundle(entry: string, outputDir: string): boolean {
-  const pyFiles = fs
-    .readdirSync(entry)
-    .filter((f) => f.endsWith(".py"));
-  if (pyFiles.length === 0) {
-    return false;
-  }
-  fs.mkdirSync(outputDir, { recursive: true });
-  for (const f of pyFiles) {
-    fs.copyFileSync(path.join(entry, f), path.join(outputDir, f));
-  }
-  const req = path.join(entry, "requirements.txt");
-  if (requirementsNeedPip(req)) {
-    const pip = spawnSync(
-      "pip3",
-      ["install", "-r", "requirements.txt", "-t", outputDir],
-      { cwd: entry, stdio: "inherit" }
-    );
-    if (pip.status !== 0) {
-      return false;
+function copyDirRecursive(src: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, name.name);
+    const destPath = path.join(dest, name.name);
+    if (name.name === "__pycache__" || name.name === ".pytest_cache") {
+      continue;
+    }
+    if (name.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
     }
   }
+}
+
+function tryLocalPythonBundle(entry: string, outputDir: string): boolean {
+  const req = path.join(entry, "requirements.txt");
+  if (requirementsNeedPip(req)) {
+    return false;
+  }
+  copyDirRecursive(entry, outputDir);
   return true;
 }
 
 /**
- * Creates a Python 3.12 Lambda with optional Docker-based bundling, a local
- * bundling fallback when Docker is unavailable, and 30-day log retention.
+ * Creates a Python 3.12 Lambda with Docker-based bundling (recursive copy of
+ * sources + pip when requirements.txt has packages). Local bundling only runs
+ * when there are no pip dependencies so macOS wheels are never copied into a
+ * Linux ARM runtime bundle. Uses an explicit CloudWatch LogGroup (30-day
+ * retention) instead of the deprecated logRetention property.
  */
 export function createPythonLambda(
   scope: Construct,
@@ -66,6 +69,11 @@ export function createPythonLambda(
 ): lambda.Function {
   const entry = path.resolve(props.entryDir);
   const handler = props.handler ?? "handler.lambda_handler";
+
+  const logGroup = new logs.LogGroup(scope, `${id}LogGroup`, {
+    retention: logs.RetentionDays.ONE_MONTH,
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+  });
 
   return new lambda.Function(scope, id, {
     runtime: props.runtime ?? lambda.Runtime.PYTHON_3_12,
@@ -88,14 +96,20 @@ export function createPythonLambda(
             "export PIP_ROOT_USER_ACTION=ignore",
             "if [[ -f requirements.txt ]]; then pip install -r requirements.txt -t /asset-output; fi",
             "shopt -s dotglob nullglob",
-            "for f in *.py; do cp -a \"$f\" /asset-output/; done",
-          ].join(" && "),
+            "for item in *; do",
+            "  if [[ \"$item\" == requirements.txt ]]; then continue; fi",
+            "  if [[ -d \"$item\" ]]; then cp -a \"$item\" /asset-output/; fi",
+            "done",
+            "for f in *.py; do",
+            "  [[ -f \"$f\" ]] && cp -a \"$f\" /asset-output/",
+            "done",
+          ].join(" "),
         ],
       },
     }),
     memorySize: props.memorySize ?? 512,
     timeout: props.timeout ?? cdk.Duration.seconds(10),
     environment: props.environment,
-    logRetention: logs.RetentionDays.ONE_MONTH,
+    logGroup,
   });
 }

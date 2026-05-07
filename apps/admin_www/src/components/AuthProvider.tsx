@@ -12,6 +12,7 @@ import { clearStoredSession, getStoredIdToken } from "../lib/auth";
 import { createPkcePair } from "../lib/pkce";
 import { getAdminConfig } from "../lib/config";
 import { getCognitoUserPool } from "../lib/cognitoAuth";
+import { decodeJwtPayload } from "../lib/jwt";
 
 export interface AuthUser {
   readonly sub: string;
@@ -20,15 +21,7 @@ export interface AuthUser {
 
 function decodeUserFromIdToken(idToken: string): AuthUser | null {
   try {
-    const [, payload] = idToken.split(".");
-    if (!payload) {
-      return null;
-    }
-    const padded = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(atob(padded)) as {
-      sub?: string;
-      email?: string;
-    };
+    const json = decodeJwtPayload<{ sub?: string; email?: string }>(idToken);
     if (!json.sub) {
       return null;
     }
@@ -42,12 +35,39 @@ interface AuthContextValue {
   readonly user: AuthUser | null;
   readonly idToken: string | null;
   readonly isLoading: boolean;
-  readonly login: () => Promise<void>;
+  readonly loginWithGoogle: () => Promise<void>;
+  readonly loginWithHostedUi: () => Promise<void>;
   readonly logout: () => void;
   readonly refreshUser: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function randomState(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function beginOAuthRedirect(identityProvider?: "Google"): Promise<void> {
+  const cfg = getAdminConfig();
+  const { verifier, challenge } = await createPkcePair();
+  const state = randomState();
+  sessionStorage.setItem("lx_admin_pkce_verifier", verifier);
+  sessionStorage.setItem("lx_admin_oauth_state", state);
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    scope: "openid email profile",
+    code_challenge_method: "S256",
+    code_challenge: challenge,
+    state,
+  });
+  if (identityProvider) {
+    params.set("identity_provider", identityProvider);
+  }
+  window.location.href = `${cfg.cognitoDomain}/oauth2/authorize?${params.toString()}`;
+}
 
 export function AuthProvider({ children }: { readonly children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
@@ -67,32 +87,46 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     setUser(t ? decodeUserFromIdToken(t) : null);
   }, []);
 
-  const login = useCallback(async () => {
-    const cfg = getAdminConfig();
-    const { verifier, challenge } = await createPkcePair();
-    sessionStorage.setItem("lx_admin_pkce_verifier", verifier);
-    const params = new URLSearchParams({
-      identity_provider: "Google",
-      response_type: "code",
-      client_id: cfg.clientId,
-      redirect_uri: cfg.redirectUri,
-      scope: "openid email profile",
-      code_challenge_method: "S256",
-      code_challenge: challenge,
-    });
-    window.location.href = `${cfg.cognitoDomain}/oauth2/authorize?${params.toString()}`;
+  const loginWithGoogle = useCallback(async () => {
+    await beginOAuthRedirect("Google");
+  }, []);
+
+  const loginWithHostedUi = useCallback(async () => {
+    await beginOAuthRedirect(undefined);
   }, []);
 
   const logout = useCallback(() => {
-    clearStoredSession();
-    setUser(null);
-    const cfg = getAdminConfig();
-    const logoutUri =
-      import.meta.env.VITE_COGNITO_LOGOUT_URI ?? `${window.location.origin}/`;
-    const logoutUrl = new URL(`${cfg.cognitoDomain}/logout`);
-    logoutUrl.searchParams.set("client_id", cfg.clientId);
-    logoutUrl.searchParams.set("logout_uri", logoutUri);
-    window.location.href = logoutUrl.toString();
+    void (async () => {
+      const cfg = getAdminConfig();
+      const refreshToken = sessionStorage.getItem("lx_admin_refresh_token");
+      if (refreshToken) {
+        try {
+          await fetch(`${cfg.cognitoDomain}/oauth2/revoke`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              token: refreshToken,
+              client_id: cfg.clientId,
+            }),
+          });
+        } catch {
+          /* fire-and-forget */
+        }
+      }
+      clearStoredSession();
+      setUser(null);
+      const logoutUri =
+        import.meta.env.VITE_COGNITO_LOGOUT_URI ?? `${window.location.origin}/`;
+      const logoutUrl = new URL(`${cfg.cognitoDomain}/logout`);
+      logoutUrl.searchParams.set("client_id", cfg.clientId);
+      logoutUrl.searchParams.set("logout_uri", logoutUri);
+      /**
+       * Cognito /logout ends the Cognito session only. Google may still have an
+       * active browser session, so the next “Sign in with Google” can be silent.
+       * See docs/architecture/admin-security.md.
+       */
+      window.location.href = logoutUrl.toString();
+    })();
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -100,11 +134,12 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
       user,
       idToken,
       isLoading,
-      login,
+      loginWithGoogle,
+      loginWithHostedUi,
       logout,
       refreshUser,
     }),
-    [user, idToken, isLoading, login, logout, refreshUser]
+    [user, idToken, isLoading, loginWithGoogle, loginWithHostedUi, logout, refreshUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

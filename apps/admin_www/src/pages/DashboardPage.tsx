@@ -2,6 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
 
 export function DashboardPage() {
+  const healthQuery = useQuery({
+    queryKey: ["admin", "health"],
+    queryFn: () =>
+      adminFetchJson<{ status?: string }>("/health", { requireAuth: false }),
+  });
+
   const meQuery = useQuery({
     queryKey: ["admin", "me"],
     queryFn: () =>
@@ -16,6 +22,21 @@ export function DashboardPage() {
         and records.
       </p>
       <div className="card mt-4 shadow-sm">
+        <div className="card-body">
+          <h2 className="h6 text-uppercase text-muted">API health</h2>
+          {healthQuery.isLoading ? (
+            <p className="mb-0 small text-muted">Checking /health…</p>
+          ) : healthQuery.isError ? (
+            <p className="mb-0 small text-danger">Health check failed.</p>
+          ) : (
+            <p className="mb-0 small">
+              <code>/health</code>:{" "}
+              <span className="text-success">{healthQuery.data?.status ?? "ok"}</span>
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="card mt-3 shadow-sm">
         <div className="card-body">
           <h2 className="h6 text-uppercase text-muted">Session</h2>
           {meQuery.isLoading ? (

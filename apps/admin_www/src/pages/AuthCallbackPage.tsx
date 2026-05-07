@@ -21,8 +21,21 @@ export function AuthCallbackPage() {
     const run = async () => {
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code");
+      const state = params.get("state");
+      const expectedState = sessionStorage.getItem("lx_admin_oauth_state");
+      if (
+        !code ||
+        !state ||
+        !expectedState ||
+        state !== expectedState
+      ) {
+        sessionStorage.removeItem("lx_admin_pkce_verifier");
+        sessionStorage.removeItem("lx_admin_oauth_state");
+        navigate("/", { replace: true });
+        return;
+      }
       const verifier = sessionStorage.getItem("lx_admin_pkce_verifier");
-      if (!code || !verifier) {
+      if (!verifier) {
         navigate("/", { replace: true });
         return;
       }
@@ -41,6 +54,7 @@ export function AuthCallbackPage() {
       });
       if (!res.ok || cancelled) {
         sessionStorage.removeItem("lx_admin_pkce_verifier");
+        sessionStorage.removeItem("lx_admin_oauth_state");
         navigate("/", { replace: true });
         return;
       }
@@ -57,6 +71,7 @@ export function AuthCallbackPage() {
         expires_in: json.expires_in,
       });
       sessionStorage.removeItem("lx_admin_pkce_verifier");
+      sessionStorage.removeItem("lx_admin_oauth_state");
       refreshUser();
       navigate("/", { replace: true });
     };
@@ -64,8 +79,7 @@ export function AuthCallbackPage() {
     return () => {
       cancelled = true;
     };
-    // OAuth exchange is intentionally once per full page load (see guard above).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run OAuth exchange once per full page load (see guard above)
   }, []);
 
   return (

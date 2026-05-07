@@ -41,6 +41,9 @@ export class AdminWebStack extends cdk.Stack {
       type: "String",
       description: "Optional WAFv2 Web ACL ARN to attach to CloudFront (leave empty to disable).",
       default: "",
+      allowedPattern: "^$|^arn:aws:wafv2:us-east-1:[0-9]{12}:global/webacl/.+$",
+      constraintDescription:
+        "Must be empty or a WAFv2 global Web ACL ARN in us-east-1 for CloudFront.",
     });
 
     const hasWaf = new cdk.CfnCondition(this, "HasWaf", {
@@ -84,6 +87,8 @@ export class AdminWebStack extends cdk.Stack {
       enforceSSL: true,
       versioned: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+      serverAccessLogsBucket: this.accessLogsBucket,
+      serverAccessLogsPrefix: "s3-web-origin/",
     });
 
     const certificate = acm.Certificate.fromCertificateArn(
@@ -171,12 +176,6 @@ export class AdminWebStack extends cdk.Stack {
           ],
         },
         errorResponses: [
-          {
-            httpStatus: 403,
-            responseHttpStatus: 200,
-            responsePagePath: "/index.html",
-            ttl: cdk.Duration.minutes(5),
-          },
           {
             httpStatus: 404,
             responseHttpStatus: 200,

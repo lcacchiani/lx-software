@@ -24,8 +24,30 @@ if [ -z "$BUCKET_NAME" ] || [ "$BUCKET_NAME" = "None" ]; then
   exit 1
 fi
 
-echo "Syncing admin web to s3://$BUCKET_NAME"
-aws s3 sync "$BUILD_DIR" "s3://$BUCKET_NAME" --delete
+echo "Uploading hashed assets under dist/assets with long cache…"
+if [ -d "$BUILD_DIR/assets" ]; then
+  aws s3 sync "$BUILD_DIR/assets" "s3://$BUCKET_NAME/assets" \
+    --delete \
+    --cache-control "public,max-age=31536000,immutable"
+fi
+
+echo "Uploading other root build artifacts (except index.html)…"
+shopt -s nullglob
+for f in "$BUILD_DIR"/*; do
+  base="$(basename "$f")"
+  if [[ "$base" == "assets" || "$base" == "index.html" ]]; then
+    continue
+  fi
+  if [[ -f "$f" ]]; then
+    aws s3 cp "$f" "s3://$BUCKET_NAME/$base" \
+      --cache-control "public,max-age=31536000,immutable"
+  fi
+done
+
+echo "Uploading index.html last with no-cache…"
+aws s3 cp "$BUILD_DIR/index.html" "s3://$BUCKET_NAME/index.html" \
+  --cache-control "no-cache,must-revalidate" \
+  --content-type "text/html; charset=utf-8"
 
 DISTRIBUTION_QUERY="Stacks[0].Outputs[?OutputKey=='AdminWebDistributionId']."
 DISTRIBUTION_QUERY+="OutputValue"

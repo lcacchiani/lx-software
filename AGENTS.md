@@ -42,5 +42,6 @@ There are no automated test suites in this repo currently.
 
 - The public website fetches `/content.json` at runtime (served from `public/content.json` in dev). If you see missing content, ensure that file exists.
 - The admin SPA requires `VITE_*` Cognito and API settings; see `apps/admin_www/.env.example`.
+- Admin tokens are stored in **sessionStorage**; closing the browser tab ends the session and requires signing in again.
 - CDK synth/deploy requires AWS credentials and is not needed for local website development.
 - `apps/public_www`, `apps/admin_www`, and `backend/infrastructure` use npm (lockfiles are `package-lock.json`).

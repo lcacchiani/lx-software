@@ -66,6 +66,16 @@ jobs:
           VITE_COGNITO_REDIRECT_URI: http://localhost:5173/auth/callback
           VITE_API_BASE_URL: https://placeholder.execute-api.us-east-1.amazonaws.com
 
+      - name: Test admin website
+        run: npm test
+        working-directory: apps/admin_www
+        env:
+          VITE_COGNITO_USER_POOL_ID: us-east-1_PLACEHOLDER
+          VITE_COGNITO_CLIENT_ID: placeholder-client-id
+          VITE_COGNITO_DOMAIN: https://placeholder.auth.us-east-1.amazoncognito.com
+          VITE_COGNITO_REDIRECT_URI: http://localhost:5173/auth/callback
+          VITE_API_BASE_URL: https://placeholder.execute-api.us-east-1.amazonaws.com
+
   test-infrastructure:
     name: Test Infrastructure
     runs-on: ubuntu-latest

@@ -2,31 +2,52 @@
 
 ## Authentication
 
-- **Cognito hosted UI** with **Google** federation and native Cognito sign-in
-  enabled for the bootstrap administrator.
-- **MFA is required** on the user pool with **TOTP only** (no SMS), reducing cost
-  and avoiding SNS configuration.
-- **Self sign-up is disabled**; additional operators are created by invitation.
-- **Advanced Security Mode** is set to **AUDIT** (no extra charge on the free
-  tier); you can move to enforced threat protection later if needed.
+- **Cognito hosted UI** with **Google** federation and native Cognito sign-in for
+  the break-glass **bootstrap** administrator (“Sign in with email (Hosted UI)”).
+- **Pre Token Generation** Lambda adds the `admin` **group override** in issued
+  tokens when the user’s `email` attribute matches the comma-separated
+  `AdminFederatedEmailAllowlist` parameter. Federated Google users are not added
+  to Cognito groups in the data plane; claims-only injection keeps the pool
+  clean.
+- **MFA (native)**: the user pool requires **TOTP** for native accounts (no SMS).
+- **MFA (federated)**: Cognito’s `mfa: REQUIRED` applies to native sign-in only.
+  Google Workspace accounts follow **Google’s** MFA / 2-Step Verification policy.
+  Require **2-Step Verification org-wide** in Google Admin so federated admins
+  meet your bar.
+- **Self sign-up is disabled**; invite additional operators as needed.
+- **Threat protection**: CDK sets `standardThreatProtectionMode` to
+  `NO_ENFORCEMENT` to avoid deprecated `advancedSecurityMode` and to stay off
+  Cognito **PLUS** feature-plan charges until you deliberately opt in. Re-check
+  current Cognito pricing before enabling enforced modes.
 - **Password policy** enforces 14+ characters with mixed character classes for
-  any native passwords (for example the bootstrap user).
+  native passwords (bootstrap user).
 
-OAuth **authorization code** flow with **PKCE** is used from the SPA. Tokens are
-stored in **sessionStorage** so they are cleared when the browser tab closes.
+OAuth **authorization code** flow with **PKCE** and a random **`state`** value
+is used from the SPA. The callback rejects mismatched or missing `state` to
+mitigate login CSRF. Tokens live in **sessionStorage**, so closing the browser
+tab clears the session and forces a full Hosted UI round-trip on the next
+visit (intentional for admin consoles).
+
+### Google single sign-out
+
+`AuthProvider.logout()` calls Cognito **`/oauth2/revoke`** (fire-and-forget) for
+the refresh token, clears local storage, then redirects to Cognito **`/logout`**
+which ends the Cognito session. **Google may still have an active browser
+session**, so the next “Sign in with Google” can succeed without prompting.
+True Google sign-out would require additional IdP-specific steps (for example
+Google’s revoke endpoint) and is not implemented here by design.
 
 ## API authorization
 
 API Gateway HTTP API uses an **`HttpJwtAuthorizer`** (`cognito-jwt`) with:
 
 - **Issuer** `https://cognito-idp.<region>.amazonaws.com/<userPoolId>`
-- **Audience** the app client ID
+- **Audience** the app client ID (matches **`aud` on ID tokens**, not access
+  tokens).
 
 **Do not rely on the JWT authorizer alone for admin authorization.** Each Lambda
 handler reads `event.requestContext.authorizer.jwt.claims["cognito:groups"]` and
-returns **403** when the `admin` group is missing. This mirrors the defense-in-depth
-pattern of a dedicated Lambda authorizer while keeping API Gateway’s built-in
-JWT validation.
+returns **403** when the `admin` group is missing.
 
 An optional **Lambda authorizer** layout is documented under
 `backend/lambda/authorizers/cognito_group/handler.py`; the HTTP API path does
@@ -47,11 +68,44 @@ updating dependent stacks so the CSP stays accurate.
 - GitHub Actions uses **OIDC** into `GitHubActionsRole`; extend that role’s
   inline or attached policies so it can deploy the new stacks and invalidate the
   admin distribution. See `docs/architecture/security.md`.
+- The Google OAuth **client secret** is read from **Secrets Manager** at deploy
+  time via **ARN parameter** (not passed on the shell as a raw secret). The
+  deploy role needs `secretsmanager:GetSecretValue` on that secret.
 
 ## Operational notes
 
 - **Bootstrap password** is supplied as a CDK parameter with `noEcho: true`.
-  Rotate it immediately after first successful sign-in, and prefer removing the
-  native bootstrap user once Google-based admins are onboarded.
+  **AwsCustomResource** only runs `adminSetUserPassword` / `adminAddUserToGroup`
+  on **Create**, not on **Update**, so rotating the password in Secrets Manager
+  / GitHub and redeploying does **not** reset the live Cognito password.
 - **Cloudflare** must use **DNS-only (gray cloud)** for the ACM validation record
   and for the `admin` CNAME to CloudFront so TLS and renewals behave correctly.
+
+## Uploads
+
+- Presigned **POST** policies pin **Content-Type** (`image/*` prefix), **object
+  key** (per-user prefix), and **content-length-range** (default 20 MiB). The SPA
+  must submit `multipart/form-data` per S3’s POST policy (not a raw PUT).
+- **`/assets/confirm`** persists **S3 `head_object`** `ContentLength` and `ETag`;
+  client-supplied `sha256` / `size` are stored only as informational fields.
+
+## CloudFront distribution logging
+
+The `lx-admin-web` stack uses CloudFront’s **classic logging to S3** (same
+pattern as the public site). Some AWS Organizations block this logging delivery
+with strict bucket policies. If deploy fails with `InvalidViewerLogging`, switch
+to **logging to CloudWatch Logs** or follow the org-approved pattern.
+
+## Logging
+
+- **API Gateway** default stage writes **access logs** to a dedicated CloudWatch
+  log group (30-day retention).
+- **S3 server access logging** is enabled for the SPA origin bucket and the
+  assets bucket (separate prefixes / buckets) so direct S3 access (including
+  presigned URLs) leaves an audit trail in addition to CloudFront logs.
+
+## CloudFront error mapping
+
+Only **404** responses are rewritten to `/index.html` (HTTP 200) for SPA
+routing. **403** responses pass through so misconfigured bucket policies remain
+visible during debugging.

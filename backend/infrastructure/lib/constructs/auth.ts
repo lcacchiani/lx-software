@@ -3,20 +3,27 @@ import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as path from "node:path";
 import { Construct } from "constructs";
+import { createPythonLambda } from "./python-lambda";
 
 export interface AuthConstructProps {
   readonly adminWebDomainParameter: cdk.CfnParameter;
   readonly googleClientIdParameter: cdk.CfnParameter;
-  readonly googleClientSecretParameter: cdk.CfnParameter;
+  /** Full ARN of a Secrets Manager secret holding the Google OAuth client secret (plain string). */
+  readonly googleClientSecretArnParameter: cdk.CfnParameter;
   readonly cognitoDomainPrefixParameter: cdk.CfnParameter;
   readonly adminBootstrapEmailParameter: cdk.CfnParameter;
   readonly adminBootstrapTempPasswordParameter: cdk.CfnParameter;
+  /** Comma-separated emails that receive the admin group via Pre Token Generation (federated users). */
+  readonly adminFederatedEmailAllowlistParameter: cdk.CfnParameter;
 }
 
 /**
  * Cognito user pool with Google federation, TOTP-only MFA, hosted UI OAuth,
- * admin group, and chained custom resources that bootstrap the first admin user.
+ * admin group, Pre Token Generation allow-list for federated admins, and
+ * chained custom resources that bootstrap the first native admin user.
  */
 export class AuthConstruct extends Construct {
   public readonly userPool: cognito.UserPool;
@@ -39,6 +46,12 @@ export class AuthConstruct extends Construct {
       "/",
     ]);
 
+    const googleSecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      "GoogleOAuthClientSecret",
+      props.googleClientSecretArnParameter.valueAsString
+    );
+
     this.userPool = new cognito.UserPool(this, "UserPool", {
       userPoolName: "lx-admin-user-pool",
       selfSignUpEnabled: false,
@@ -54,9 +67,30 @@ export class AuthConstruct extends Construct {
         requireDigits: true,
         requireSymbols: true,
       },
-      advancedSecurityMode: cognito.AdvancedSecurityMode.AUDIT,
+      standardThreatProtectionMode:
+        cognito.StandardThreatProtectionMode.NO_ENFORCEMENT,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+
+    const preTokenFn = createPythonLambda(this, "PreTokenGenerationFn", {
+      entryDir: path.join(
+        __dirname,
+        "..",
+        "..",
+        "..",
+        "lambda",
+        "pre_token_generation"
+      ),
+      environment: {
+        ADMIN_EMAIL_ALLOWLIST:
+          props.adminFederatedEmailAllowlistParameter.valueAsString,
+      },
+    });
+
+    this.userPool.addTrigger(
+      cognito.UserPoolOperation.PRE_TOKEN_GENERATION,
+      preTokenFn
+    );
 
     const googleProvider = new cognito.UserPoolIdentityProviderGoogle(
       this,
@@ -64,9 +98,7 @@ export class AuthConstruct extends Construct {
       {
         userPool: this.userPool,
         clientId: props.googleClientIdParameter.valueAsString,
-        clientSecretValue: cdk.SecretValue.cfnParameter(
-          props.googleClientSecretParameter
-        ),
+        clientSecretValue: googleSecret.secretValue,
         scopes: ["profile", "email", "openid"],
         attributeMapping: {
           email: cognito.ProviderAttribute.GOOGLE_EMAIL,
@@ -187,17 +219,6 @@ export class AuthConstruct extends Construct {
           },
           physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-pw"),
         },
-        onUpdate: {
-          service: "CognitoIdentityServiceProvider",
-          action: "adminSetUserPassword",
-          parameters: {
-            UserPoolId: this.userPool.userPoolId,
-            Username: bootstrapEmail,
-            Password: bootstrapPassword,
-            Permanent: true,
-          },
-          physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-pw"),
-        },
         policy: cognitoAdminPolicy,
         installLatestAwsSdk: false,
       }
@@ -209,16 +230,6 @@ export class AuthConstruct extends Construct {
       "BootstrapAdminAddToGroup",
       {
         onCreate: {
-          service: "CognitoIdentityServiceProvider",
-          action: "adminAddUserToGroup",
-          parameters: {
-            UserPoolId: this.userPool.userPoolId,
-            Username: bootstrapEmail,
-            GroupName: this.adminGroupName,
-          },
-          physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-group"),
-        },
-        onUpdate: {
           service: "CognitoIdentityServiceProvider",
           action: "adminAddUserToGroup",
           parameters: {
@@ -240,7 +251,10 @@ export class AuthConstruct extends Construct {
    * REST API Gateway Cognito authorizer (optional). The HTTP API uses an
    * HttpJwtAuthorizer instead; see AdminApiStack.
    */
-  createApiAuthorizer(scope: Construct, id: string): apigateway.CognitoUserPoolsAuthorizer {
+  createApiAuthorizer(
+    scope: Construct,
+    id: string
+  ): apigateway.CognitoUserPoolsAuthorizer {
     return new apigateway.CognitoUserPoolsAuthorizer(scope, id, {
       cognitoUserPools: [this.userPool],
       identitySource: "method.request.header.Authorization",
