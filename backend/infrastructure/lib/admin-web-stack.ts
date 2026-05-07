@@ -2,7 +2,6 @@ import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
-import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
 
@@ -199,32 +198,9 @@ export class AdminWebStack extends cdk.Stack {
       )
     );
 
-    const bucketPolicy = new s3.BucketPolicy(this, "AdminWebBucketPolicy", {
-      bucket: this.bucket,
-    });
-
-    bucketPolicy.document.addStatements(
-      new iam.PolicyStatement({
-        sid: "AllowCloudFrontServicePrincipalReadOnly",
-        effect: iam.Effect.ALLOW,
-        actions: ["s3:GetObject"],
-        resources: [this.bucket.arnForObjects("*")],
-        principals: [new iam.ServicePrincipal("cloudfront.amazonaws.com")],
-        conditions: {
-          StringEquals: {
-            "AWS:SourceArn": cdk.Arn.format(
-              {
-                service: "cloudfront",
-                resource: "distribution",
-                resourceName: this.distribution.distributionId,
-                region: "",
-              },
-              this
-            ),
-          },
-        },
-      })
-    );
+    // OAC read access is applied by origins.S3BucketOrigin.withOriginAccessControl via
+    // bucket.addToResourcePolicy. Do not add a second BucketPolicy on the same bucket — S3
+    // returns 409 when two CloudFormation policy resources update the bucket concurrently.
 
     new cdk.CfnOutput(this, "AdminWebBucketName", {
       value: this.bucket.bucketName,
