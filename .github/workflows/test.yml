@@ -5,12 +5,14 @@ on:
   pull_request:
     paths:
       - "apps/public_www/**"
+      - "apps/admin_web/**"
       - "backend/infrastructure/**"
   push:
     branches:
       - main
     paths:
       - "apps/public_www/**"
+      - "apps/admin_web/**"
       - "backend/infrastructure/**"
 
 jobs:
@@ -35,6 +37,44 @@ jobs:
       - name: Run tests
         run: npm run test --if-present
         working-directory: apps/public_www
+
+  build-admin-web:
+    name: Build Admin Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: apps/admin_web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: apps/admin_web
+
+      - name: Build admin website
+        run: npm run build
+        working-directory: apps/admin_web
+        env:
+          VITE_COGNITO_USER_POOL_ID: us-east-1_PLACEHOLDER
+          VITE_COGNITO_CLIENT_ID: placeholder-client-id
+          VITE_COGNITO_DOMAIN: https://placeholder.auth.us-east-1.amazoncognito.com
+          VITE_COGNITO_REDIRECT_URI: http://localhost:5173/auth/callback
+          VITE_API_BASE_URL: https://placeholder.execute-api.us-east-1.amazonaws.com
+
+      - name: Test admin website
+        run: npm test
+        working-directory: apps/admin_web
+        env:
+          VITE_COGNITO_USER_POOL_ID: us-east-1_PLACEHOLDER
+          VITE_COGNITO_CLIENT_ID: placeholder-client-id
+          VITE_COGNITO_DOMAIN: https://placeholder.auth.us-east-1.amazoncognito.com
+          VITE_COGNITO_REDIRECT_URI: http://localhost:5173/auth/callback
+          VITE_API_BASE_URL: https://placeholder.execute-api.us-east-1.amazonaws.com
 
   test-infrastructure:
     name: Test Infrastructure

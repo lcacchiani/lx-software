@@ -1,0 +1,28 @@
+:root {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f172a;
+  background-color: #f8f9fa;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #f8f9fa;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.admin-sidebar {
+  min-width: 220px;
+  max-width: 260px;
+}
+
+.admin-main {
+  min-height: calc(100vh - 56px);
+}

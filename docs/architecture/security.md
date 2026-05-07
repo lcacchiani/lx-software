@@ -41,6 +41,25 @@ be able to assume these roles:
 Replace `ACCOUNT_ID` with your AWS account ID. If using a custom bootstrap
 qualifier, replace `hnb659fds` with your qualifier.
 
+### Admin console stacks (lx-admin-*)
+
+After the admin CDK stacks are introduced, extend `GitHubActionsRole` so CI can
+manage them alongside the public site. Typical additions include:
+
+- **CloudFormation**: `cloudformation:*` (or narrower create/update/describe/delete)
+  on stack ARNs `arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/lx-admin-*/*`.
+- **S3**: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on the
+  `lx-admin-web-*` website bucket and, for the deploy script, the same for
+  objects synced by GitHub Actions. Prefer scoping to explicit bucket ARNs.
+- **CloudFront**: `cloudfront:CreateInvalidation` on the admin distribution ARN
+  (output `AdminWebDistributionId` / distribution ARN).
+- **Cognito**: `cognito-idp:DescribeUserPool`, `cognito-idp:DescribeUserPoolClient`,
+  and related read-only calls if you add verification jobs (optional).
+
+The **Deploy Admin Infra** workflow runs `cdk deploy` for five stacks; the role
+must still be able to assume CDK bootstrap deployment roles and publish assets,
+as described above.
+
 ### SSM parameter read access
 
 For bootstrap status checks:
