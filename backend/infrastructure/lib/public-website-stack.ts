@@ -80,6 +80,13 @@ export class PublicWebsiteStack extends cdk.Stack {
       certificateArn.valueAsString
     );
 
+    // Imported buckets cannot receive CDK's automatic OAC bucket policy statement; we grant
+    // CloudFront read access explicitly below. Acknowledge the library warning so synth stays clean.
+    cdk.Annotations.of(this).acknowledgeWarning(
+      "@aws-cdk/aws-cloudfront-origins:updateImportedBucketPolicyOac",
+      "OAC access for the imported public website bucket is granted via PublicWebsiteBucketPolicy.",
+    );
+
     // Use Origin Access Control (OAC) - the recommended approach for S3 origins
     // OAC is more secure than the legacy OAI and supports additional features
     const origin = origins.S3BucketOrigin.withOriginAccessControl(this.bucket);

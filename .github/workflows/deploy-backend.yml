@@ -131,7 +131,7 @@ jobs:
             RESOLVED_PARAM_FILE=$(resolve_param_file "$CDK_PARAM_FILE" || true)
             if [ -n "$RESOLVED_PARAM_FILE" ]; then
               PARAM_ARGS_FILE="$(mktemp)"
-              jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PARAM_ARGS_FILE"
+              jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | .key = (if (.key | test(":")) then .key else "lxsoftware-public-www:\(.key)" end) | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PARAM_ARGS_FILE"
               readarray -t PARAM_ARGS < "$PARAM_ARGS_FILE"
             else
               echo "CDK_PARAM_FILE '$CDK_PARAM_FILE' not found"
@@ -139,8 +139,14 @@ jobs:
             fi
           fi
 
+          # Deploy the public website stack alone first: CDK_PARAM_FILE keys are scoped to
+          # lxsoftware-public-www (see jq above). A single multi-stack deploy would forward
+          # those parameters to every stack and fail templates that do not declare them.
           npx cdk deploy --require-approval never \
             "${PARAM_ARGS[@]}" \
+            "$PUBLIC_STACK"
+
+          npx cdk deploy --require-approval never \
             --parameters lx-admin-auth:AdminWebDomainName=admin.lx-software.com \
             --parameters "lx-admin-auth:GoogleClientId=${P_GOOGLE_CLIENT_ID}" \
             --parameters "lx-admin-auth:GoogleClientSecret=${P_GOOGLE_CLIENT_SECRET}" \
@@ -150,4 +156,4 @@ jobs:
             --parameters lx-admin-auth:CognitoDomainPrefix=lx-admin-auth \
             --parameters lx-admin-web:AdminWebDomainName=admin.lx-software.com \
             --parameters "lx-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
-            "$PUBLIC_STACK" "${ADMIN_STACKS[@]}"
+            "${ADMIN_STACKS[@]}"

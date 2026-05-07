@@ -101,7 +101,7 @@ jobs:
               RESOLVED_PARAM_FILE=$(resolve_param_file "$CDK_PARAM_FILE" || true)
               if [ -n "$RESOLVED_PARAM_FILE" ]; then
                 PARAM_ARGS_FILE="$(mktemp)"
-                jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PARAM_ARGS_FILE"
+                jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | .key = (if (.key | test(":")) then .key else "lxsoftware-public-www:\(.key)" end) | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PARAM_ARGS_FILE"
                 readarray -t PARAM_ARGS < "$PARAM_ARGS_FILE"
               else
                 echo "CDK_PARAM_FILE '$CDK_PARAM_FILE' not found"
