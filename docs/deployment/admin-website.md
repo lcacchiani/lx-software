@@ -8,7 +8,9 @@ then deploy the SPA.
 
 Before triggering **Deploy Admin Infra**:
 
-1. **GitHub environment** — set `AWS_ACCOUNT_ID`, `AWS_REGION`, `ADMIN_ACM_CERT_ARN`,
+1. **GitHub environment** — set `AWS_ACCOUNT_ID`, `AWS_REGION`, optional
+   **`CDK_BOOTSTRAP_QUALIFIER`** (only if you did not use the default `hnb659fds`),
+   `ADMIN_ACM_CERT_ARN`,
    `ADMIN_GOOGLE_CLIENT_ID`, **`ADMIN_FEDERATED_EMAIL_ALLOWLIST`** (comma-separated
    lower-case emails that should receive `admin` via Pre Token Generation — include
    every Google admin and the bootstrap email), `ADMIN_BOOTSTRAP_EMAIL`, and
@@ -18,12 +20,18 @@ Before triggering **Deploy Admin Infra**:
 2. **Bootstrap password** — must satisfy the pool policy (14+ chars with mixed
    classes) or `adminCreateUser` fails.
 3. **Region** — `AWS_REGION` for GitHub Actions must match the region where the
-   stacks deploy (same as the public site). Cross-stack token wiring for CSP
-   assumes this.
-4. **ACM** — `ADMIN_ACM_CERT_ARN` must be **ISSUED** in **us-east-1** (CloudFront).
-5. **Cloudflare** — proxy **OFF** (gray cloud) for ACM validation and for the
+   stacks deploy (same as the public site). **CDK must be bootstrapped in that
+   same region** (SSM `/cdk-bootstrap/<qualifier>/version` must exist), or
+   **Deploy Admin Infra** will fail. Cross-stack CSP wiring assumes this region.
+4. **GitHubActionsRole** — must be allowed to `sts:AssumeRole` the CDK asset
+   publishing / deploy roles (`cdk-hnb659fds-*` or your `CDK_BOOTSTRAP_QUALIFIER`)
+   and `ssm:GetParameter` on `/cdk-bootstrap/*`. If logs show “could not be used
+   to assume … file-publishing-role” and deploy fails on missing bootstrap SSM,
+   fix bootstrap + IAM trust first.
+5. **ACM** — `ADMIN_ACM_CERT_ARN` must be **ISSUED** in **us-east-1** (CloudFront).
+6. **Cloudflare** — proxy **OFF** (gray cloud) for ACM validation and for the
    `admin` CNAME.
-6. **Google OAuth client** — add `https://<cognito-domain>/oauth2/idpresponse` to
+7. **Google OAuth client** — add `https://<cognito-domain>/oauth2/idpresponse` to
    authorized redirect URIs **before** the first Hosted UI sign-in.
 
 After the first deploy, **verify** that `AdminFederatedEmailAllowlist` includes
