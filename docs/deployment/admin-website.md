@@ -6,7 +6,7 @@ then deploy the SPA.
 
 ## Pre-deploy checklist (junior dev)
 
-Before triggering **Deploy Backend Infra**:
+Before triggering **Deploy Backend**:
 
 1. **GitHub environment** — set `AWS_ACCOUNT_ID`, `AWS_REGION`, optional
    **`CDK_BOOTSTRAP_QUALIFIER`** (only if you did not use the default `hnb659fds`),
@@ -22,7 +22,7 @@ Before triggering **Deploy Backend Infra**:
 3. **Region** — `AWS_REGION` for GitHub Actions must match the region where the
    stacks deploy (same as the public site). **CDK Bootstrap** must be complete in
    that same region (SSM `/cdk-bootstrap/<qualifier>/version` must exist), or
-   **Deploy Backend Infra** will fail. Cross-stack CSP wiring assumes this region.
+   **Deploy Backend** will fail. Cross-stack CSP wiring assumes this region.
 4. **GitHubActionsRole** — must be allowed to `sts:AssumeRole` the CDK asset
    publishing / deploy roles (`cdk-hnb659fds-*` or your `CDK_BOOTSTRAP_QUALIFIER`)
    and `ssm:GetParameter` on `/cdk-bootstrap/*`. If logs show “could not be used
@@ -62,7 +62,7 @@ as described in the checklist above and in `docs/architecture/security.md`.
 
 ## 4. Deploy admin infrastructure
 
-Run the **Deploy Backend Infra** workflow (or invoke CDK locally with the same
+Run the **Deploy Backend** workflow (or invoke CDK locally with the same
 parameters). Confirm all five stacks finish successfully:
 
 - `lx-admin-auth`

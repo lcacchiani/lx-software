@@ -56,7 +56,8 @@ manage them alongside the public site. Typical additions include:
 - **Cognito**: `cognito-idp:DescribeUserPool`, `cognito-idp:DescribeUserPoolClient`,
   and related read-only calls if you add verification jobs (optional).
 
-The **Deploy Backend Infra** workflow runs `cdk deploy` for five stacks; the role
+The **Deploy Backend** workflow runs `cdk deploy` for the public website stack and
+the five `lx-admin-*` stacks; the role
 must still be able to assume CDK Bootstrap deployment roles and publish assets,
 as described above.
 

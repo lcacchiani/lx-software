@@ -1,10 +1,13 @@
 name: Deploy Backend
 
 on:
+  push:
+    branches: [main]
+    paths: ["backend/infrastructure/**"]
   workflow_dispatch:
     inputs:
       destroy_before_deploy:
-        description: "Run ‘cdk destroy’ before deploy"
+        description: "Run ‘cdk destroy’ on the public website stack before deploy (lxsoftware-public-www only)"
         type: boolean
         required: false
         default: false
@@ -41,13 +44,12 @@ jobs:
 
       - name: Install CDK dependencies
         run: |
-          if [ -f "backend/infrastructure/package.json" ]; then
-            cd backend/infrastructure
-            npm ci
-          else
+          if [ ! -f "backend/infrastructure/package.json" ]; then
             echo "Missing backend/infrastructure/package.json"
             exit 1
           fi
+          cd backend/infrastructure
+          npm ci
 
       - name: Build CDK app
         run: |
@@ -58,20 +60,23 @@ jobs:
         run: |
           QUALIFIER="${CDK_BOOTSTRAP_QUALIFIER:-hnb659fds}"
           SSM_PARAM="/cdk-bootstrap/${QUALIFIER}/version"
-          echo "Checking for CDK Bootstrap in account $AWS_ACCOUNT_ID region $AWS_REGION..."
+          echo "Checking for CDK Bootstrap in account $AWS_ACCOUNT_ID region $AWS_REGION (qualifier=$QUALIFIER)..."
           if ! aws ssm get-parameter --name "$SSM_PARAM" --query "Parameter.Value" --output text 2>/dev/null; then
             echo ""
             echo "::error::CDK Bootstrap not found or not accessible."
             echo "::error::The SSM parameter '$SSM_PARAM' could not be read."
             echo ""
             echo "Possible causes:"
-            echo "  1. CDK Bootstrap missing: run 'cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION'"
+            echo "  1. CDK Bootstrap missing: run 'npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION'"
             echo "  2. Permission denied: GitHubActionsRole needs ssm:GetParameter on /cdk-bootstrap/*"
             echo "  3. Wrong region: Verify AWS_REGION matches the bootstrapped region"
             echo ""
-            echo "If bootstrap was run from another repo, ensure GitHubActionsRole has:"
-            echo "  - sts:AssumeRole on cdk-${QUALIFIER}-*-role-* resources"
-            echo "  - ssm:GetParameter on /cdk-bootstrap/* parameters"
+            echo "If you use a custom bootstrap qualifier, set GitHub variable CDK_BOOTSTRAP_QUALIFIER"
+            echo "to match this repo's bin/app.ts / CDK CLI."
+            echo ""
+            echo "If CDK Bootstrap exists but this job still fails:"
+            echo "  - GitHubActionsRole needs sts:AssumeRole on arn:aws:iam::$AWS_ACCOUNT_ID:role/cdk-${QUALIFIER}-*-role-*"
+            echo "  - CDK deploy/file-publish roles must trust GitHubActionsRole (or your org's deploy principal)"
             echo ""
             exit 1
           fi
@@ -81,13 +86,31 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}
 
-      - name: Deploy CDK stacks
+      - name: Destroy public website stack (optional)
+        if: github.event_name == 'workflow_dispatch' && inputs.destroy_before_deploy
+        working-directory: backend/infrastructure
         run: |
-          cd backend/infrastructure
-          npx cdk acknowledge 34892 || true
-          STACK_NAME="lxsoftware-public-www"
+          echo "Destroying lxsoftware-public-www (admin stacks are not destroyed by this step)"
+          npx cdk destroy --force lxsoftware-public-www
 
-          # Prepare parameter arguments
+      - name: Deploy CDK stacks
+        working-directory: backend/infrastructure
+        env:
+          CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
+          CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}
+          P_GOOGLE_CLIENT_ID: ${{ vars.ADMIN_GOOGLE_CLIENT_ID }}
+          P_GOOGLE_CLIENT_SECRET: ${{ secrets.ADMIN_GOOGLE_CLIENT_SECRET }}
+          P_EMAIL_ALLOWLIST: ${{ vars.ADMIN_FEDERATED_EMAIL_ALLOWLIST }}
+          P_BOOTSTRAP_EMAIL: ${{ vars.ADMIN_BOOTSTRAP_EMAIL }}
+          P_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_TEMP_PASSWORD }}
+          P_ACM_CERT_ARN: ${{ vars.ADMIN_ACM_CERT_ARN }}
+        run: |
+          set -eo pipefail
+          npx cdk acknowledge 34892 || true
+
+          PUBLIC_STACK="lxsoftware-public-www"
+          ADMIN_STACKS=(lx-admin-auth lx-admin-data lx-admin-assets lx-admin-api lx-admin-web)
+
           PARAM_ARGS=()
           resolve_param_file() {
             local path="$1"
@@ -98,7 +121,7 @@ jobs:
               echo "$path"
               return 0
             fi
-            if [ -n "$GITHUB_WORKSPACE" ] && [ -f "$GITHUB_WORKSPACE/$path" ]; then
+            if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -f "$GITHUB_WORKSPACE/$path" ]; then
               echo "$GITHUB_WORKSPACE/$path"
               return 0
             fi
@@ -116,12 +139,15 @@ jobs:
             fi
           fi
 
-          if [ "${CDK_DESTROY_BEFORE_DEPLOY:-false}" = "true" ]; then
-            npx cdk destroy --force "$STACK_NAME"
-          fi
-
-          npx cdk deploy --require-approval "never" "${PARAM_ARGS[@]}" "$STACK_NAME"
-        env:
-          CDK_PARAM_FILE: ${{ vars.CDK_PARAM_FILE }}
-          CDK_DESTROY_BEFORE_DEPLOY: ${{ inputs.destroy_before_deploy }}
-          CDK_BOOTSTRAP_QUALIFIER: ${{ vars.CDK_BOOTSTRAP_QUALIFIER }}
+          npx cdk deploy --require-approval never \
+            "${PARAM_ARGS[@]}" \
+            --parameters lx-admin-auth:AdminWebDomainName=admin.lx-software.com \
+            --parameters "lx-admin-auth:GoogleClientId=${P_GOOGLE_CLIENT_ID}" \
+            --parameters "lx-admin-auth:GoogleClientSecret=${P_GOOGLE_CLIENT_SECRET}" \
+            --parameters "lx-admin-auth:AdminFederatedEmailAllowlist=${P_EMAIL_ALLOWLIST}" \
+            --parameters "lx-admin-auth:AdminBootstrapEmail=${P_BOOTSTRAP_EMAIL}" \
+            --parameters "lx-admin-auth:AdminBootstrapTempPassword=${P_BOOTSTRAP_PASSWORD}" \
+            --parameters lx-admin-auth:CognitoDomainPrefix=lx-admin-auth \
+            --parameters lx-admin-web:AdminWebDomainName=admin.lx-software.com \
+            --parameters "lx-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
+            "$PUBLIC_STACK" "${ADMIN_STACKS[@]}"
