@@ -33,18 +33,25 @@ jobs:
 
       - name: cdk deploy
         working-directory: backend/infrastructure
+        env:
+          P_GOOGLE_CLIENT_ID: ${{ vars.ADMIN_GOOGLE_CLIENT_ID }}
+          P_GOOGLE_CLIENT_SECRET: ${{ secrets.ADMIN_GOOGLE_CLIENT_SECRET }}
+          P_EMAIL_ALLOWLIST: ${{ vars.ADMIN_FEDERATED_EMAIL_ALLOWLIST }}
+          P_BOOTSTRAP_EMAIL: ${{ vars.ADMIN_BOOTSTRAP_EMAIL }}
+          P_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_TEMP_PASSWORD }}
+          P_ACM_CERT_ARN: ${{ vars.ADMIN_ACM_CERT_ARN }}
         run: |
-          # CDK advisory 34892 (legacy OAI/OAC migration noise); acknowledge so
-          # synth/deploy is not blocked in accounts where the notice is active.
+          set -eo pipefail
+          # CDK advisory 34892: acknowledge legacy OAI/OAC migration notice so synth is not blocked.
           npx cdk acknowledge 34892 || true
           npx cdk deploy lx-admin-auth lx-admin-data lx-admin-assets lx-admin-api lx-admin-web \
             --require-approval never \
             --parameters lx-admin-auth:AdminWebDomainName=admin.lx-software.com \
-            --parameters lx-admin-auth:GoogleClientId=${{ vars.ADMIN_GOOGLE_CLIENT_ID }} \
-            --parameters lx-admin-auth:GoogleClientSecret=${{ secrets.ADMIN_GOOGLE_CLIENT_SECRET }} \
-            --parameters lx-admin-auth:AdminFederatedEmailAllowlist=${{ vars.ADMIN_FEDERATED_EMAIL_ALLOWLIST }} \
-            --parameters lx-admin-auth:AdminBootstrapEmail=${{ vars.ADMIN_BOOTSTRAP_EMAIL }} \
-            --parameters lx-admin-auth:AdminBootstrapTempPassword=${{ secrets.ADMIN_BOOTSTRAP_TEMP_PASSWORD }} \
+            --parameters "lx-admin-auth:GoogleClientId=${P_GOOGLE_CLIENT_ID}" \
+            --parameters "lx-admin-auth:GoogleClientSecret=${P_GOOGLE_CLIENT_SECRET}" \
+            --parameters "lx-admin-auth:AdminFederatedEmailAllowlist=${P_EMAIL_ALLOWLIST}" \
+            --parameters "lx-admin-auth:AdminBootstrapEmail=${P_BOOTSTRAP_EMAIL}" \
+            --parameters "lx-admin-auth:AdminBootstrapTempPassword=${P_BOOTSTRAP_PASSWORD}" \
             --parameters lx-admin-auth:CognitoDomainPrefix=lx-admin-auth \
             --parameters lx-admin-web:AdminWebDomainName=admin.lx-software.com \
-            --parameters lx-admin-web:AdminWebCertificateArn=${{ vars.ADMIN_ACM_CERT_ARN }}
+            --parameters "lx-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}"
