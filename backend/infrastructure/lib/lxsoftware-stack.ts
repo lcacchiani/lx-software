@@ -309,8 +309,16 @@ export class LxsoftwareStack extends cdk.Stack {
         routeKey: "$context.routeKey",
         status: "$context.status",
         integrationError: "$context.integrationErrorMessage",
+        authorizerError: "$context.authorizer.error",
         httpMethod: "$context.httpMethod",
         path: "$context.path",
+        sourceIp: "$context.identity.sourceIp",
+        // Populated by HttpJwtAuthorizer; lets us correlate 4xx with the
+        // specific Cognito identity / token without having to add per-handler logs.
+        claimSub: "$context.authorizer.claims.sub",
+        claimEmail: "$context.authorizer.claims.email",
+        claimGroups: "$context.authorizer.claims.cognito:groups",
+        claimTokenUse: "$context.authorizer.claims.token_use",
       }),
     };
 

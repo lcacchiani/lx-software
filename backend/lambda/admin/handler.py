@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import os
 import time
 import uuid
@@ -15,6 +16,9 @@ from urllib.parse import parse_qs
 
 import boto3
 from botocore.exceptions import ClientError
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 ADMIN_GROUP = "admin"
 RECORD_PK_PREFIX = "RECORD#"
@@ -267,8 +271,38 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     admin_claims = _require_admin(event)
     if admin_claims is None:
-        if not _claims(event):
+        claims = _claims(event)
+        if not claims:
+            logger.info(
+                json.dumps(
+                    {
+                        "tag": "admin_auth_denied",
+                        "reason": "missing_claims",
+                        "method": method,
+                        "path": path,
+                        "request_id": _request_id(event),
+                    }
+                )
+            )
             return _json_response(401, {"message": "Unauthorized"})
+        logger.info(
+            json.dumps(
+                {
+                    "tag": "admin_auth_denied",
+                    "reason": "not_in_admin_group",
+                    "method": method,
+                    "path": path,
+                    "request_id": _request_id(event),
+                    "sub": claims.get("sub"),
+                    "email": claims.get("email"),
+                    "cognito_username": claims.get("cognito:username"),
+                    "cognito_groups": claims.get("cognito:groups"),
+                    "token_use": claims.get("token_use"),
+                    "iss": claims.get("iss"),
+                    "aud": claims.get("aud"),
+                }
+            )
+        )
         return _json_response(403, {"message": "Forbidden: admin group required"})
 
     user_sub = admin_claims.get("sub")
