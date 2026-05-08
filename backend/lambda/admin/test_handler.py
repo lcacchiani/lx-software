@@ -30,9 +30,29 @@ class TestGroups(unittest.TestCase):
     def test_admin_present(self) -> None:
         self.assertTrue(_groups_include_admin({"cognito:groups": "admin"}))
         self.assertTrue(_groups_include_admin({"cognito:groups": "viewer,admin"}))
+        self.assertTrue(_groups_include_admin({"cognito:groups": ["admin"]}))
+        self.assertTrue(
+            _groups_include_admin({"cognito:groups": ["viewer", "admin"]})
+        )
+
+    def test_admin_present_httpapi_bracketed(self) -> None:
+        # API Gateway HTTP API JWT authorizer passes array claims as a
+        # Java toString() string, with literal brackets and ", " separators.
+        self.assertTrue(_groups_include_admin({"cognito:groups": "[admin]"}))
+        self.assertTrue(
+            _groups_include_admin({"cognito:groups": "[viewer, admin]"})
+        )
+        self.assertTrue(
+            _groups_include_admin({"cognito:groups": "[admin, viewer]"})
+        )
 
     def test_admin_absent(self) -> None:
         self.assertFalse(_groups_include_admin({"cognito:groups": "viewer"}))
+        self.assertFalse(_groups_include_admin({"cognito:groups": "[viewer]"}))
+        self.assertFalse(
+            _groups_include_admin({"cognito:groups": "[viewer, editor]"})
+        )
+        self.assertFalse(_groups_include_admin({"cognito:groups": []}))
         self.assertFalse(_groups_include_admin({}))
 
 

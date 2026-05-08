@@ -63,7 +63,15 @@ def _groups_include_admin(claims: dict[str, Any]) -> bool:
         return False
     if isinstance(raw, list):
         return ADMIN_GROUP in raw
-    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    # API Gateway HTTP API JWT authorizer flattens array claims using Java-style
+    # toString(), e.g. ["admin"] -> "[admin]" and ["viewer","admin"] -> "[viewer, admin]".
+    # Strip the surrounding brackets before splitting on commas so we accept
+    # both the bracketed form (HttpApi authorizer) and a plain comma-separated
+    # string (REST API or local-decoded claims).
+    s = str(raw).strip()
+    if s.startswith("[") and s.endswith("]"):
+        s = s[1:-1]
+    parts = [p.strip() for p in s.split(",") if p.strip()]
     return ADMIN_GROUP in parts
 
 
