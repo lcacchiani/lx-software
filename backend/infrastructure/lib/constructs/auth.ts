@@ -46,7 +46,7 @@ export class AuthConstruct extends Construct {
     ]);
 
     this.userPool = new cognito.UserPool(this, "UserPool", {
-      userPoolName: "lx-admin-user-pool",
+      userPoolName: "lxsoftware-admin-user-pool",
       selfSignUpEnabled: false,
       signInAliases: { email: true },
       autoVerify: { email: true },
@@ -105,7 +105,7 @@ export class AuthConstruct extends Construct {
     );
 
     this.userPoolClient = this.userPool.addClient("UserPoolClient", {
-      userPoolClientName: "lx-admin-spa-client",
+      userPoolClientName: "lxsoftware-admin-spa-client",
       generateSecret: false,
       authFlows: {
         userSrp: true,
@@ -182,7 +182,7 @@ export class AuthConstruct extends Construct {
               { Name: "email_verified", Value: "true" },
             ],
           },
-          physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-user"),
+          physicalResourceId: cr.PhysicalResourceId.of("lxsoftware-admin-bootstrap-user"),
           ignoreErrorCodesMatching: "UsernameExistsException",
         },
         onUpdate: {
@@ -192,7 +192,7 @@ export class AuthConstruct extends Construct {
             UserPoolId: this.userPool.userPoolId,
             Username: bootstrapEmail,
           },
-          physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-user"),
+          physicalResourceId: cr.PhysicalResourceId.of("lxsoftware-admin-bootstrap-user"),
         },
         policy: cognitoAdminPolicy,
         installLatestAwsSdk: false,
@@ -212,7 +212,7 @@ export class AuthConstruct extends Construct {
             Password: bootstrapPassword,
             Permanent: true,
           },
-          physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-pw"),
+          physicalResourceId: cr.PhysicalResourceId.of("lxsoftware-admin-bootstrap-pw"),
         },
         policy: cognitoAdminPolicy,
         installLatestAwsSdk: false,
@@ -232,7 +232,7 @@ export class AuthConstruct extends Construct {
             Username: bootstrapEmail,
             GroupName: this.adminGroupName,
           },
-          physicalResourceId: cr.PhysicalResourceId.of("lx-admin-bootstrap-group"),
+          physicalResourceId: cr.PhysicalResourceId.of("lxsoftware-admin-bootstrap-group"),
         },
         policy: cognitoAdminPolicy,
         installLatestAwsSdk: false,
@@ -244,7 +244,7 @@ export class AuthConstruct extends Construct {
 
   /**
    * REST API Gateway Cognito authorizer (optional). The HTTP API uses an
-   * HttpJwtAuthorizer instead; see AdminApiStack.
+   * HttpJwtAuthorizer instead; see LxsoftwareStack.
    */
   createApiAuthorizer(
     scope: Construct,
@@ -253,7 +253,7 @@ export class AuthConstruct extends Construct {
     return new apigateway.CognitoUserPoolsAuthorizer(scope, id, {
       cognitoUserPools: [this.userPool],
       identitySource: "method.request.header.Authorization",
-      authorizerName: "lx-admin-cognito",
+      authorizerName: "lxsoftware-admin-cognito",
     });
   }
 }

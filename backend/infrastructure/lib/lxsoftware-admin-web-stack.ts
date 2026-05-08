@@ -16,10 +16,7 @@ export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
 /**
  * Admin SPA delivery: private S3 origin + CloudFront distribution + WAF/CSP.
  *
- * Renamed from `lx-admin-web` → `lxsoftware-admin-web`. Physical resource
- * names (bucket names, response headers policy name) are kept identical to
- * the legacy stack so the existing resources can be imported into this stack
- * with `cdk import` without recreation.
+ * All physical names use the `lxsoftware-admin-*` prefix.
  */
 export class LxsoftwareAdminWebStack extends cdk.Stack {
   public readonly bucket: s3.Bucket;
@@ -29,9 +26,7 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LxsoftwareAdminWebStackProps) {
     super(scope, id, props);
 
-    // Physical resource names use this prefix to remain stable across the
-    // stack rename (lx-admin-web -> lxsoftware-admin-web).
-    const resourcePrefix = "lx-admin";
+    const resourcePrefix = "lxsoftware-admin";
 
     const domainName = new cdk.CfnParameter(this, "AdminWebDomainName", {
       type: "String",

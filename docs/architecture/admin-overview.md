@@ -50,7 +50,10 @@ consolidated stack rather than the previous five-stack split.
 | `lxsoftware`              | Admin backend: Cognito + Pre Token Generation Lambda, DynamoDB tables, private uploads bucket, HTTP API + admin Lambda. |
 | `lxsoftware-admin-web`    | Admin SPA delivery: S3 + CloudFront + WAF/CSP.                                           |
 
-Physical resource names (DynamoDB tables `lx-admin-records` and
-`lx-admin-audit-log`, the user pool `lx-admin-user-pool`, S3 buckets
-`lx-admin-assets-*`, `lx-admin-web-*`, etc.) are kept stable across the
-consolidation so existing data is preserved on import.
+All physical resource names use the `lxsoftware-admin-*` prefix
+(DynamoDB tables `lxsoftware-admin-records` and
+`lxsoftware-admin-audit-log`, the user pool `lxsoftware-admin-user-pool`,
+S3 buckets `lxsoftware-admin-assets-*`, `lxsoftware-admin-assets-logs-*`,
+`lxsoftware-admin-web-*`, `lxsoftware-admin-web-logs-*`, the HTTP API
+`lxsoftware-admin-api`, and the Cognito hosted UI prefix
+`lxsoftware-admin-auth`).
