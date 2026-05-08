@@ -38,6 +38,14 @@ export function AuthenticatedShell() {
               Dashboard
             </NavLink>
             <NavLink
+              to="/finance"
+              className={({ isActive }) =>
+                `nav-link rounded ${isActive ? "active fw-semibold" : ""}`
+              }
+            >
+              Finance
+            </NavLink>
+            <NavLink
               to="/assets"
               className={({ isActive }) =>
                 `nav-link rounded ${isActive ? "active fw-semibold" : ""}`

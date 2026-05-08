@@ -8,6 +8,7 @@ import json
 import os
 import time
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs
@@ -17,6 +18,10 @@ from botocore.exceptions import ClientError
 
 ADMIN_GROUP = "admin"
 RECORD_PK_PREFIX = "RECORD#"
+FINANCE_HOUSE_KEYS = frozenset({"hillmarton", "morrison"})
+FINANCE_LINE_TYPES = frozenset({"income", "expenditure"})
+MAX_FINANCE_LINES = 5000
+MAX_FINANCE_DESCRIPTION = 8000
 _s3 = boto3.client("s3")
 _ddb = boto3.resource("dynamodb")
 
@@ -113,6 +118,141 @@ def _decode_cursor(raw: str) -> dict[str, Any] | None:
 def _encode_cursor(key: dict[str, Any]) -> str:
     raw = json.dumps(key, separators=(",", ":"), default=str).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _to_ddb_nested(obj: Any) -> Any:
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, dict):
+        return {k: _to_ddb_nested(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_ddb_nested(v) for v in obj]
+    return obj
+
+
+def _from_ddb_nested(obj: Any) -> Any:
+    if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _from_ddb_nested(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_from_ddb_nested(v) for v in obj]
+    if isinstance(obj, (bytes, bytearray)):
+        return base64.b64encode(obj).decode("ascii")
+    return obj
+
+
+def _default_finance_house() -> dict[str, Any]:
+    return {"float": {"amount": 0, "currency": "GBP"}, "lines": []}
+
+
+def _valid_iso_instant(s: str) -> bool:
+    try:
+        datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    fl = body.get("float")
+    if not isinstance(fl, dict):
+        raise ValueError("float is required")
+    amt = fl.get("amount")
+    if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+        raise ValueError("float.amount must be a number")
+    if abs(float(amt)) > 1e15:
+        raise ValueError("float.amount out of range")
+    cur_raw = fl.get("currency", "GBP")
+    if not isinstance(cur_raw, str) or not cur_raw.strip():
+        raise ValueError("float.currency is required")
+    cur = cur_raw.strip().upper()[:3]
+    if len(cur) < 3:
+        raise ValueError("float.currency must be a 3-letter ISO code")
+
+    lines_raw = body.get("lines")
+    if not isinstance(lines_raw, list):
+        raise ValueError("lines must be an array")
+    if len(lines_raw) > MAX_FINANCE_LINES:
+        raise ValueError(f"At most {MAX_FINANCE_LINES} lines allowed")
+
+    lines_out: list[dict[str, Any]] = []
+    for i, raw in enumerate(lines_raw):
+        if not isinstance(raw, dict):
+            raise ValueError(f"lines[{i}] must be an object")
+        lid = raw.get("id")
+        if not isinstance(lid, str) or not lid.strip():
+            raise ValueError(f"lines[{i}].id is required")
+        date_utc = raw.get("dateUtc")
+        if not isinstance(date_utc, str) or not _valid_iso_instant(date_utc):
+            raise ValueError(f"lines[{i}].dateUtc must be a valid ISO-8601 instant")
+        typ = raw.get("type")
+        if typ not in FINANCE_LINE_TYPES:
+            raise ValueError(f"lines[{i}].type must be income or expenditure")
+        desc = raw.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            raise ValueError(f"lines[{i}].description is required")
+        if len(desc) > MAX_FINANCE_DESCRIPTION:
+            raise ValueError(f"lines[{i}].description is too long")
+
+        for key in ("netAmount", "vat", "grossAmount"):
+            val = raw.get(key)
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ValueError(f"lines[{i}].{key} must be a number")
+            if abs(float(val)) > 1e15:
+                raise ValueError(f"lines[{i}].{key} out of range")
+
+        cur_line = raw.get("currency", "GBP")
+        if not isinstance(cur_line, str) or not cur_line.strip():
+            raise ValueError(f"lines[{i}].currency is required")
+        c = cur_line.strip().upper()[:3]
+        if len(c) < 3:
+            raise ValueError(f"lines[{i}].currency must be a 3-letter ISO code")
+
+        lines_out.append(
+            {
+                "id": lid.strip(),
+                "dateUtc": date_utc.strip(),
+                "type": typ,
+                "description": desc.strip(),
+                "netAmount": float(raw["netAmount"]),
+                "vat": float(raw["vat"]),
+                "grossAmount": float(raw["grossAmount"]),
+                "currency": c,
+            }
+        )
+
+    return {
+        "float": {"amount": float(amt), "currency": cur},
+        "lines": lines_out,
+    }
+
+
+def _finance_ddb_key(house: str) -> dict[str, str]:
+    return {"pk": f"FINANCE#house#{house}", "sk": "STATE"}
+
+
+def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
+    res = table.get_item(Key=_finance_ddb_key(house))
+    item = res.get("Item")
+    if not item:
+        return _default_finance_house()
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    return _from_ddb_nested(payload)
+
+
+def _path_finance_house(event: dict[str, Any], path: str) -> str | None:
+    pp = (event.get("pathParameters") or {}).get("house")
+    if isinstance(pp, str) and pp.strip():
+        return pp.strip().lower()
+    parts = [p for p in path.split("/") if p]
+    if len(parts) == 2 and parts[0] == "finance":
+        return parts[1].lower()
+    return None
 
 
 def _validate_record_pk(pk: str) -> bool:
@@ -295,6 +435,34 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             raise
         _audit(user_sub, "RECORD_UPDATE", f"{pk}|{sk}", event)
         return _json_response(200, {"item": _from_ddb(item)})
+
+    if method == "GET" and path == "/finance":
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        return _json_response(
+            200,
+            {
+                "hillmarton": _load_finance_house(table, "hillmarton"),
+                "morrison": _load_finance_house(table, "morrison"),
+            },
+        )
+
+    if method == "PUT" and path.startswith("/finance/"):
+        house = _path_finance_house(event, path)
+        if not house or house not in FINANCE_HOUSE_KEYS:
+            return _json_response(
+                400,
+                {"message": "house must be hillmarton or morrison"},
+            )
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_finance_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        ddb_item = {**_finance_ddb_key(house), **_to_ddb_nested(normalized)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", house, event)
+        return _json_response(200, {"data": normalized})
 
     return _json_response(404, {"message": "Not found"})
 

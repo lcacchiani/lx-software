@@ -34,11 +34,14 @@ resolve (Cognito and API URLs can point to a dev stack or be stubbed for UI-only
 | `npm run build` | `apps/public_www` | TypeScript check + Vite production build |
 | `npm run lint` | `apps/admin_web` | ESLint (flat config, TS + React) |
 | `npm run build` | `apps/admin_web` | TypeScript check + Vite build |
+| `npm run test` | `apps/admin_web` | Vitest + admin Lambda Python unit tests |
 | `npm run build` | `backend/infrastructure` | Compile CDK TypeScript |
 
-There are no automated test suites in this repo currently.
+There are no automated test suites for `apps/public_www` or CDK currently.
 
 ### Gotchas
+
+- **Admin UI patterns** (tables, editors, money/date formatting): see [`apps/admin_web/docs/UI_COMPONENTS.md`](apps/admin_web/docs/UI_COMPONENTS.md).
 
 - The public website fetches `/content.json` at runtime (served from `public/content.json` in dev). If you see missing content, ensure that file exists.
 - The admin SPA requires `VITE_*` Cognito and API settings; see `apps/admin_web/.env.example`.
