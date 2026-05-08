@@ -4,6 +4,7 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpJwtAuthorizer } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -16,6 +17,12 @@ import { createPythonLambda } from "./constructs/python-lambda";
  * Generation Lambda + Google IdP), DynamoDB tables, private uploads
  * bucket (with its own S3 access logs bucket), and the HTTP API plus
  * the admin Lambda that consumes them.
+ *
+ * The admin API Lambda runs in a **private VPC** (DynamoDB + S3 via gateway
+ * endpoints; Lambda + Logs + STS via interface endpoints) and can call an
+ * **out-of-VPC** allow-listed proxy Lambda for Cognito control-plane and
+ * outbound HTTPS — mirroring the split used when VPC-only workloads cannot
+ * reach public endpoints directly.
  *
  * All physical names use the `lxsoftware-admin-*` prefix.
  */
@@ -237,6 +244,92 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
+    // 3b. VPC for in-VPC Lambdas + out-of-VPC AWS/HTTP proxy
+    // ------------------------------------------------------------------
+    const adminWorkloadVpc = new ec2.Vpc(this, "AdminWorkloadVpc", {
+      vpcName: "lxsoftware-admin-workload",
+      maxAzs: 2,
+      natGateways: 0,
+      subnetConfiguration: [
+        {
+          name: "Private",
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          cidrMask: 24,
+        },
+      ],
+    });
+
+    adminWorkloadVpc.addGatewayEndpoint("DynamoDbGatewayEndpoint", {
+      service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+    });
+    adminWorkloadVpc.addGatewayEndpoint("S3GatewayEndpoint", {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+    });
+
+    const isolatedSubnets = { subnets: adminWorkloadVpc.isolatedSubnets };
+    adminWorkloadVpc.addInterfaceEndpoint("LambdaInterfaceEndpoint", {
+      service: ec2.InterfaceVpcEndpointAwsService.LAMBDA,
+      subnets: isolatedSubnets,
+    });
+    adminWorkloadVpc.addInterfaceEndpoint("CloudWatchLogsInterfaceEndpoint", {
+      service: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      subnets: isolatedSubnets,
+    });
+    adminWorkloadVpc.addInterfaceEndpoint("StsInterfaceEndpoint", {
+      service: ec2.InterfaceVpcEndpointAwsService.STS,
+      subnets: isolatedSubnets,
+    });
+
+    const adminApiLambdaSecurityGroup = new ec2.SecurityGroup(
+      this,
+      "AdminApiLambdaSecurityGroup",
+      {
+        vpc: adminWorkloadVpc,
+        description: "Admin API Lambda — outbound to AWS VPC endpoints",
+        allowAllOutbound: true,
+      }
+    );
+
+    const allowedProxyActionKeys = [
+      "cognito-idp:list_users",
+      "cognito-idp:list_users_in_group",
+      "cognito-idp:admin_get_user",
+      "cognito-idp:admin_delete_user",
+      "cognito-idp:admin_add_user_to_group",
+      "cognito-idp:admin_remove_user_from_group",
+      "cognito-idp:admin_list_groups_for_user",
+      "cognito-idp:admin_user_global_sign_out",
+      "cognito-idp:admin_update_user_attributes",
+    ];
+
+    const awsProxyFn = createPythonLambda(this, "AwsApiProxyFn", {
+      entryDir: path.join(__dirname, "..", "..", "lambda", "aws_proxy"),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(90),
+      environment: {
+        ALLOWED_ACTIONS: allowedProxyActionKeys.join(","),
+        ALLOWED_HTTP_URLS: "",
+      },
+    });
+
+    awsProxyFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "cognito-idp:ListUsers",
+          "cognito-idp:ListUsersInGroup",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminDeleteUser",
+          "cognito-idp:AdminAddUserToGroup",
+          "cognito-idp:AdminRemoveUserFromGroup",
+          "cognito-idp:AdminListGroupsForUser",
+          "cognito-idp:AdminUserGlobalSignOut",
+          "cognito-idp:AdminUpdateUserAttributes",
+        ],
+        resources: [this.auth.userPool.userPoolArn],
+      })
+    );
+
+    // ------------------------------------------------------------------
     // 4. HTTP API + admin Lambda
     // ------------------------------------------------------------------
     const region = cdk.Stack.of(this).region;
@@ -255,13 +348,19 @@ export class LxsoftwareStack extends cdk.Stack {
 
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
+      vpc: adminWorkloadVpc,
+      vpcSubnets: isolatedSubnets,
+      securityGroups: [adminApiLambdaSecurityGroup],
       environment: {
         RECORDS_TABLE_NAME: this.recordsTable.tableName,
         AUDIT_LOG_TABLE_NAME: this.auditLogTable.tableName,
         ASSETS_BUCKET_NAME: this.assetsBucket.bucketName,
         ASSET_MAX_BYTES: String(20 * 1024 * 1024),
+        AWS_PROXY_FUNCTION_ARN: awsProxyFn.functionArn,
       },
     });
+
+    awsProxyFn.grantInvoke(adminFn);
 
     this.recordsTable.grantReadWriteData(adminFn);
     this.auditLogTable.grantReadWriteData(adminFn);
@@ -423,6 +522,13 @@ export class LxsoftwareStack extends cdk.Stack {
       value: this.httpApi.apiEndpoint,
       description: "Invoke URL for the admin HTTP API.",
       exportName: "lxsoftware-AdminApiBaseUrl",
+    });
+
+    new cdk.CfnOutput(this, "AwsApiProxyFunctionArn", {
+      value: awsProxyFn.functionArn,
+      description:
+        "Allow-listed AWS/HTTP proxy (outside VPC). In-VPC Lambdas invoke via AWS_PROXY_FUNCTION_ARN.",
+      exportName: "lxsoftware-AwsApiProxyFunctionArn",
     });
   }
 }

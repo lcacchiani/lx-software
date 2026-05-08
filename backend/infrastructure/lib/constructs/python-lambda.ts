@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import * as cdk from "aws-cdk-lib";
+import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type { Construct } from "constructs";
@@ -16,6 +17,10 @@ export interface PythonLambdaFactoryProps {
   readonly memorySize?: number;
   readonly timeout?: cdk.Duration;
   readonly environment?: Record<string, string>;
+  /** When set, the function runs inside this VPC (use with {@link securityGroups}). */
+  readonly vpc?: ec2.IVpc;
+  readonly vpcSubnets?: ec2.SubnetSelection;
+  readonly securityGroups?: ec2.ISecurityGroup[];
 }
 
 function requirementsNeedPip(reqPath: string): boolean {
@@ -75,6 +80,12 @@ export function createPythonLambda(
     removalPolicy: cdk.RemovalPolicy.DESTROY,
   });
 
+  if (props.vpc && (!props.securityGroups || props.securityGroups.length === 0)) {
+    throw new Error(
+      `createPythonLambda(${id}): securityGroups is required when vpc is set`
+    );
+  }
+
   return new lambda.Function(scope, id, {
     runtime: props.runtime ?? lambda.Runtime.PYTHON_3_12,
     architecture: props.architecture ?? lambda.Architecture.ARM_64,
@@ -111,5 +122,15 @@ export function createPythonLambda(
     timeout: props.timeout ?? cdk.Duration.seconds(10),
     environment: props.environment,
     logGroup,
+    ...(props.vpc
+      ? {
+          vpc: props.vpc,
+          vpcSubnets:
+            props.vpcSubnets ?? {
+              subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+            },
+          securityGroups: props.securityGroups,
+        }
+      : {}),
   });
 }
