@@ -1,6 +1,8 @@
 export { AdminDataTable, AdminDataTableEmptyRow } from "./AdminDataTable";
 export type { AdminDataTableColumn, AdminDataTableProps } from "./AdminDataTable";
 export { AdminEditorSection } from "./AdminEditorSection";
+export { CurrencySelect } from "./CurrencySelect";
+export type { CurrencySelectProps } from "./CurrencySelect";
 export type { AdminEditorSectionProps } from "./AdminEditorSection";
 export { DateTimeDisplay } from "./DateTimeDisplay";
 export type { DateTimeDisplayProps } from "./DateTimeDisplay";

@@ -1,8 +1,10 @@
+import { GLOBAL_DEFAULT_CURRENCY } from "./currencies";
+
 /** Shared formatting for admin UI (money + Hong Kong local time display). */
 
 export function formatMoneyAmount(amount: number, currency: string): string {
   const code =
-    currency.length === 3 ? currency.toUpperCase() : "GBP";
+    currency.length === 3 ? currency.toUpperCase() : GLOBAL_DEFAULT_CURRENCY;
   try {
     return new Intl.NumberFormat(undefined, {
       style: "currency",

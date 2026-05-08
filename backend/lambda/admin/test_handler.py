@@ -59,6 +59,7 @@ class TestGroups(unittest.TestCase):
 class TestFinancePayload(unittest.TestCase):
     def test_valid_minimal(self) -> None:
         body = {
+            "defaultCurrency": "EUR",
             "float": {"amount": 100.5, "currency": "gbp"},
             "lines": [
                 {
@@ -74,9 +75,24 @@ class TestFinancePayload(unittest.TestCase):
             ],
         }
         out = _normalize_finance_payload(body)
+        self.assertEqual(out["defaultCurrency"], "EUR")
         self.assertEqual(out["float"]["currency"], "GBP")
         self.assertEqual(len(out["lines"]), 1)
         self.assertEqual(out["lines"][0]["netAmount"], 100.0)
+
+    def test_omitted_default_currency_is_hkd(self) -> None:
+        body = {"float": {"amount": 0, "currency": "USD"}, "lines": []}
+        out = _normalize_finance_payload(body)
+        self.assertEqual(out["defaultCurrency"], "HKD")
+
+    def test_unsupported_currency_rejected(self) -> None:
+        body = {
+            "defaultCurrency": "JPY",
+            "float": {"amount": 0, "currency": "HKD"},
+            "lines": [],
+        }
+        with self.assertRaises(ValueError):
+            _normalize_finance_payload(body)
 
     def test_invalid_type(self) -> None:
         body = {
