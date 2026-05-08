@@ -82,6 +82,29 @@ export class LxsoftwareStack extends cdk.Stack {
       default: "lxsoftware-admin-auth",
     });
 
+    const cognitoCustomDomainName = new cdk.CfnParameter(
+      this,
+      "CognitoCustomDomainName",
+      {
+        type: "String",
+        default: "",
+        description:
+          "Optional custom Hosted UI domain (e.g. auth.lx-software.com). " +
+          "Set together with CognitoCustomDomainCertificateArn; leave empty for the prefix domain.",
+      }
+    );
+
+    const cognitoCustomDomainCertificateArn = new cdk.CfnParameter(
+      this,
+      "CognitoCustomDomainCertificateArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ACM certificate ARN for the Cognito custom domain (must be in us-east-1).",
+      }
+    );
+
     // ------------------------------------------------------------------
     // 1. Auth (Cognito user pool, Google IdP, hosted UI, bootstrap admin)
     // ------------------------------------------------------------------
@@ -90,6 +113,8 @@ export class LxsoftwareStack extends cdk.Stack {
       googleClientIdParameter: googleClientId,
       googleClientSecretParameter: googleClientSecret,
       cognitoDomainPrefixParameter: cognitoDomainPrefix,
+      cognitoCustomDomainNameParameter: cognitoCustomDomainName,
+      cognitoCustomDomainCertificateArnParameter: cognitoCustomDomainCertificateArn,
       adminBootstrapEmailParameter: adminBootstrapEmail,
       adminBootstrapTempPasswordParameter: adminBootstrapTempPassword,
       adminFederatedEmailAllowlistParameter: adminFederatedEmailAllowlist,
@@ -347,10 +372,22 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, "CognitoDomain", {
-      value: this.auth.userPoolDomain.baseUrl(),
+      value: this.auth.cognitoOAuthBaseUrl,
       description: "Full https URL for Cognito hosted UI / OAuth.",
       exportName: "lxsoftware-CognitoDomain",
     });
+
+    const cognitoCustomDomainCloudFront = new cdk.CfnOutput(
+      this,
+      "CognitoCustomDomainCloudFront",
+      {
+        value: this.auth.cognitoCustomHostedDomain.attrCloudFrontDistribution,
+        description:
+          "CNAME target for the Cognito custom Hosted UI domain (ACM + DNS).",
+        exportName: "lxsoftware-CognitoCustomDomainCloudFront",
+      }
+    );
+    cognitoCustomDomainCloudFront.condition = this.auth.useCustomAuthDomain;
 
     new cdk.CfnOutput(this, "RecordsTableName", {
       value: this.recordsTable.tableName,

@@ -13,6 +13,14 @@ export interface AuthConstructProps {
   /** Google OAuth client secret (`noEcho` CloudFormation parameter). */
   readonly googleClientSecretParameter: cdk.CfnParameter;
   readonly cognitoDomainPrefixParameter: cdk.CfnParameter;
+  /**
+   * Optional custom Hosted UI hostname (e.g. auth.example.com). When set together
+   * with {@link cognitoCustomDomainCertificateArnParameter}, the pool uses a
+   * custom domain; otherwise the prefix domain is used.
+   */
+  readonly cognitoCustomDomainNameParameter: cdk.CfnParameter;
+  /** ACM cert ARN in us-east-1 for the Cognito custom domain (required with custom name). */
+  readonly cognitoCustomDomainCertificateArnParameter: cdk.CfnParameter;
   readonly adminBootstrapEmailParameter: cdk.CfnParameter;
   readonly adminBootstrapTempPasswordParameter: cdk.CfnParameter;
   /** Comma-separated emails that receive the admin group via Pre Token Generation (federated users). */
@@ -27,7 +35,15 @@ export interface AuthConstructProps {
 export class AuthConstruct extends Construct {
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
-  public readonly userPoolDomain: cognito.UserPoolDomain;
+  /**
+   * Effective origin for Cognito OAuth endpoints (`https://...`), either the
+   * prefix domain or the custom domain.
+   */
+  public readonly cognitoOAuthBaseUrl: string;
+  /** True when a custom Hosted UI domain + certificate are configured. */
+  public readonly useCustomAuthDomain: cdk.CfnCondition;
+  /** L1 domain resource for custom Hosted UI; only created when {@link useCustomAuthDomain} applies. */
+  public readonly cognitoCustomHostedDomain: cognito.CfnUserPoolDomain;
   public readonly adminGroup: cognito.CfnUserPoolGroup;
   public readonly adminGroupName = "admin";
 
@@ -135,11 +151,134 @@ export class AuthConstruct extends Construct {
 
     this.userPoolClient.node.addDependency(googleProvider);
 
-    this.userPoolDomain = this.userPool.addDomain("HostedUIDomain", {
-      cognitoDomain: {
-        domainPrefix: props.cognitoDomainPrefixParameter.valueAsString,
-      },
+    const useCustomDomain = new cdk.CfnCondition(this, "UseCustomAuthDomain", {
+      expression: cdk.Fn.conditionAnd(
+        cdk.Fn.conditionNot(
+          cdk.Fn.conditionEquals(
+            props.cognitoCustomDomainNameParameter.valueAsString,
+            ""
+          )
+        ),
+        cdk.Fn.conditionNot(
+          cdk.Fn.conditionEquals(
+            props.cognitoCustomDomainCertificateArnParameter.valueAsString,
+            ""
+          )
+        )
+      ),
     });
+
+    const useCognitoPrefixDomain = new cdk.CfnCondition(
+      this,
+      "UseCognitoPrefixAuthDomain",
+      {
+        expression: cdk.Fn.conditionOr(
+          cdk.Fn.conditionEquals(
+            props.cognitoCustomDomainNameParameter.valueAsString,
+            ""
+          ),
+          cdk.Fn.conditionEquals(
+            props.cognitoCustomDomainCertificateArnParameter.valueAsString,
+            ""
+          )
+        ),
+      }
+    );
+
+    const cognitoPrefixDomain = new cognito.CfnUserPoolDomain(
+      this,
+      "HostedUIDomainPrefix",
+      {
+        userPoolId: this.userPool.userPoolId,
+        domain: props.cognitoDomainPrefixParameter.valueAsString,
+      }
+    );
+    cognitoPrefixDomain.cfnOptions.condition = useCognitoPrefixDomain;
+
+    const removeCognitoPrefixDomainPolicy =
+      cr.AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: ["cognito-idp:DeleteUserPoolDomain"],
+          resources: [this.userPool.userPoolArn],
+        }),
+      ]);
+
+    const removeCognitoPrefixDomain = new cr.AwsCustomResource(
+      this,
+      "RemoveCognitoPrefixAuthDomain",
+      {
+        onCreate: {
+          service: "CognitoIdentityServiceProvider",
+          action: "deleteUserPoolDomain",
+          parameters: {
+            UserPoolId: this.userPool.userPoolId,
+            Domain: props.cognitoDomainPrefixParameter.valueAsString,
+          },
+          physicalResourceId: cr.PhysicalResourceId.of(
+            `remove-cognito-prefix-domain-${this.userPool.userPoolId}`
+          ),
+          ignoreErrorCodesMatching:
+            "ResourceNotFoundException|InvalidParameterException",
+        },
+        onUpdate: {
+          service: "CognitoIdentityServiceProvider",
+          action: "deleteUserPoolDomain",
+          parameters: {
+            UserPoolId: this.userPool.userPoolId,
+            Domain: props.cognitoDomainPrefixParameter.valueAsString,
+          },
+          physicalResourceId: cr.PhysicalResourceId.of(
+            `remove-cognito-prefix-domain-${this.userPool.userPoolId}`
+          ),
+          ignoreErrorCodesMatching:
+            "ResourceNotFoundException|InvalidParameterException",
+        },
+        policy: removeCognitoPrefixDomainPolicy,
+        installLatestAwsSdk: false,
+      }
+    );
+    const removeCognitoPrefixDomainCustomResource = (
+      removeCognitoPrefixDomain as unknown as {
+        customResource: cdk.CustomResource;
+      }
+    ).customResource;
+    const removeCognitoPrefixDomainResource =
+      removeCognitoPrefixDomainCustomResource.node.defaultChild as cdk.CfnResource;
+    removeCognitoPrefixDomainResource.cfnOptions.condition = useCustomDomain;
+
+    this.cognitoCustomHostedDomain = new cognito.CfnUserPoolDomain(
+      this,
+      "HostedUICustomDomain",
+      {
+        userPoolId: this.userPool.userPoolId,
+        domain: props.cognitoCustomDomainNameParameter.valueAsString,
+        customDomainConfig: {
+          certificateArn:
+            props.cognitoCustomDomainCertificateArnParameter.valueAsString,
+        },
+      }
+    );
+    this.cognitoCustomHostedDomain.cfnOptions.condition = useCustomDomain;
+    this.cognitoCustomHostedDomain.node.addDependency(removeCognitoPrefixDomain);
+
+    const prefixOAuthBaseUrl = cdk.Fn.join("", [
+      "https://",
+      props.cognitoDomainPrefixParameter.valueAsString,
+      ".auth.",
+      cdk.Aws.REGION,
+      ".amazoncognito.com",
+    ]);
+    const customOAuthBaseUrl = cdk.Fn.join("", [
+      "https://",
+      props.cognitoCustomDomainNameParameter.valueAsString,
+    ]);
+    this.cognitoOAuthBaseUrl = cdk.Fn.conditionIf(
+      useCustomDomain.logicalId,
+      customOAuthBaseUrl,
+      prefixOAuthBaseUrl
+    ) as unknown as string;
+    this.useCustomAuthDomain = useCustomDomain;
 
     this.adminGroup = new cognito.CfnUserPoolGroup(this, "AdminGroup", {
       userPoolId: this.userPool.userPoolId,
