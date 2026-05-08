@@ -146,7 +146,16 @@ jobs:
 
           # Drop the legacy Cognito UserPoolDomain cross-stack export before updating
           # `lxsoftware` (custom domain / L1 domain resources change exports).
-          npx cdk deploy --require-approval never \
+          #
+          # `--exclusively` is required: without it, CDK pulls `lxsoftware` into the
+          # deploy as a dependency (because admin-web imports HttpApi from it), which
+          # would build a `lxsoftware` changeset using the *new* template but with the
+          # `lxsoftware:*` parameters defaulted to empty (we only forward
+          # `lxsoftware-admin-web:*` here). That causes Cognito conditional resources
+          # to flip to the prefix-domain branch and clash with the existing
+          # `lxsoftware-admin-auth` Cognito domain. The cross-stack import resolves
+          # against the *already-deployed* lxsoftware exports, so it is safe to skip.
+          npx cdk deploy --require-approval never --exclusively \
             "${ADMIN_WEB_PARAM_ARGS[@]}" \
             --parameters lxsoftware-admin-web:AdminWebDomainName=admin.lx-software.com \
             --parameters "lxsoftware-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
