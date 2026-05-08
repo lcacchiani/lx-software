@@ -134,7 +134,9 @@ export function HouseStatementPanel({
 }: HouseStatementPanelProps) {
   const lineFormId = `${houseKey}-line-form`;
   const [floatAmount, setFloatAmount] = useState(String(data.float.amount));
-  const [floatCurrency, setFloatCurrency] = useState(data.float.currency);
+  const [floatCurrency, setFloatCurrency] = useState(() =>
+    coerceSupportedCurrency(data.float.currency, data.defaultCurrency),
+  );
   const [houseDefaultDraft, setHouseDefaultDraft] = useState(data.defaultCurrency);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -147,7 +149,9 @@ export function HouseStatementPanel({
   useEffect(() => {
     queueMicrotask(() => {
       setFloatAmount(String(data.float.amount));
-      setFloatCurrency(data.float.currency);
+      setFloatCurrency(
+        coerceSupportedCurrency(data.float.currency, data.defaultCurrency),
+      );
       setHouseDefaultDraft(data.defaultCurrency);
     });
   }, [data.float.amount, data.float.currency, data.defaultCurrency]);
@@ -186,18 +190,24 @@ export function HouseStatementPanel({
     });
   }, [sortedLines, tableFilter]);
 
-  function applyFloat() {
+  function applyHouseDetails() {
     const amt = parseAmount(floatAmount);
-    const cur = coerceSupportedCurrency(floatCurrency, data.defaultCurrency);
     if (amt === null) {
       return;
     }
+    const nextDefault = coerceSupportedCurrency(
+      houseDefaultDraft,
+      data.defaultCurrency,
+    );
+    const floatCur = coerceSupportedCurrency(floatCurrency, nextDefault);
     onPatch((prev) => ({
       ...prev,
-      float: { amount: amt, currency: cur },
+      defaultCurrency: nextDefault,
+      float: { amount: amt, currency: floatCur },
     }));
+    setHouseDefaultDraft(nextDefault);
     setFloatAmount(String(amt));
-    setFloatCurrency(cur);
+    setFloatCurrency(floatCur);
   }
 
   function resetLineForm() {
@@ -266,54 +276,38 @@ export function HouseStatementPanel({
     }
   }
 
-  function applyHouseDefault() {
-    const next = coerceSupportedCurrency(houseDefaultDraft, data.defaultCurrency);
-    setHouseDefaultDraft(next);
-    onPatch((prev) => ({ ...prev, defaultCurrency: next }));
-  }
-
   return (
     <div>
       <AdminEditorSection
-        title="House default currency"
-        description="New statement lines default to this code, and amounts stored with an unsupported currency are coerced to it when loaded. The platform default is HKD until you save a house preference."
+        title="House details"
+        description={`Default currency for new statement lines and for coercing unsupported codes when loaded (platform default is HKD until saved). Cash float for ${houseLabel}. Both are stored with this house's finance state in the admin API.`}
         footer={
-          <button type="button" className="btn btn-primary btn-sm" onClick={applyHouseDefault}>
-            Save house default
+          <button type="button" className="btn btn-primary btn-sm" onClick={applyHouseDetails}>
+            Save
           </button>
         }
       >
         <div className="row g-2 align-items-end flex-wrap">
-          <div className="col-auto">
+          <div className="col-auto" style={{ minWidth: "6.5rem" }}>
             <label className="form-label small mb-0" htmlFor={`${houseKey}-house-default-ccy`}>
               Default currency
             </label>
             <CurrencySelect
               id={`${houseKey}-house-default-ccy`}
               value={houseDefaultDraft}
-              onChange={(code) => setHouseDefaultDraft(code)}
+              onChange={(code) => {
+                const next = coerceSupportedCurrency(code, data.defaultCurrency);
+                setHouseDefaultDraft((prevDraft) => {
+                  setFloatCurrency((fc) => (fc === prevDraft ? next : fc));
+                  return next;
+                });
+              }}
               className="form-select form-select-sm"
             />
           </div>
-        </div>
-        <p className="small text-muted mt-2 mb-0">
-          Stored with this house&apos;s finance state in the admin API.
-        </p>
-      </AdminEditorSection>
-
-      <AdminEditorSection
-        title="Float"
-        description={`Cash float held for ${houseLabel}. Stored via the admin API.`}
-        footer={
-          <button type="button" className="btn btn-primary btn-sm" onClick={applyFloat}>
-            Save float
-          </button>
-        }
-      >
-        <div className="row g-2 align-items-end flex-wrap">
           <div className="col-auto">
             <label className="form-label small mb-0" htmlFor={`float-amt-${houseKey}`}>
-              Amount
+              Float amount
             </label>
             <input
               id={`float-amt-${houseKey}`}
@@ -326,17 +320,18 @@ export function HouseStatementPanel({
           </div>
           <div className="col-auto" style={{ minWidth: "6.5rem" }}>
             <label className="form-label small mb-0" htmlFor={`float-cur-${houseKey}`}>
-              Currency
+              Float currency
             </label>
             <CurrencySelect
               id={`float-cur-${houseKey}`}
               value={floatCurrency}
               onChange={(code) => setFloatCurrency(code)}
+              className="form-select form-select-sm"
             />
           </div>
         </div>
         <p className="small text-muted mt-3 mb-0">
-          Current:{" "}
+          Saved float:{" "}
           <strong>
             <MoneyAmount amount={data.float.amount} currency={data.float.currency} />
           </strong>
