@@ -1,5 +1,21 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { newStatementLineId, type FinanceLineType, type HouseFinanceData, type HouseKey, type HouseStatementLine } from "../lib/financeModel";
+import {
+  newStatementLineId,
+  type FinanceLineType,
+  type HouseFinanceData,
+  type HouseKey,
+  type HouseStatementLine,
+} from "../lib/financeModel";
+import { formatDateTimeHKT } from "../lib/formatDisplay";
+import {
+  AdminDataTable,
+  AdminDataTableEmptyRow,
+  type AdminDataTableColumn,
+  AdminEditorSection,
+  DateTimeDisplay,
+  MoneyAmount,
+  TableIconButton,
+} from "./ui";
 
 function utcPartsFromIso(iso: string): { datePart: string; timePart: string } {
   const d = new Date(iso);
@@ -19,25 +35,6 @@ function utcPartsFromIso(iso: string): { datePart: string; timePart: string } {
 function isoFromUtcParts(datePart: string, timePart: string): string {
   const t = timePart.length >= 5 ? timePart.slice(0, 5) : "00:00";
   return `${datePart}T${t}:00.000Z`;
-}
-
-function formatUtcTable(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
-}
-
-function formatMoney(amount: number, currency: string): string {
-  const code =
-    currency.length === 3 ? currency.toUpperCase() : "GBP";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: code,
-    }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency}`;
-  }
 }
 
 function emptyLineForm(): LineFormState {
@@ -91,19 +88,53 @@ export type HouseStatementPanelProps = {
   readonly onPatch: (patch: (prev: HouseFinanceData) => HouseFinanceData) => void;
 };
 
+const TABLE_COLUMNS: AdminDataTableColumn[] = [
+  { key: "when", header: "Date & time (HKT)", className: "small" },
+  { key: "type", header: "Type", className: "small" },
+  { key: "desc", header: "Description", className: "small" },
+  {
+    key: "net",
+    header: "Net",
+    className: "small text-end",
+    headerClassName: "small text-end",
+  },
+  {
+    key: "vat",
+    header: "VAT",
+    className: "small text-end",
+    headerClassName: "small text-end",
+  },
+  { key: "ccy", header: "Currency", className: "small" },
+  {
+    key: "gross",
+    header: "Gross",
+    className: "small text-end",
+    headerClassName: "small text-end",
+  },
+  {
+    key: "ops",
+    header: <span className="visually-hidden">Operations</span>,
+    className: "text-end text-nowrap",
+    headerClassName: "text-end",
+  },
+];
+
+const COL_SPAN = TABLE_COLUMNS.length;
+
 export function HouseStatementPanel({
   houseKey,
   houseLabel,
   data,
   onPatch,
 }: HouseStatementPanelProps) {
+  const lineFormId = `${houseKey}-line-form`;
   const [floatAmount, setFloatAmount] = useState(String(data.float.amount));
   const [floatCurrency, setFloatCurrency] = useState(data.float.currency);
 
-  const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [lineForm, setLineForm] = useState<LineFormState>(emptyLineForm);
+  const [tableFilter, setTableFilter] = useState("");
 
   const sortedLines = useMemo(() => {
     return [...data.lines].sort((a, b) => {
@@ -112,6 +143,25 @@ export function HouseStatementPanel({
       return tb - ta;
     });
   }, [data.lines]);
+
+  const filteredLines = useMemo(() => {
+    const q = tableFilter.trim().toLowerCase();
+    if (!q) return sortedLines;
+    return sortedLines.filter((line) => {
+      const hay = [
+        line.description,
+        line.type,
+        line.currency,
+        String(line.netAmount),
+        String(line.vat),
+        String(line.grossAmount),
+        formatDateTimeHKT(line.dateUtc),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [sortedLines, tableFilter]);
 
   function applyFloat() {
     const amt = parseAmount(floatAmount);
@@ -127,24 +177,16 @@ export function HouseStatementPanel({
     setFloatCurrency(cur);
   }
 
-  function openAdd() {
+  function resetLineForm() {
     setEditingId(null);
     setFormError(null);
     setLineForm(emptyLineForm());
-    setModalOpen(true);
   }
 
   function openEdit(line: HouseStatementLine) {
     setEditingId(line.id);
     setFormError(null);
     setLineForm(lineToForm(line));
-    setModalOpen(true);
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setEditingId(null);
-    setFormError(null);
   }
 
   function submitLine(e: FormEvent) {
@@ -188,7 +230,7 @@ export function HouseStatementPanel({
       };
     });
 
-    closeModal();
+    resetLineForm();
   }
 
   function deleteLine(id: string) {
@@ -197,311 +239,270 @@ export function HouseStatementPanel({
       ...prev,
       lines: prev.lines.filter((l) => l.id !== id),
     }));
+    if (editingId === id) {
+      resetLineForm();
+    }
   }
 
   return (
     <div>
-      <div className="card shadow-sm mb-4">
-        <div className="card-body">
-          <h2 className="h6 text-uppercase text-muted mb-3">Float</h2>
-          <p className="small text-muted mb-3">
-            Cash float held for {houseLabel}. Saved in this browser only.
-          </p>
-          <div className="row g-2 align-items-end flex-wrap">
-            <div className="col-auto">
-              <label className="form-label small mb-0" htmlFor={`float-amt-${houseKey}`}>
-                Amount
+      <AdminEditorSection
+        title="Float"
+        description={`Cash float held for ${houseLabel}. Stored via the admin API.`}
+        footer={
+          <button type="button" className="btn btn-primary btn-sm" onClick={applyFloat}>
+            Save float
+          </button>
+        }
+      >
+        <div className="row g-2 align-items-end flex-wrap">
+          <div className="col-auto">
+            <label className="form-label small mb-0" htmlFor={`float-amt-${houseKey}`}>
+              Amount
+            </label>
+            <input
+              id={`float-amt-${houseKey}`}
+              type="number"
+              className="form-control form-control-sm"
+              step="0.01"
+              value={floatAmount}
+              onChange={(ev) => setFloatAmount(ev.target.value)}
+            />
+          </div>
+          <div className="col-auto">
+            <label className="form-label small mb-0" htmlFor={`float-cur-${houseKey}`}>
+              Currency
+            </label>
+            <input
+              id={`float-cur-${houseKey}`}
+              type="text"
+              className="form-control form-control-sm text-uppercase"
+              maxLength={3}
+              style={{ width: "5rem" }}
+              value={floatCurrency}
+              onChange={(ev) => setFloatCurrency(ev.target.value)}
+            />
+          </div>
+        </div>
+        <p className="small text-muted mt-3 mb-0">
+          Current:{" "}
+          <strong>
+            <MoneyAmount amount={data.float.amount} currency={data.float.currency} />
+          </strong>
+        </p>
+      </AdminEditorSection>
+
+      <AdminEditorSection
+        title="Statement line"
+        description='Enter or edit UTC date and time below (stored as ISO UTC). Use “Clear” to discard and start a new line.'
+        footer={
+          <>
+            <button type="submit" form={lineFormId} className="btn btn-primary btn-sm">
+              {editingId ? "Update line" : "Add line"}
+            </button>
+            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetLineForm}>
+              Clear
+            </button>
+          </>
+        }
+      >
+        <form id={lineFormId} onSubmit={submitLine}>
+          {formError ? (
+            <div className="alert alert-danger py-2 small" role="alert">
+              {formError}
+            </div>
+          ) : null}
+          <div className="row g-3">
+            <div className="col-md-6">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-date-utc`}>
+                Date (UTC)
               </label>
               <input
-                id={`float-amt-${houseKey}`}
-                type="number"
+                id={`${houseKey}-fin-date-utc`}
+                type="date"
                 className="form-control form-control-sm"
-                step="0.01"
-                value={floatAmount}
-                onChange={(ev) => setFloatAmount(ev.target.value)}
+                required
+                value={lineForm.datePart}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, datePart: ev.target.value }))
+                }
               />
             </div>
-            <div className="col-auto">
-              <label className="form-label small mb-0" htmlFor={`float-cur-${houseKey}`}>
-                Currency
+            <div className="col-md-6">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-time-utc`}>
+                Time (UTC)
               </label>
               <input
-                id={`float-cur-${houseKey}`}
+                id={`${houseKey}-fin-time-utc`}
+                type="time"
+                step={60}
+                className="form-control form-control-sm"
+                required
+                value={lineForm.timePart}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, timePart: ev.target.value }))
+                }
+              />
+            </div>
+            <div className="col-12">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-type`}>
+                Type
+              </label>
+              <select
+                id={`${houseKey}-fin-type`}
+                className="form-select form-select-sm"
+                value={lineForm.type}
+                onChange={(ev) =>
+                  setLineForm((f) => ({
+                    ...f,
+                    type: ev.target.value as FinanceLineType,
+                  }))
+                }
+              >
+                <option value="income">Income</option>
+                <option value="expenditure">Expenditure</option>
+              </select>
+            </div>
+            <div className="col-12">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-desc`}>
+                Description
+              </label>
+              <input
+                id={`${houseKey}-fin-desc`}
+                type="text"
+                className="form-control form-control-sm"
+                required
+                value={lineForm.description}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, description: ev.target.value }))
+                }
+              />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-net`}>
+                Net amount
+              </label>
+              <input
+                id={`${houseKey}-fin-net`}
+                type="number"
+                step="0.01"
+                className="form-control form-control-sm"
+                required
+                value={lineForm.netAmount}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, netAmount: ev.target.value }))
+                }
+              />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-vat`}>
+                VAT
+              </label>
+              <input
+                id={`${houseKey}-fin-vat`}
+                type="number"
+                step="0.01"
+                className="form-control form-control-sm"
+                required
+                value={lineForm.vat}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, vat: ev.target.value }))
+                }
+              />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-gross`}>
+                Gross amount
+              </label>
+              <input
+                id={`${houseKey}-fin-gross`}
+                type="number"
+                step="0.01"
+                className="form-control form-control-sm"
+                required
+                value={lineForm.grossAmount}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, grossAmount: ev.target.value }))
+                }
+              />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label small" htmlFor={`${houseKey}-fin-cur`}>
+                Currency (ISO)
+              </label>
+              <input
+                id={`${houseKey}-fin-cur`}
                 type="text"
                 className="form-control form-control-sm text-uppercase"
                 maxLength={3}
-                style={{ width: "5rem" }}
-                value={floatCurrency}
-                onChange={(ev) => setFloatCurrency(ev.target.value)}
+                required
+                value={lineForm.currency}
+                onChange={(ev) =>
+                  setLineForm((f) => ({ ...f, currency: ev.target.value }))
+                }
               />
             </div>
-            <div className="col-auto">
-              <button type="button" className="btn btn-primary btn-sm" onClick={applyFloat}>
-                Save float
-              </button>
-            </div>
           </div>
-          <p className="small text-muted mt-2 mb-0">
-            Current:{" "}
-            <strong>{formatMoney(data.float.amount, data.float.currency)}</strong>
-          </p>
-        </div>
-      </div>
+        </form>
+      </AdminEditorSection>
 
-      <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-        <h2 className="h6 text-uppercase text-muted mb-0">House statement</h2>
-        <button type="button" className="btn btn-sm btn-outline-primary" onClick={openAdd}>
-          Add line
-        </button>
-      </div>
-
-      <div className="table-responsive card shadow-sm">
-        <table className="table table-sm table-striped mb-0 align-middle">
-          <thead>
-            <tr>
-              <th scope="col">Date (UTC)</th>
-              <th scope="col">Type</th>
-              <th scope="col">Description</th>
-              <th scope="col" className="text-end">
-                Net
-              </th>
-              <th scope="col" className="text-end">
-                VAT
-              </th>
-              <th scope="col">Currency</th>
-              <th scope="col" className="text-end">
-                Gross
-              </th>
-              <th scope="col" className="text-end">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedLines.length ? (
-              sortedLines.map((line) => (
-                <tr key={line.id}>
-                  <td className="small text-nowrap">{formatUtcTable(line.dateUtc)}</td>
-                  <td className="small">
-                    <span
-                      className={
-                        line.type === "income" ? "text-success" : "text-danger"
-                      }
-                    >
-                      {line.type === "income" ? "Income" : "Expenditure"}
-                    </span>
-                  </td>
-                  <td className="small">{line.description}</td>
-                  <td className="small text-end">{line.netAmount.toFixed(2)}</td>
-                  <td className="small text-end">{line.vat.toFixed(2)}</td>
-                  <td className="small">{line.currency}</td>
-                  <td className="small text-end">{line.grossAmount.toFixed(2)}</td>
-                  <td className="small text-end text-nowrap">
-                    <button
-                      type="button"
-                      className="btn btn-link btn-sm py-0 px-1"
-                      onClick={() => openEdit(line)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-link btn-sm text-danger py-0 px-1"
-                      onClick={() => deleteLine(line.id)}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={8} className="text-muted text-center py-4">
-                  No statement lines yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {modalOpen ? (
-        <div
-          className="modal fade show d-block"
-          tabIndex={-1}
-          role="dialog"
-          aria-modal="true"
-          style={{ backgroundColor: "rgba(0,0,0,0.45)" }}
-        >
-          <div className="modal-dialog modal-lg modal-dialog-scrollable">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h2 className="modal-title h5">
-                  {editingId ? "Edit line" : "Add line"}
-                </h2>
-                <button
-                  type="button"
-                  className="btn-close"
-                  aria-label="Close"
-                  onClick={closeModal}
+      <h2 className="h6 text-uppercase text-muted mb-2">House statement</h2>
+      <AdminDataTable
+        columns={TABLE_COLUMNS}
+        filterValue={tableFilter}
+        onFilterChange={setTableFilter}
+        filterPlaceholder="Filter lines…"
+      >
+        {filteredLines.length ? (
+          filteredLines.map((line) => (
+            <tr key={line.id}>
+              <td className="small">
+                <DateTimeDisplay iso={line.dateUtc} />
+              </td>
+              <td className="small">
+                <span
+                  className={
+                    line.type === "income" ? "text-success" : "text-danger"
+                  }
+                >
+                  {line.type === "income" ? "Income" : "Expenditure"}
+                </span>
+              </td>
+              <td className="small">{line.description}</td>
+              <td className="small text-end">
+                <MoneyAmount amount={line.netAmount} currency={line.currency} />
+              </td>
+              <td className="small text-end">
+                <MoneyAmount amount={line.vat} currency={line.currency} />
+              </td>
+              <td className="small">{line.currency}</td>
+              <td className="small text-end">
+                <MoneyAmount amount={line.grossAmount} currency={line.currency} />
+              </td>
+              <td className="small text-end">
+                <TableIconButton
+                  iconClassName="bi bi-pencil"
+                  ariaLabel="Edit line"
+                  onClick={() => openEdit(line)}
                 />
-              </div>
-              <form onSubmit={submitLine}>
-                <div className="modal-body">
-                  {formError ? (
-                    <div className="alert alert-danger py-2 small" role="alert">
-                      {formError}
-                    </div>
-                  ) : null}
-                  <div className="row g-3">
-                    <div className="col-md-6">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-date-utc`}>
-                        Date (UTC)
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-date-utc`}
-                        type="date"
-                        className="form-control form-control-sm"
-                        required
-                        value={lineForm.datePart}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, datePart: ev.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="col-md-6">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-time-utc`}>
-                        Time (UTC)
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-time-utc`}
-                        type="time"
-                        step={60}
-                        className="form-control form-control-sm"
-                        required
-                        value={lineForm.timePart}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, timePart: ev.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="col-12">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-type`}>
-                        Type
-                      </label>
-                      <select
-                        id={`${houseKey}-fin-type`}
-                        className="form-select form-select-sm"
-                        value={lineForm.type}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({
-                            ...f,
-                            type: ev.target.value as FinanceLineType,
-                          }))
-                        }
-                      >
-                        <option value="income">Income</option>
-                        <option value="expenditure">Expenditure</option>
-                      </select>
-                    </div>
-                    <div className="col-12">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-desc`}>
-                        Description
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-desc`}
-                        type="text"
-                        className="form-control form-control-sm"
-                        required
-                        value={lineForm.description}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, description: ev.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-net`}>
-                        Net amount
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-net`}
-                        type="number"
-                        step="0.01"
-                        className="form-control form-control-sm"
-                        required
-                        value={lineForm.netAmount}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, netAmount: ev.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-vat`}>
-                        VAT
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-vat`}
-                        type="number"
-                        step="0.01"
-                        className="form-control form-control-sm"
-                        required
-                        value={lineForm.vat}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, vat: ev.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-gross`}>
-                        Gross amount
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-gross`}
-                        type="number"
-                        step="0.01"
-                        className="form-control form-control-sm"
-                        required
-                        value={lineForm.grossAmount}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, grossAmount: ev.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="col-md-4">
-                      <label className="form-label small" htmlFor={`${houseKey}-fin-cur`}>
-                        Currency (ISO)
-                      </label>
-                      <input
-                        id={`${houseKey}-fin-cur`}
-                        type="text"
-                        className="form-control form-control-sm text-uppercase"
-                        maxLength={3}
-                        required
-                        value={lineForm.currency}
-                        onChange={(ev) =>
-                          setLineForm((f) => ({ ...f, currency: ev.target.value }))
-                        }
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary btn-sm"
-                    onClick={closeModal}
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary btn-sm">
-                    {editingId ? "Save changes" : "Add line"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      ) : null}
+                <TableIconButton
+                  iconClassName="bi bi-trash"
+                  ariaLabel="Delete line"
+                  variant="danger"
+                  onClick={() => deleteLine(line.id)}
+                />
+              </td>
+            </tr>
+          ))
+        ) : (
+          <AdminDataTableEmptyRow
+            colSpan={COL_SPAN}
+            message={
+              sortedLines.length ? "No lines match the filter." : "No statement lines yet."
+            }
+          />
+        )}
+      </AdminDataTable>
     </div>
   );
 }
