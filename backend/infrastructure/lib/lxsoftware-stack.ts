@@ -352,6 +352,20 @@ export class LxsoftwareStack extends cdk.Stack {
       authorizer: jwtAuthorizer,
     });
 
+    this.httpApi.addRoutes({
+      path: "/finance",
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/finance/{house}",
+      methods: [apigwv2.HttpMethod.PUT],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
     // ------------------------------------------------------------------
     // CloudFormation outputs (export names kept stable for compatibility
     // with downstream consumers / dashboards / runbooks).

@@ -1,11 +1,5 @@
 import { type FormEvent, useMemo, useState } from "react";
-import type {
-  FinanceLineType,
-  HouseFinanceData,
-  HouseKey,
-  HouseStatementLine,
-} from "../lib/financeStorage";
-import { newStatementLineId } from "../lib/financeStorage";
+import { newStatementLineId, type FinanceLineType, type HouseFinanceData, type HouseKey, type HouseStatementLine } from "../lib/financeModel";
 
 function utcPartsFromIso(iso: string): { datePart: string; timePart: string } {
   const d = new Date(iso);

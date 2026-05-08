@@ -1,47 +1,67 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
+import { adminFetchJson } from "../lib/apiAdminClient";
 import {
   type FinancePersistedState,
   type HouseFinanceData,
   type HouseKey,
   DEFAULT_FINANCE_STATE,
-  loadFinanceState,
-  saveFinanceState,
-} from "../lib/financeStorage";
+} from "../lib/financeModel";
+
+async function fetchFinance(): Promise<FinancePersistedState> {
+  return adminFetchJson<FinancePersistedState>("/finance");
+}
+
+type PutFinanceResponse = {
+  readonly data: HouseFinanceData;
+};
 
 export function useFinance() {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["finance"],
-    queryFn: loadFinanceState,
-    staleTime: Infinity,
-    initialData: DEFAULT_FINANCE_STATE,
+    queryFn: fetchFinance,
   });
 
-  const persist = useCallback(
-    (updater: (prev: FinancePersistedState) => FinancePersistedState) => {
-      const prev = loadFinanceState();
-      const next = updater(prev);
-      saveFinanceState(next);
-      void qc.invalidateQueries({ queryKey: ["finance"] });
+  const saveHouse = useMutation({
+    mutationFn: async ({
+      house,
+      data,
+    }: {
+      house: HouseKey;
+      data: HouseFinanceData;
+    }) => {
+      const res = await adminFetchJson<PutFinanceResponse>(`/finance/${house}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      });
+      return { house, data: res.data };
     },
-    [qc],
-  );
+    onSuccess: ({ house, data }) => {
+      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
+        ...(old ?? DEFAULT_FINANCE_STATE),
+        [house]: data,
+      }));
+    },
+  });
 
   const patchHouse = useCallback(
     (house: HouseKey, patch: (prev: HouseFinanceData) => HouseFinanceData) => {
-      persist((state) => ({
-        ...state,
-        [house]: patch(state[house]),
-      }));
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const prev = state?.[house] ?? DEFAULT_FINANCE_STATE[house];
+      const next = patch(prev);
+      saveHouse.mutate({ house, data: next });
     },
-    [persist],
+    [qc, saveHouse],
   );
 
   return {
     data: q.data ?? DEFAULT_FINANCE_STATE,
     isLoading: q.isLoading,
+    isError: q.isError,
+    error: q.error,
     patchHouse,
-    persist,
+    isSaving: saveHouse.isPending,
+    saveError: saveHouse.error,
   };
 }
