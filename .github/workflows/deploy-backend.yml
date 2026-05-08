@@ -95,7 +95,7 @@ jobs:
           set -eo pipefail
           npx cdk acknowledge 34892 || true
 
-          # Three stacks (post-consolidation, see docs/deployment/stack-consolidation.md):
+          # Three stacks (post-consolidation):
           #   1. lxsoftware-public-www  (S3 + CloudFront for the marketing site)
           #   2. lxsoftware             (Cognito + DynamoDB + S3 assets + HTTP API)
           #   3. lxsoftware-admin-web   (S3 + CloudFront for the admin SPA)

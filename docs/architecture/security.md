@@ -53,7 +53,7 @@ public site. Typical additions include:
   you are migrating from the legacy `lx-admin-*` stacks (auth/data/assets/api/
   web), keep delete permissions on
   `arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/lx-admin-*/*` until those
-  stacks have been drained — see `docs/deployment/stack-consolidation.md`.
+  stacks have been drained.
 - **S3**: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on
   the `lx-admin-web-*` website bucket and, for the deploy script, the same for
   objects synced by GitHub Actions. Prefer scoping to explicit bucket ARNs.

@@ -42,8 +42,7 @@ flowchart TD
 ## Stacks
 
 The repository ships **three** CDK stacks. The admin backend lives in a single
-consolidated stack rather than the previous five-stack split — see
-`docs/deployment/stack-consolidation.md` for the migration runbook.
+consolidated stack rather than the previous five-stack split.
 
 | Stack                     | Purpose                                                                                  |
 |---------------------------|------------------------------------------------------------------------------------------|

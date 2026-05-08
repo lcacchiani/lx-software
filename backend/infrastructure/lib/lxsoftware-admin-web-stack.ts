@@ -19,8 +19,7 @@ export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
  * Renamed from `lx-admin-web` → `lxsoftware-admin-web`. Physical resource
  * names (bucket names, response headers policy name) are kept identical to
  * the legacy stack so the existing resources can be imported into this stack
- * with `cdk import` without recreation. See
- * docs/deployment/stack-consolidation.md for the runbook.
+ * with `cdk import` without recreation.
  */
 export class LxsoftwareAdminWebStack extends cdk.Stack {
   public readonly bucket: s3.Bucket;

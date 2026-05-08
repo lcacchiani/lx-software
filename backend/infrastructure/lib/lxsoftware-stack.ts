@@ -23,7 +23,7 @@ import { createPythonLambda } from "./constructs/python-lambda";
  * All physical resource names (bucket names, table names, user pool name,
  * API name) are kept identical to the legacy stacks so the existing
  * resources can be imported into this stack with `cdk import` without
- * recreation. See docs/deployment/stack-consolidation.md for the runbook.
+ * recreation.
  */
 export class LxsoftwareStack extends cdk.Stack {
   public readonly auth: AuthConstruct;
