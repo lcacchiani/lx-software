@@ -6,6 +6,7 @@ import { RequireAuth } from "./components/RequireAuth";
 import { AssetsPage } from "./pages/AssetsPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { FinancePage } from "./pages/FinancePage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,6 +28,7 @@ export function App() {
               <Route element={<AuthenticatedShell />}>
                 <Route index element={<DashboardPage />} />
                 <Route path="assets" element={<AssetsPage />} />
+                <Route path="finance" element={<FinancePage />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
