@@ -7,7 +7,7 @@
 This repository hosts the LX Software public website in `apps/public_www/`, a
 separate **admin** SPA in `apps/admin_web/`, and AWS CDK infrastructure in
 `backend/infrastructure/`. There is no backend API for the public site; the admin
-console calls the `lx-admin-api` stack deployed from the same CDK app.
+console calls the `lxsoftware` stack deployed from the same CDK app.
 
 ### Running the dev server
 

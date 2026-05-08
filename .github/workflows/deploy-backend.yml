@@ -147,7 +147,7 @@ jobs:
             --parameters "lxsoftware:AdminFederatedEmailAllowlist=${P_EMAIL_ALLOWLIST}" \
             --parameters "lxsoftware:AdminBootstrapEmail=${P_BOOTSTRAP_EMAIL}" \
             --parameters "lxsoftware:AdminBootstrapTempPassword=${P_BOOTSTRAP_PASSWORD}" \
-            --parameters lxsoftware:CognitoDomainPrefix=lx-admin-auth \
+            --parameters lxsoftware:CognitoDomainPrefix=lxsoftware-admin-auth \
             --parameters lxsoftware-admin-web:AdminWebDomainName=admin.lx-software.com \
             --parameters "lxsoftware-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
             "${ADMIN_STACKS[@]}"

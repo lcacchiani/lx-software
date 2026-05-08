@@ -60,7 +60,7 @@ const lxsoftware = new LxsoftwareStack(app, "lxsoftware", {
 });
 tagStack(lxsoftware, "Admin Console", "backend");
 
-// 3) Admin SPA delivery (S3 + CloudFront + WAF/CSP). Renamed from lx-admin-web.
+// 3) Admin SPA delivery (S3 + CloudFront + WAF/CSP).
 const adminWeb = new LxsoftwareAdminWebStack(app, "lxsoftware-admin-web", {
   description: "LX Software admin SPA delivery (S3 + CloudFront).",
   env,

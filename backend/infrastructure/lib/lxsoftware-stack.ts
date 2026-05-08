@@ -12,18 +12,12 @@ import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
 
 /**
- * Consolidated admin backend stack.
+ * Consolidated admin backend stack: Cognito user pool (with Pre Token
+ * Generation Lambda + Google IdP), DynamoDB tables, private uploads
+ * bucket (with its own S3 access logs bucket), and the HTTP API plus
+ * the admin Lambda that consumes them.
  *
- * Replaces the previous per-concern stacks:
- *  - lx-admin-auth   (Cognito + Pre Token Generation Lambda)
- *  - lx-admin-data   (DynamoDB tables)
- *  - lx-admin-assets (private uploads bucket + S3 access logs bucket)
- *  - lx-admin-api    (HTTP API + admin Lambda)
- *
- * All physical resource names (bucket names, table names, user pool name,
- * API name) are kept identical to the legacy stacks so the existing
- * resources can be imported into this stack with `cdk import` without
- * recreation.
+ * All physical names use the `lxsoftware-admin-*` prefix.
  */
 export class LxsoftwareStack extends cdk.Stack {
   public readonly auth: AuthConstruct;
@@ -37,7 +31,7 @@ export class LxsoftwareStack extends cdk.Stack {
     super(scope, id, props);
 
     // ------------------------------------------------------------------
-    // CloudFormation parameters (formerly on lx-admin-auth + lx-admin-web)
+    // CloudFormation parameters
     // ------------------------------------------------------------------
     const adminWebDomainName = new cdk.CfnParameter(this, "AdminWebDomainName", {
       type: "String",
@@ -85,7 +79,7 @@ export class LxsoftwareStack extends cdk.Stack {
     const cognitoDomainPrefix = new cdk.CfnParameter(this, "CognitoDomainPrefix", {
       type: "String",
       description: "Globally unique Cognito hosted UI domain prefix.",
-      default: "lx-admin-auth",
+      default: "lxsoftware-admin-auth",
     });
 
     // ------------------------------------------------------------------
@@ -102,10 +96,10 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // 2. Data (DynamoDB tables) — names match legacy lx-admin-data stack
+    // 2. Data (DynamoDB tables)
     // ------------------------------------------------------------------
     this.recordsTable = new dynamodb.Table(this, "RecordsTable", {
-      tableName: "lx-admin-records",
+      tableName: "lxsoftware-admin-records",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -122,7 +116,7 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     this.auditLogTable = new dynamodb.Table(this, "AuditLogTable", {
-      tableName: "lx-admin-audit-log",
+      tableName: "lxsoftware-admin-audit-log",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -133,16 +127,22 @@ export class LxsoftwareStack extends cdk.Stack {
 
     // ------------------------------------------------------------------
     // 3. Assets (private uploads bucket + S3 access logs bucket)
-    //    Names match legacy lx-admin-assets stack.
+    //
+    // Bucket-name length budget: S3 caps the name at 63 chars. With a
+    // 12-digit account ID and the longest current AWS region label
+    // (`ap-southeast-1`, 14 chars) the suffix is `-{12}-{14}` = 28 chars,
+    // leaving 35 chars for the prefix. Both names below stay within that
+    // budget; `assets-logs` is the deliberately shortened form of the
+    // legacy `assets-s3-access-logs` (which would now exceed 63 chars).
     // ------------------------------------------------------------------
     const assetsBucketName = [
-      "lx-admin-assets",
+      "lxsoftware-admin-assets",
       cdk.Aws.ACCOUNT_ID,
       cdk.Aws.REGION,
     ].join("-");
 
     const assetsAccessLogsBucketName = [
-      "lx-admin-assets-s3-access-logs",
+      "lxsoftware-admin-assets-logs",
       cdk.Aws.ACCOUNT_ID,
       cdk.Aws.REGION,
     ].join("-");
@@ -212,7 +212,7 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // 4. HTTP API + admin Lambda — name matches legacy lx-admin-api stack
+    // 4. HTTP API + admin Lambda
     // ------------------------------------------------------------------
     const region = cdk.Stack.of(this).region;
     const issuer = `https://cognito-idp.${region}.amazonaws.com/${this.auth.userPool.userPoolId}`;
@@ -245,7 +245,7 @@ export class LxsoftwareStack extends cdk.Stack {
     const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
 
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
-      apiName: "lx-admin-api",
+      apiName: "lxsoftware-admin-api",
       corsPreflight: {
         allowHeaders: ["authorization", "content-type"],
         allowMethods: [
