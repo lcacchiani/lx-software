@@ -49,8 +49,74 @@ async function readJson(req) {
   }
 }
 
+// Sanitise a value for inclusion in a console log line so that any CR/LF
+// or other control characters from a malicious request body cannot forge
+// fake log entries (CWE-117 / log injection).
+function safeForLog(value) {
+  return String(value).replace(/[^\x20-\x7E]/g, "?").slice(0, 200);
+}
+
+// Whitelist of supported house keys. Routing always picks one of these
+// constants explicitly — request data is never used as a property name —
+// to avoid any prototype-pollution / remote-property-injection class of
+// bug (CWE-915).
+const HOUSE_HILLMARTON = "hillmarton";
+const HOUSE_MORRISON = "morrison";
+
+function setHouseFinance(house, value) {
+  if (house === HOUSE_HILLMARTON) {
+    financeState.hillmarton = value;
+  } else if (house === HOUSE_MORRISON) {
+    financeState.morrison = value;
+  }
+}
+
+function getHouseFinance(house) {
+  if (house === HOUSE_HILLMARTON) return financeState.hillmarton;
+  if (house === HOUSE_MORRISON) return financeState.morrison;
+  return null;
+}
+
+function fakeParsedLines(sourceKey) {
+  return [
+    {
+      id: `parsed-${Date.now()}-1`,
+      dateUtc: "2026-04-25T00:00:00.000Z",
+      type: "expenditure",
+      description: "British Gas — utilities Apr 2026",
+      netAmount: 84.16,
+      vat: 16.83,
+      grossAmount: 100.99,
+      currency: "GBP",
+      sourceAssetKey: sourceKey,
+    },
+    {
+      id: `parsed-${Date.now()}-2`,
+      dateUtc: "2026-04-26T00:00:00.000Z",
+      type: "expenditure",
+      description: "Thames Water Direct Debit",
+      netAmount: 32.5,
+      vat: 0,
+      grossAmount: 32.5,
+      currency: "GBP",
+      sourceAssetKey: sourceKey,
+    },
+    {
+      id: `parsed-${Date.now()}-3`,
+      dateUtc: "2026-04-28T00:00:00.000Z",
+      type: "income",
+      description: "Council tax refund",
+      netAmount: 45,
+      vat: 0,
+      grossAmount: 45,
+      currency: "GBP",
+      sourceAssetKey: sourceKey,
+    },
+  ];
+}
+
 const server = createServer(async (req, res) => {
-  console.log(`${req.method} ${req.url}`);
+  console.log(`${safeForLog(req.method)} ${safeForLog(req.url)}`);
   if (req.method === "OPTIONS") {
     return send(res, 204, "");
   }
@@ -59,10 +125,14 @@ const server = createServer(async (req, res) => {
     return send(res, 200, financeState);
   }
 
-  const putHouse = req.method === "PUT" && /^\/finance\/(hillmarton|morrison)$/.exec(req.url ?? "");
-  if (putHouse) {
+  if (req.method === "PUT" && req.url === `/finance/${HOUSE_HILLMARTON}`) {
     const body = await readJson(req);
-    financeState[putHouse[1]] = body;
+    setHouseFinance(HOUSE_HILLMARTON, body);
+    return send(res, 200, { data: body });
+  }
+  if (req.method === "PUT" && req.url === `/finance/${HOUSE_MORRISON}`) {
+    const body = await readJson(req);
+    setHouseFinance(HOUSE_MORRISON, body);
     return send(res, 200, { data: body });
   }
 
@@ -94,53 +164,29 @@ const server = createServer(async (req, res) => {
     });
   }
 
-  const parseHouse = req.method === "POST" &&
-    /^\/finance\/(hillmarton|morrison)\/parse-statement$/.exec(req.url ?? "");
+  let parseHouse = null;
+  if (
+    req.method === "POST" &&
+    req.url === `/finance/${HOUSE_HILLMARTON}/parse-statement`
+  ) {
+    parseHouse = HOUSE_HILLMARTON;
+  } else if (
+    req.method === "POST" &&
+    req.url === `/finance/${HOUSE_MORRISON}/parse-statement`
+  ) {
+    parseHouse = HOUSE_MORRISON;
+  }
   if (parseHouse) {
     const body = await readJson(req);
-    const house = parseHouse[1];
-    // Simulate OpenRouter latency briefly
+    // Simulate OpenRouter latency briefly so the loading state is visible.
     await new Promise((r) => setTimeout(r, 1500));
-    const fakeLines = [
-      {
-        id: `parsed-${Date.now()}-1`,
-        dateUtc: "2026-04-25T00:00:00.000Z",
-        type: "expenditure",
-        description: "British Gas — utilities Apr 2026",
-        netAmount: 84.16,
-        vat: 16.83,
-        grossAmount: 100.99,
-        currency: "GBP",
-        sourceAssetKey: body.key,
-      },
-      {
-        id: `parsed-${Date.now()}-2`,
-        dateUtc: "2026-04-26T00:00:00.000Z",
-        type: "expenditure",
-        description: "Thames Water Direct Debit",
-        netAmount: 32.5,
-        vat: 0,
-        grossAmount: 32.5,
-        currency: "GBP",
-        sourceAssetKey: body.key,
-      },
-      {
-        id: `parsed-${Date.now()}-3`,
-        dateUtc: "2026-04-28T00:00:00.000Z",
-        type: "income",
-        description: "Council tax refund",
-        netAmount: 45,
-        vat: 0,
-        grossAmount: 45,
-        currency: "GBP",
-        sourceAssetKey: body.key,
-      },
-    ];
+    const fakeLines = fakeParsedLines(body.key);
+    const current = getHouseFinance(parseHouse);
     const next = {
-      ...financeState[house],
-      lines: [...financeState[house].lines, ...fakeLines],
+      ...current,
+      lines: [...current.lines, ...fakeLines],
     };
-    financeState[house] = next;
+    setHouseFinance(parseHouse, next);
     return send(res, 200, {
       data: next,
       addedLines: fakeLines.length,
