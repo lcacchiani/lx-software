@@ -73,7 +73,7 @@ export function AuthCallbackPage() {
         clearStoredSession();
         sessionStorage.setItem(
           LOGIN_DENIED_FLASH_KEY,
-          "This account is not authorized for the admin console."
+          "This account is not authorized."
         );
         sessionStorage.removeItem("lx_admin_pkce_verifier");
         sessionStorage.removeItem("lx_admin_oauth_state");

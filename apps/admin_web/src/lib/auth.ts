@@ -72,7 +72,7 @@ export async function ensureFreshTokens(): Promise<string> {
   }
   if (!idTokenHasAdminAccess(idToken)) {
     clearStoredSession();
-    throw new Error("Not authorized for admin console");
+    throw new Error("This account is not authorized.");
   }
   const expMs = Number(sessionStorage.getItem(STORAGE_EXPIRES_AT) || "0");
   const refreshBufferMs = 60_000;
@@ -121,7 +121,7 @@ export async function ensureFreshTokens(): Promise<string> {
   idToken = sessionStorage.getItem(STORAGE_ID);
   if (idToken && !idTokenHasAdminAccess(idToken)) {
     clearStoredSession();
-    throw new Error("Not authorized for admin console");
+    throw new Error("This account is not authorized.");
   }
   if (!idToken) {
     throw new Error("Missing ID token after refresh");
