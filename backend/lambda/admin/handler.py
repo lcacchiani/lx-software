@@ -30,8 +30,27 @@ SUPPORTED_FINANCE_CURRENCIES = frozenset(
 DEFAULT_FINANCE_CURRENCY = "HKD"
 MAX_FINANCE_LINES = 5000
 MAX_FINANCE_DESCRIPTION = 8000
+# Asset uploads accept any image/* type plus statement PDFs.
+ALLOWED_UPLOAD_CONTENT_TYPES = frozenset({"application/pdf"})
 _s3 = boto3.client("s3")
 _ddb = boto3.resource("dynamodb")
+_secretsmanager = None
+
+
+def _get_secretsmanager_client() -> Any:
+    global _secretsmanager
+    if _secretsmanager is None:
+        _secretsmanager = boto3.client("secretsmanager")
+    return _secretsmanager
+
+
+def _is_allowed_upload_content_type(content_type: str) -> bool:
+    if not isinstance(content_type, str):
+        return False
+    ct = content_type.strip().lower()
+    if ct.startswith("image/"):
+        return True
+    return ct in ALLOWED_UPLOAD_CONTENT_TYPES
 
 
 def _json_response(
@@ -201,6 +220,11 @@ def _sanitize_finance_house(stored: dict[str, Any]) -> dict[str, Any]:
             cur_line = _coerce_finance_currency_value(raw.get("currency"), dc)
             row = dict(raw)
             row["currency"] = cur_line
+            src = row.get("sourceAssetKey")
+            if isinstance(src, str) and src.strip():
+                row["sourceAssetKey"] = src.strip()
+            elif "sourceAssetKey" in row:
+                del row["sourceAssetKey"]
             lines_out.append(row)
 
     return {"defaultCurrency": dc, "float": float_out, "lines": lines_out}
@@ -285,18 +309,25 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
             raw.get("currency", default_currency), f"lines[{i}].currency"
         )
 
-        lines_out.append(
-            {
-                "id": lid.strip(),
-                "dateUtc": date_utc.strip(),
-                "type": typ,
-                "description": desc.strip(),
-                "netAmount": float(raw["netAmount"]),
-                "vat": float(raw["vat"]),
-                "grossAmount": float(raw["grossAmount"]),
-                "currency": c,
-            }
-        )
+        line_out: dict[str, Any] = {
+            "id": lid.strip(),
+            "dateUtc": date_utc.strip(),
+            "type": typ,
+            "description": desc.strip(),
+            "netAmount": float(raw["netAmount"]),
+            "vat": float(raw["vat"]),
+            "grossAmount": float(raw["grossAmount"]),
+            "currency": c,
+        }
+
+        # Optional reference to the asset (e.g. uploaded statement PDF) the
+        # line originated from. Stored as the S3 object key so the UI can
+        # later resolve it back to the asset record.
+        source_key = raw.get("sourceAssetKey")
+        if isinstance(source_key, str) and source_key.strip():
+            line_out["sourceAssetKey"] = source_key.strip()[:1024]
+
+        lines_out.append(line_out)
 
     return {
         "defaultCurrency": default_currency,
@@ -397,9 +428,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _json_response(
                 400, {"message": "filename and contentType are required"}
             )
-        if not str(content_type).startswith("image/"):
+        if not _is_allowed_upload_content_type(str(content_type)):
             return _json_response(
-                400, {"message": "contentType must start with image/ for uploads"}
+                400,
+                {
+                    "message": (
+                        "contentType must be image/* or application/pdf"
+                    )
+                },
             )
         if not user_sub:
             return _json_response(400, {"message": "Missing sub claim"})
@@ -407,9 +443,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         object_key = f"uploads/{user_sub}/{uuid.uuid4().hex}/{safe_name}"
         bucket = os.environ["ASSETS_BUCKET_NAME"]
         max_bytes = int(os.environ.get("ASSET_MAX_BYTES", str(20 * 1024 * 1024)))
+        normalized_ct = str(content_type).strip().lower()
+        if normalized_ct == "application/pdf":
+            content_type_condition = ["eq", "$Content-Type", "application/pdf"]
+        else:
+            content_type_condition = ["starts-with", "$Content-Type", "image/"]
         conditions = [
             ["content-length-range", 1, max_bytes],
-            ["starts-with", "$Content-Type", "image/"],
+            content_type_condition,
             ["eq", "$key", object_key],
         ]
         fields = {"Content-Type": str(content_type), "key": object_key}
@@ -552,7 +593,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             },
         )
 
-    if method == "PUT" and path.startswith("/finance/"):
+    if method == "PUT" and path.startswith("/finance/") and not path.endswith(
+        "/parse-statement"
+    ):
         house = _path_finance_house(event, path)
         if not house or house not in FINANCE_HOUSE_KEYS:
             return _json_response(
@@ -570,7 +613,149 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         _audit(user_sub, "FINANCE_PUT", house, event)
         return _json_response(200, {"data": normalized})
 
+    if method == "POST" and path.endswith("/parse-statement") and path.startswith(
+        "/finance/"
+    ):
+        house = _path_finance_house_for_parse(event, path)
+        if not house or house not in FINANCE_HOUSE_KEYS:
+            return _json_response(
+                400,
+                {"message": "house must be hillmarton or morrison"},
+            )
+        if not user_sub:
+            return _json_response(400, {"message": "Missing sub claim"})
+        body = _parse_json_body(event)
+        key = body.get("key")
+        if not isinstance(key, str) or not key.strip():
+            return _json_response(400, {"message": "key is required"})
+        prefix = f"uploads/{user_sub}/"
+        if not key.startswith(prefix):
+            return _json_response(400, {"message": "Invalid key for this user"})
+        try:
+            return _handle_parse_statement(
+                event=event,
+                user_sub=user_sub,
+                house=house,
+                s3_key=key,
+            )
+        except _ParseStatementError as exc:
+            return _json_response(exc.status, {"message": exc.message})
+
+
     return _json_response(404, {"message": "Not found"})
+
+
+class _ParseStatementError(Exception):
+    """User-facing error for the /finance/{house}/parse-statement endpoint."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def _path_finance_house_for_parse(event: dict[str, Any], path: str) -> str | None:
+    """Pull the {house} segment out of /finance/{house}/parse-statement."""
+    pp = (event.get("pathParameters") or {}).get("house")
+    if isinstance(pp, str) and pp.strip():
+        return pp.strip().lower()
+    parts = [p for p in path.split("/") if p]
+    if len(parts) == 3 and parts[0] == "finance" and parts[2] == "parse-statement":
+        return parts[1].lower()
+    return None
+
+
+def _handle_parse_statement(
+    *,
+    event: dict[str, Any],
+    user_sub: str,
+    house: str,
+    s3_key: str,
+) -> dict[str, Any]:
+    """Run OpenRouter on an uploaded asset and append parsed lines.
+
+    Returns the **full updated finance house payload** so the caller can
+    reuse the response to refresh local state without an extra GET.
+    """
+    bucket = os.environ["ASSETS_BUCKET_NAME"]
+    try:
+        head = _s3.head_object(Bucket=bucket, Key=s3_key)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            raise _ParseStatementError(400, "Object not found in bucket") from exc
+        raise
+
+    content_type = head.get("ContentType") or ""
+    file_name = os.path.basename(s3_key)
+
+    table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    house_data = _load_finance_house(table, house)
+    default_currency = house_data.get("defaultCurrency", DEFAULT_FINANCE_CURRENCY)
+
+    # Lazy-import the parser so unit tests can stub urllib without paying
+    # the import cost on unrelated routes.
+    from openrouter_statement_parser import parse_statement_from_asset
+
+    try:
+        parsed = parse_statement_from_asset(
+            s3_client=_s3,
+            secrets_client=_get_secretsmanager_client(),
+            bucket=bucket,
+            s3_key=s3_key,
+            file_name=file_name,
+            content_type=content_type,
+            default_currency=default_currency,
+        )
+    except RuntimeError as exc:
+        logger.warning(
+            json.dumps(
+                {
+                    "tag": "parse_statement_failed",
+                    "house": house,
+                    "key": s3_key,
+                    "error": str(exc),
+                    "request_id": _request_id(event),
+                }
+            )
+        )
+        raise _ParseStatementError(502, f"Statement parser failed: {exc}") from exc
+
+    parsed_lines = parsed.get("lines") or []
+    new_lines: list[dict[str, Any]] = []
+    for raw_line in parsed_lines:
+        if not isinstance(raw_line, dict):
+            continue
+        new_lines.append({**raw_line, "id": uuid.uuid4().hex, "sourceAssetKey": s3_key})
+
+    merged_payload = {
+        "defaultCurrency": house_data.get("defaultCurrency", DEFAULT_FINANCE_CURRENCY),
+        "float": house_data.get(
+            "float",
+            {"amount": 0, "currency": DEFAULT_FINANCE_CURRENCY},
+        ),
+        "lines": list(house_data.get("lines", [])) + new_lines,
+    }
+
+    try:
+        normalized = _normalize_finance_payload(merged_payload)
+    except ValueError as exc:
+        raise _ParseStatementError(
+            500, f"Parsed lines failed validation: {exc}"
+        ) from exc
+
+    ddb_item = {**_finance_ddb_key(house), **_to_ddb_nested(normalized)}
+    table.put_item(Item=ddb_item)
+    _audit(user_sub, "FINANCE_PARSE_STATEMENT", f"{house}|{s3_key}", event)
+
+    return _json_response(
+        200,
+        {
+            "data": normalized,
+            "addedLines": len(new_lines),
+            "sourceAssetKey": s3_key,
+        },
+    )
 
 
 def _to_ddb(obj: dict[str, Any]) -> dict[str, Any]:

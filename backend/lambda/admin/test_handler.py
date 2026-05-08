@@ -23,7 +23,12 @@ def _install_stubs() -> None:
 
 _install_stubs()
 
-from handler import _groups_include_admin, _normalize_finance_payload  # noqa: E402
+from handler import (  # noqa: E402
+    _groups_include_admin,
+    _is_allowed_upload_content_type,
+    _normalize_finance_payload,
+    _path_finance_house_for_parse,
+)
 
 
 class TestGroups(unittest.TestCase):
@@ -112,6 +117,90 @@ class TestFinancePayload(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             _normalize_finance_payload(body)
+
+
+    def test_source_asset_key_persisted(self) -> None:
+        body = {
+            "defaultCurrency": "GBP",
+            "float": {"amount": 0, "currency": "GBP"},
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "expenditure",
+                    "description": "Coffee",
+                    "netAmount": 2.5,
+                    "vat": 0.5,
+                    "grossAmount": 3.0,
+                    "currency": "GBP",
+                    "sourceAssetKey": "uploads/abc/123/statement.pdf",
+                }
+            ],
+        }
+        out = _normalize_finance_payload(body)
+        self.assertEqual(
+            out["lines"][0]["sourceAssetKey"], "uploads/abc/123/statement.pdf"
+        )
+
+    def test_source_asset_key_optional(self) -> None:
+        body = {
+            "defaultCurrency": "GBP",
+            "float": {"amount": 0, "currency": "GBP"},
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "income",
+                    "description": "Rent",
+                    "netAmount": 1.0,
+                    "vat": 0,
+                    "grossAmount": 1.0,
+                    "currency": "GBP",
+                }
+            ],
+        }
+        out = _normalize_finance_payload(body)
+        self.assertNotIn("sourceAssetKey", out["lines"][0])
+
+
+class TestUploadContentTypeAllowList(unittest.TestCase):
+    def test_image_types_allowed(self) -> None:
+        self.assertTrue(_is_allowed_upload_content_type("image/png"))
+        self.assertTrue(_is_allowed_upload_content_type("image/jpeg"))
+        self.assertTrue(_is_allowed_upload_content_type("IMAGE/WEBP"))
+
+    def test_pdf_allowed(self) -> None:
+        self.assertTrue(_is_allowed_upload_content_type("application/pdf"))
+        self.assertTrue(_is_allowed_upload_content_type("Application/PDF"))
+
+    def test_other_types_rejected(self) -> None:
+        self.assertFalse(_is_allowed_upload_content_type("application/json"))
+        self.assertFalse(_is_allowed_upload_content_type("text/plain"))
+        self.assertFalse(_is_allowed_upload_content_type(""))
+        self.assertFalse(_is_allowed_upload_content_type(None))  # type: ignore[arg-type]
+
+
+class TestParseStatementHousePath(unittest.TestCase):
+    def test_path_param(self) -> None:
+        ev = {"pathParameters": {"house": "Hillmarton"}}
+        self.assertEqual(
+            _path_finance_house_for_parse(ev, "/finance/hillmarton/parse-statement"),
+            "hillmarton",
+        )
+
+    def test_path_split(self) -> None:
+        self.assertEqual(
+            _path_finance_house_for_parse(
+                {}, "/finance/morrison/parse-statement"
+            ),
+            "morrison",
+        )
+
+    def test_invalid_path(self) -> None:
+        self.assertIsNone(
+            _path_finance_house_for_parse({}, "/finance/morrison")
+        )
+        self.assertIsNone(_path_finance_house_for_parse({}, "/something"))
 
 
 if __name__ == "__main__":
