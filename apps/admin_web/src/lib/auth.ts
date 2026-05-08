@@ -1,10 +1,13 @@
 import { getAdminConfig } from "./config";
-import { readIdTokenExpiryMs } from "./jwt";
+import { idTokenHasAdminAccess, readIdTokenExpiryMs } from "./jwt";
 
 const STORAGE_ID = "lx_admin_id_token";
 const STORAGE_ACCESS = "lx_admin_access_token";
 const STORAGE_REFRESH = "lx_admin_refresh_token";
 const STORAGE_EXPIRES_AT = "lx_admin_expires_at";
+
+/** SessionStorage key for a one-shot login error shown on `LoginPage`. */
+export const LOGIN_DENIED_FLASH_KEY = "lx_admin_login_denied_message";
 
 export interface StoredOAuthTokens {
   readonly id_token: string;
@@ -43,6 +46,22 @@ export function hasStoredSession(): boolean {
 }
 
 /**
+ * Returns true only when a stored ID token exists and includes the Cognito
+ * `admin` group. Removes tokens that are present but not admin-eligible.
+ */
+export function hasAdminSession(): boolean {
+  const t = getStoredIdToken();
+  if (!t) {
+    return false;
+  }
+  if (!idTokenHasAdminAccess(t)) {
+    clearStoredSession();
+    return false;
+  }
+  return true;
+}
+
+/**
  * Returns a valid ID token, refreshing with the refresh token when within
  * 60 seconds of expiry.
  */
@@ -50,6 +69,10 @@ export async function ensureFreshTokens(): Promise<string> {
   let idToken = sessionStorage.getItem(STORAGE_ID);
   if (!idToken) {
     throw new Error("Not signed in");
+  }
+  if (!idTokenHasAdminAccess(idToken)) {
+    clearStoredSession();
+    throw new Error("Not authorized for admin console");
   }
   const expMs = Number(sessionStorage.getItem(STORAGE_EXPIRES_AT) || "0");
   const refreshBufferMs = 60_000;
@@ -96,6 +119,10 @@ export async function ensureFreshTokens(): Promise<string> {
   });
 
   idToken = sessionStorage.getItem(STORAGE_ID);
+  if (idToken && !idTokenHasAdminAccess(idToken)) {
+    clearStoredSession();
+    throw new Error("Not authorized for admin console");
+  }
   if (!idToken) {
     throw new Error("Missing ID token after refresh");
   }
