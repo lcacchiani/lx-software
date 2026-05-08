@@ -72,7 +72,6 @@ export function FinancePage() {
             {tab === "hillmarton" ? (
               <HouseStatementPanel
                 houseKey="hillmarton"
-                houseLabel="32 Hillmarton"
                 data={data.hillmarton}
                 onPatch={(patch) => patchHouse("hillmarton", patch)}
               />
@@ -80,7 +79,6 @@ export function FinancePage() {
             {tab === "morrison" ? (
               <HouseStatementPanel
                 houseKey="morrison"
-                houseLabel="The Morrison"
                 data={data.morrison}
                 onPatch={(patch) => patchHouse("morrison", patch)}
               />
