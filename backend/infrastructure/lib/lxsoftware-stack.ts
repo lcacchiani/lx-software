@@ -105,6 +105,31 @@ export class LxsoftwareStack extends cdk.Stack {
       }
     );
 
+    const openRouterApiKeySecretArn = new cdk.CfnParameter(
+      this,
+      "OpenRouterApiKeySecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the AWS Secrets Manager secret holding the OpenRouter API key (used by the admin Lambda to parse uploaded statement PDFs). Leave blank to disable PDF statement parsing.",
+      }
+    );
+
+    const openRouterModel = new cdk.CfnParameter(this, "OpenRouterModel", {
+      type: "String",
+      default: "mistralai/mistral-medium-3",
+      description:
+        "OpenRouter model slug used when extracting statement lines from uploaded PDFs.",
+    });
+
+    const openRouterPdfEngine = new cdk.CfnParameter(this, "OpenRouterPdfEngine", {
+      type: "String",
+      default: "mistral-ocr",
+      description:
+        "OpenRouter file-parser PDF engine: pdf-text (free, text-based PDFs), mistral-ocr (paid, scanned PDFs), or native (model-native parsing).",
+    });
+
     // ------------------------------------------------------------------
     // 1. Auth (Cognito user pool, Google IdP, hosted UI, bootstrap admin)
     // ------------------------------------------------------------------
@@ -255,17 +280,52 @@ export class LxsoftwareStack extends cdk.Stack {
 
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
+      // PDF statement parsing routes synchronously call OpenRouter, which
+      // can take 20-40s for multi-page PDFs. The default 10s timeout is
+      // not enough for that path.
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 1024,
       environment: {
         RECORDS_TABLE_NAME: this.recordsTable.tableName,
         AUDIT_LOG_TABLE_NAME: this.auditLogTable.tableName,
         ASSETS_BUCKET_NAME: this.assetsBucket.bucketName,
         ASSET_MAX_BYTES: String(20 * 1024 * 1024),
+        OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
+        OPENROUTER_MODEL: openRouterModel.valueAsString,
+        OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
       },
     });
 
     this.recordsTable.grantReadWriteData(adminFn);
     this.auditLogTable.grantReadWriteData(adminFn);
     this.assetsBucket.grantReadWrite(adminFn);
+
+    // Grant SecretsManager:GetSecretValue only when an ARN is provided.
+    // We can't conditionally call grantRead() from a CfnParameter, so we
+    // attach a narrow IAM policy that resolves to the parameter value at
+    // deploy time. When the ARN is blank, the resource list collapses to
+    // an empty string and the action is effectively a no-op.
+    const openRouterSecretArnValue = openRouterApiKeySecretArn.valueAsString;
+    const hasOpenRouterSecret = new cdk.CfnCondition(
+      this,
+      "HasOpenRouterSecret",
+      {
+        expression: cdk.Fn.conditionNot(
+          cdk.Fn.conditionEquals(openRouterSecretArnValue, "")
+        ),
+      }
+    );
+    const openRouterSecretPolicy = new iam.Policy(this, "AdminOpenRouterSecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [openRouterSecretArnValue],
+        }),
+      ],
+    });
+    openRouterSecretPolicy.attachToRole(adminFn.role!);
+    const cfnSecretPolicy = openRouterSecretPolicy.node.defaultChild as iam.CfnPolicy;
+    cfnSecretPolicy.cfnOptions.condition = hasOpenRouterSecret;
 
     const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
 
@@ -370,6 +430,13 @@ export class LxsoftwareStack extends cdk.Stack {
     this.httpApi.addRoutes({
       path: "/finance/{house}",
       methods: [apigwv2.HttpMethod.PUT],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/finance/{house}/parse-statement",
+      methods: [apigwv2.HttpMethod.POST],
       integration,
       authorizer: jwtAuthorizer,
     });

@@ -56,5 +56,21 @@ Typical committed values include:
   in the admin CloudFront CSP `connect-src` (e.g. `https://auth.lx-software.com`), must
   match the effective Cognito Hosted UI URL
 
+### OpenRouter (PDF statement parsing)
+
+The admin **Finance > House > Import statement (PDF)** UI uploads PDFs to S3 and
+asks OpenRouter to extract transactions. Configure these `lxsoftware:`-prefixed
+parameters to enable it:
+
+- **`lxsoftware:OpenRouterApiKeySecretArn`** — ARN of the AWS Secrets Manager
+  secret containing the OpenRouter API key. The secret value can be either a
+  raw key string or a JSON object with an `openrouter_api_key` (or `api_key`)
+  field. Leave empty to disable PDF parsing.
+- **`lxsoftware:OpenRouterModel`** — model slug (default `mistralai/mistral-medium-3`).
+  Pick a model that supports the `file-parser` plugin / file inputs.
+- **`lxsoftware:OpenRouterPdfEngine`** — `pdf-text` (free, text-based PDFs),
+  `mistral-ocr` (scanned PDFs, paid), or `native` (model-native parsing).
+  Defaults to `mistral-ocr`.
+
 Secrets and bootstrap passwords should not live in git; pass them via CI secrets
 or a private parameter file stored outside of git.
