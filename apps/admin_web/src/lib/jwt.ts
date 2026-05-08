@@ -26,3 +26,33 @@ export function readIdTokenExpiryMs(idToken: string): number | null {
     return null;
   }
 }
+
+/** Matches `backend/lambda/admin/handler.py` `_groups_include_admin`. */
+const ADMIN_GROUP = "admin";
+
+export function cognitoGroupsIncludeAdmin(
+  claims: Record<string, unknown>
+): boolean {
+  const raw = claims["cognito:groups"];
+  if (raw == null) {
+    return false;
+  }
+  if (Array.isArray(raw)) {
+    return raw.includes(ADMIN_GROUP);
+  }
+  const parts = String(raw)
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.includes(ADMIN_GROUP);
+}
+
+/** True when the ID token includes the Cognito `admin` group (claims or override). */
+export function idTokenHasAdminAccess(idToken: string): boolean {
+  try {
+    const claims = decodeJwtPayload<Record<string, unknown>>(idToken);
+    return cognitoGroupsIncludeAdmin(claims);
+  } catch {
+    return false;
+  }
+}

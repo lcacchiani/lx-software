@@ -12,7 +12,7 @@ import { clearStoredSession, getStoredIdToken } from "../lib/auth";
 import { createPkcePair } from "../lib/pkce";
 import { getAdminConfig } from "../lib/config";
 import { getCognitoUserPool } from "../lib/cognitoAuth";
-import { decodeJwtPayload } from "../lib/jwt";
+import { decodeJwtPayload, idTokenHasAdminAccess } from "../lib/jwt";
 
 export interface AuthUser {
   readonly sub: string;
@@ -72,7 +72,14 @@ async function beginOAuthRedirect(identityProvider?: "Google"): Promise<void> {
 export function AuthProvider({ children }: { readonly children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
     const t = getStoredIdToken();
-    return t ? decodeUserFromIdToken(t) : null;
+    if (!t) {
+      return null;
+    }
+    if (!idTokenHasAdminAccess(t)) {
+      clearStoredSession();
+      return null;
+    }
+    return decodeUserFromIdToken(t);
   });
   const [isLoading] = useState(false);
 
@@ -84,7 +91,14 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
 
   const refreshUser = useCallback(() => {
     const t = getStoredIdToken();
-    setUser(t ? decodeUserFromIdToken(t) : null);
+    if (!t || !idTokenHasAdminAccess(t)) {
+      if (t) {
+        clearStoredSession();
+      }
+      setUser(null);
+      return;
+    }
+    setUser(decodeUserFromIdToken(t));
   }, []);
 
   const loginWithGoogle = useCallback(async () => {

@@ -1,13 +1,13 @@
 import { Outlet } from "react-router-dom";
-import { hasStoredSession } from "../lib/auth";
+import { hasAdminSession } from "../lib/auth";
 import { LoginPage } from "../pages/LoginPage";
 
 /**
- * Blocks protected routes until a Cognito session exists in sessionStorage.
- * Renders a Bootstrap login screen when unauthenticated.
+ * Blocks protected routes until a Cognito session exists with the `admin`
+ * Cognito group on the ID token. Renders a Bootstrap login screen otherwise.
  */
 export function RequireAuth() {
-  if (!hasStoredSession()) {
+  if (!hasAdminSession()) {
     return <LoginPage />;
   }
   return <Outlet />;

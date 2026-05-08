@@ -1,8 +1,13 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../components/AuthProvider";
-import { saveTokensFromOAuthResponse } from "../lib/auth";
+import {
+  clearStoredSession,
+  LOGIN_DENIED_FLASH_KEY,
+  saveTokensFromOAuthResponse,
+} from "../lib/auth";
 import { getAdminConfig } from "../lib/config";
+import { idTokenHasAdminAccess } from "../lib/jwt";
 
 const OAUTH_CALLBACK_GUARD = "__lxAdminOauthCallbackStarted";
 
@@ -64,6 +69,17 @@ export function AuthCallbackPage() {
         refresh_token?: string;
         expires_in: number;
       };
+      if (!idTokenHasAdminAccess(json.id_token)) {
+        clearStoredSession();
+        sessionStorage.setItem(
+          LOGIN_DENIED_FLASH_KEY,
+          "This account is not authorized for the admin console."
+        );
+        sessionStorage.removeItem("lx_admin_pkce_verifier");
+        sessionStorage.removeItem("lx_admin_oauth_state");
+        navigate("/", { replace: true });
+        return;
+      }
       saveTokensFromOAuthResponse({
         id_token: json.id_token,
         access_token: json.access_token,

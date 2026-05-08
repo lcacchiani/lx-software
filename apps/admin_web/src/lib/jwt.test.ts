@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { base64UrlToPaddedBase64, readIdTokenExpiryMs } from "./jwt";
+import {
+  base64UrlToPaddedBase64,
+  cognitoGroupsIncludeAdmin,
+  readIdTokenExpiryMs,
+} from "./jwt";
 
 describe("jwt", () => {
   it("pads base64url segments for atob", () => {
@@ -18,5 +22,19 @@ describe("jwt", () => {
     const tok = `${header}.${pl}.sig`;
     const ms = readIdTokenExpiryMs(tok);
     expect(ms).toBe(2_000_000_000_000);
+  });
+
+  it("matches backend admin group parsing", () => {
+    expect(cognitoGroupsIncludeAdmin({ "cognito:groups": "admin" })).toBe(true);
+    expect(
+      cognitoGroupsIncludeAdmin({ "cognito:groups": "viewer,admin" })
+    ).toBe(true);
+    expect(cognitoGroupsIncludeAdmin({ "cognito:groups": ["admin"] })).toBe(
+      true
+    );
+    expect(cognitoGroupsIncludeAdmin({ "cognito:groups": "viewer" })).toBe(
+      false
+    );
+    expect(cognitoGroupsIncludeAdmin({})).toBe(false);
   });
 });
