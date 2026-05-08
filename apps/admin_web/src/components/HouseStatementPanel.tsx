@@ -313,7 +313,7 @@ export function HouseStatementPanel({
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-md-6">
+            <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-date-utc`}>
                 Date (UTC)
               </label>
@@ -328,7 +328,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-md-6">
+            <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-time-utc`}>
                 Time (UTC)
               </label>
@@ -344,7 +344,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-12">
+            <div className="col-6">
               <label className="form-label small" htmlFor={`${houseKey}-fin-type`}>
                 Type
               </label>
@@ -378,7 +378,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-md-4">
+            <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-net`}>
                 Net amount
               </label>
@@ -394,7 +394,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-md-4">
+            <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-vat`}>
                 VAT
               </label>
@@ -410,7 +410,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-md-4">
+            <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-gross`}>
                 Gross amount
               </label>
@@ -426,7 +426,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-md-4">
+            <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-cur`}>
                 Currency (ISO)
               </label>
