@@ -1,6 +1,13 @@
 # CDK parameter files
 
-Use `production.json` as a template for the public website parameters.
+Use `production.json` as a template for CDK parameters consumed from
+`CDK_PARAM_FILE` in GitHub Actions.
+
+- **Public website** — keys without a stack prefix are applied to
+  `lxsoftware-public-www` (for example `PublicWebsiteDomainName`).
+- **Admin stacks** — use a `stack:ParameterName` key for `lxsoftware` or
+  `lxsoftware-admin-web` (for example `lxsoftware:CognitoCustomDomainName`).
+  Those entries are **not** passed to the public stack deploy.
 
 ## Prerequisites: CDK Bootstrap
 
@@ -40,9 +47,11 @@ npx cdk deploy --require-approval never
 Set the repository variable `CDK_PARAM_FILE` to the path you want CI to use
 (`params/production.json` by default).
 
-The only required values are:
-- `PublicWebsiteDomainName`
-- `PublicWebsiteCertificateArn`
+Typical committed values include:
 
-Keep secrets out of the repo. For production, store parameter files securely
-outside of git or generate them in CI.
+- `PublicWebsiteDomainName`, `PublicWebsiteCertificateArn` (public site)
+- Optional Cognito custom Hosted UI on `lxsoftware`: `lxsoftware:CognitoCustomDomainName`
+  and `lxsoftware:CognitoCustomDomainCertificateArn` (ACM in **us-east-1**)
+
+Secrets and bootstrap passwords should not live in git; pass them via CI secrets
+or a private parameter file stored outside of git.
