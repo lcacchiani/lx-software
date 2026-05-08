@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   type CurrencyCode,
@@ -11,6 +11,7 @@ import {
   type HouseStatementLine,
 } from "../lib/financeModel";
 import { formatDateTimeHKT } from "../lib/formatDisplay";
+import { useParseStatement } from "../hooks/useParseStatement";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
@@ -143,6 +144,11 @@ export function HouseStatementPanel({
     emptyLineForm(data.defaultCurrency),
   );
   const [tableFilter, setTableFilter] = useState("");
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [parseSuccess, setParseSuccess] = useState<string | null>(null);
+  const parseStatement = useParseStatement(houseKey);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -468,6 +474,98 @@ export function HouseStatementPanel({
         </form>
       </AdminEditorSection>
 
+      <AdminEditorSection
+        title="Import statement (PDF)"
+        description="Upload a statement PDF (or image). The file is stored under Assets and the contents are sent to OpenRouter to extract each transaction as a new statement line."
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={!pdfFile || parseStatement.isPending}
+              onClick={() => {
+                if (!pdfFile) return;
+                setParseSuccess(null);
+                parseStatement.mutate(pdfFile, {
+                  onSuccess: (res) => {
+                    setParseSuccess(
+                      res.addedLines === 0
+                        ? "No transactions were extracted from this document."
+                        : `Imported ${res.addedLines} statement line${res.addedLines === 1 ? "" : "s"}.`,
+                    );
+                    setPdfFile(null);
+                    if (fileInputRef.current) {
+                      fileInputRef.current.value = "";
+                    }
+                  },
+                });
+              }}
+            >
+              {parseStatement.isPending ? "Parsing…" : "Upload & parse"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              disabled={parseStatement.isPending}
+              onClick={() => {
+                setPdfFile(null);
+                setParseSuccess(null);
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = "";
+                }
+              }}
+            >
+              Clear
+            </button>
+          </>
+        }
+      >
+        <div className="row g-2 align-items-end">
+          <div className="col-md-8">
+            <label
+              className="form-label small mb-0"
+              htmlFor={`${houseKey}-statement-pdf`}
+            >
+              Statement file
+            </label>
+            <input
+              id={`${houseKey}-statement-pdf`}
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,image/*"
+              className="form-control form-control-sm"
+              disabled={parseStatement.isPending}
+              onChange={(ev) => {
+                const next = ev.target.files?.[0] ?? null;
+                setPdfFile(next);
+                setParseSuccess(null);
+              }}
+            />
+          </div>
+        </div>
+        {parseStatement.isPending ? (
+          <p className="small text-muted mt-2 mb-0">
+            Uploading and parsing — this can take 20–40 seconds for multi-page PDFs.
+          </p>
+        ) : null}
+        {parseStatement.isError ? (
+          <div
+            className="alert alert-danger py-2 small mt-3 mb-0"
+            role="alert"
+          >
+            {parseStatement.error?.message ?? "Statement import failed."}
+          </div>
+        ) : null}
+        {parseSuccess && !parseStatement.isPending ? (
+          <div
+            className="alert alert-success py-2 small mt-3 mb-0"
+            role="status"
+          >
+            {parseSuccess}
+          </div>
+        ) : null}
+      </AdminEditorSection>
+
       <AdminEditorSection title="House statement">
         <AdminDataTable
           embedded
@@ -491,7 +589,18 @@ export function HouseStatementPanel({
                     {line.type === "income" ? "Income" : "Expenditure"}
                   </span>
                 </td>
-                <td className="small">{line.description}</td>
+                <td className="small">
+                  {line.description}
+                  {line.sourceAssetKey ? (
+                    <span
+                      className="badge text-bg-light border ms-2 align-middle"
+                      title={`Imported from ${line.sourceAssetKey}`}
+                    >
+                      <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
+                      PDF
+                    </span>
+                  ) : null}
+                </td>
                 <td className="small text-end">
                   <MoneyAmount amount={line.netAmount} currency={line.currency} />
                 </td>

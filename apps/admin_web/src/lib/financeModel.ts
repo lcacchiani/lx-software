@@ -21,6 +21,12 @@ export type HouseStatementLine = {
   readonly vat: number;
   readonly currency: string;
   readonly grossAmount: number;
+  /**
+   * Optional S3 object key of the asset (e.g. statement PDF) this line was
+   * extracted from. Set automatically when lines are imported via the
+   * OpenRouter PDF parser; absent on manually-entered lines.
+   */
+  readonly sourceAssetKey?: string;
 };
 
 export type HouseFinanceData = {
@@ -126,6 +132,10 @@ export function normalizeHouseFinanceData(input: unknown): HouseFinanceData {
         continue;
       }
       const curRaw = typeof row.currency === "string" ? row.currency : defaultCurrency;
+      const sourceAssetKey =
+        typeof row.sourceAssetKey === "string" && row.sourceAssetKey.trim()
+          ? row.sourceAssetKey.trim()
+          : undefined;
       linesOut.push({
         id: id.trim(),
         dateUtc: dateUtc.trim(),
@@ -135,6 +145,7 @@ export function normalizeHouseFinanceData(input: unknown): HouseFinanceData {
         vat,
         grossAmount: gross,
         currency: coerceSupportedCurrency(curRaw, defaultCurrency),
+        ...(sourceAssetKey ? { sourceAssetKey } : {}),
       });
     }
   }
