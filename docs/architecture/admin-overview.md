@@ -29,8 +29,16 @@ flowchart LR
 
 ## CDK deploy order
 
-`lxsoftware-admin-web` reads **CSP** values from Cognito and the HTTP API
-outputs in `lxsoftware`, so it must deploy **after** `lxsoftware`:
+`lxsoftware-admin-web` still **depends on** `lxsoftware` for the HTTP API URL
+used in CSP (`connect-src`). The Cognito OAuth origin is set with the
+`CspCognitoConnectOrigin` parameter (see `params/production.json`), not a
+cross-stack export, so `lxsoftware` can change Cognito domain resources without
+blocking on stale CloudFormation exports.
+
+The **Deploy Backend** workflow runs a **short `lxsoftware-admin-web`-only**
+deploy first when using `CDK_PARAM_FILE`, then deploys `lxsoftware` and
+`lxsoftware-admin-web` together so Cognito template updates do not fail on
+export deletion while an older admin template still imports the removed export.
 
 ```mermaid
 flowchart TD

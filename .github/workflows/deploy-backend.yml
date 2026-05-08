@@ -103,7 +103,8 @@ jobs:
           ADMIN_STACKS=(lxsoftware lxsoftware-admin-web)
 
           PUBLIC_PARAM_ARGS=()
-          ADMIN_PARAM_ARGS_FROM_FILE=()
+          ADMIN_LX_PARAM_ARGS=()
+          ADMIN_WEB_PARAM_ARGS=()
           resolve_param_file() {
             local path="$1"
             if [ -z "$path" ]; then
@@ -123,11 +124,14 @@ jobs:
             RESOLVED_PARAM_FILE=$(resolve_param_file "$CDK_PARAM_FILE" || true)
             if [ -n "$RESOLVED_PARAM_FILE" ]; then
               PUBLIC_PARAM_FILE="$(mktemp)"
-              ADMIN_PARAM_FILE="$(mktemp)"
+              ADMIN_LX_PARAM_FILE="$(mktemp)"
+              ADMIN_WEB_PARAM_FILE="$(mktemp)"
               jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | select((.key | contains(":") | not) or (.key | startswith("lxsoftware-public-www:"))) | .key = (if (.key | test(":")) then .key else "lxsoftware-public-www:\(.key)" end) | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$PUBLIC_PARAM_FILE"
-              jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | select(.key | test("^lxsoftware:") or test("^lxsoftware-admin-web:")) | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$ADMIN_PARAM_FILE"
+              jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | select(.key | test("^lxsoftware:")) | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$ADMIN_LX_PARAM_FILE"
+              jq -r 'to_entries[] | select(.value != null) | .value = (if .value | type == "string" then .value else .value | tostring end) | .value = (.value | gsub("\r\n"; "\n") | gsub("\r"; "\n") | gsub("\n"; "\\n") | ltrimstr(" ") | rtrimstr(" ")) | select(.value != "") | select(.key | test("^lxsoftware-admin-web:")) | "--parameters", "\(.key)=\(.value)"' "$RESOLVED_PARAM_FILE" > "$ADMIN_WEB_PARAM_FILE"
               readarray -t PUBLIC_PARAM_ARGS < "$PUBLIC_PARAM_FILE"
-              readarray -t ADMIN_PARAM_ARGS_FROM_FILE < "$ADMIN_PARAM_FILE"
+              readarray -t ADMIN_LX_PARAM_ARGS < "$ADMIN_LX_PARAM_FILE"
+              readarray -t ADMIN_WEB_PARAM_ARGS < "$ADMIN_WEB_PARAM_FILE"
             else
               echo "CDK_PARAM_FILE '$CDK_PARAM_FILE' not found"
               exit 1
@@ -140,11 +144,18 @@ jobs:
             "${PUBLIC_PARAM_ARGS[@]}" \
             "$PUBLIC_STACK"
 
-          # The consolidated `lxsoftware` stack owns Cognito + Lambda + API and exports
-          # the Cognito hosted UI / API endpoints consumed by `lxsoftware-admin-web` for
-          # CSP. Deploy them together so cross-stack references resolve.
+          # Drop the legacy Cognito UserPoolDomain cross-stack export before updating
+          # `lxsoftware` (custom domain / L1 domain resources change exports).
           npx cdk deploy --require-approval never \
-            "${ADMIN_PARAM_ARGS_FROM_FILE[@]}" \
+            "${ADMIN_WEB_PARAM_ARGS[@]}" \
+            --parameters lxsoftware-admin-web:AdminWebDomainName=admin.lx-software.com \
+            --parameters "lxsoftware-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
+            lxsoftware-admin-web
+
+          # Backend + admin SPA: Cognito/Dynamo/API + CloudFront (CSP still imports HTTP API URL).
+          npx cdk deploy --require-approval never \
+            "${ADMIN_LX_PARAM_ARGS[@]}" \
+            "${ADMIN_WEB_PARAM_ARGS[@]}" \
             --parameters lxsoftware:AdminWebDomainName=admin.lx-software.com \
             --parameters "lxsoftware:GoogleClientId=${P_GOOGLE_CLIENT_ID}" \
             --parameters "lxsoftware:GoogleClientSecret=${P_GOOGLE_CLIENT_SECRET}" \
