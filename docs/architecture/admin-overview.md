@@ -40,6 +40,13 @@ deploy first when using `CDK_PARAM_FILE`, then deploys `lxsoftware` and
 `lxsoftware-admin-web` together so Cognito template updates do not fail on
 export deletion while an older admin template still imports the removed export.
 
+Phase 1 must use `cdk deploy --exclusively lxsoftware-admin-web` so CDK does
+**not** drag `lxsoftware` into the deploy as a dependency. The HTTP API URL
+import resolves against the already-deployed `lxsoftware` exports; touching
+`lxsoftware` in phase 1 with only `lxsoftware-admin-web:*` parameters would
+flip the Cognito conditional resources to the prefix-domain branch and clash
+with the existing `lxsoftware-admin-auth` user pool domain.
+
 ```mermaid
 flowchart TD
   L[lxsoftware]
