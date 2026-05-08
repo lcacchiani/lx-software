@@ -65,7 +65,6 @@ const adminWeb = new LxsoftwareAdminWebStack(app, "lxsoftware-admin-web", {
   description: "LX Software admin SPA delivery (S3 + CloudFront).",
   env,
   synthesizer,
-  cspCognitoConnectOrigin: lxsoftware.auth.cognitoOAuthBaseUrl,
   cspApiConnectOrigin: lxsoftware.httpApi.apiEndpoint,
 });
 tagStack(adminWeb, "Admin Console", "spa");

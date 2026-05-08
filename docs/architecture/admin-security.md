@@ -56,9 +56,12 @@ not wire it today.
 ## Content Security Policy
 
 CloudFront attaches a response headers policy including a strict **CSP** whose
-`connect-src` includes the SPA origin, the Cognito hosted UI domain, and the
-execute-api origin. If either URL changes, redeploy `lxsoftware-admin-web`
-after updating `lxsoftware` so the CSP stays accurate.
+`connect-src` includes the SPA origin, the Cognito OAuth origin, and the
+execute-api origin. The Cognito origin is the stack parameter
+`CspCognitoConnectOrigin` on `lxsoftware-admin-web` (set via
+`lxsoftware-admin-web:CspCognitoConnectOrigin` in `CDK_PARAM_FILE`, e.g.
+`https://auth.example.com`). The API URL still comes from a cross-stack
+reference to `lxsoftware`. When either URL changes, redeploy `lxsoftware-admin-web`.
 
 ## IAM
 

@@ -52,6 +52,9 @@ Typical committed values include:
 - `PublicWebsiteDomainName`, `PublicWebsiteCertificateArn` (public site)
 - Optional Cognito custom Hosted UI on `lxsoftware`: `lxsoftware:CognitoCustomDomainName`
   and `lxsoftware:CognitoCustomDomainCertificateArn` (ACM in **us-east-1**)
+- **`lxsoftware-admin-web:CspCognitoConnectOrigin`** — full HTTPS origin for Cognito OAuth
+  in the admin CloudFront CSP `connect-src` (e.g. `https://auth.lx-software.com`), must
+  match the effective Cognito Hosted UI URL
 
 Secrets and bootstrap passwords should not live in git; pass them via CI secrets
 or a private parameter file stored outside of git.

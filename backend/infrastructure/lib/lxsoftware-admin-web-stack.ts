@@ -7,8 +7,6 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
 
 export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
-  /** Full https Cognito hosted UI origin for Content-Security-Policy connect-src */
-  readonly cspCognitoConnectOrigin: string;
   /** Admin HTTP API origin (https://{api-id}.execute-api.{region}.amazonaws.com) for CSP connect-src */
   readonly cspApiConnectOrigin: string;
 }
@@ -38,6 +36,16 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
       type: "String",
       description: "ACM certificate ARN in us-east-1 for the admin domain (CloudFront).",
     });
+
+    const cspCognitoConnectOrigin = new cdk.CfnParameter(
+      this,
+      "CspCognitoConnectOrigin",
+      {
+        type: "String",
+        description:
+          "Cognito OAuth origin for CSP connect-src (no path), e.g. https://auth.example.com",
+      }
+    );
 
     const wafWebAclArn = new cdk.CfnParameter(this, "WafWebAclArn", {
       type: "String",
@@ -113,7 +121,7 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
 
     const cspValue = cdk.Fn.join("", [
       "default-src 'self'; script-src 'self'; connect-src 'self' ",
-      props.cspCognitoConnectOrigin,
+      cspCognitoConnectOrigin.valueAsString,
       " ",
       props.cspApiConnectOrigin,
       "; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
