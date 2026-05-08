@@ -38,10 +38,10 @@ function isoFromUtcParts(datePart: string, timePart: string): string {
 }
 
 function emptyLineForm(): LineFormState {
-  const { datePart, timePart } = utcPartsFromIso(new Date().toISOString());
+  const datePart = new Date().toISOString().slice(0, 10);
   return {
     datePart,
-    timePart,
+    timePart: "00:00",
     type: "expenditure",
     description: "",
     netAmount: "",
@@ -294,7 +294,7 @@ export function HouseStatementPanel({
 
       <AdminEditorSection
         title="Statement line"
-        description='Enter or edit UTC date and time below (stored as ISO UTC). Use “Clear” to discard and start a new line.'
+        description='UTC calendar date (new lines use midnight UTC; saved time is kept when editing). Use “Clear” to discard and start a new line.'
         footer={
           <>
             <button type="submit" form={lineFormId} className="btn btn-primary btn-sm">
@@ -329,22 +329,6 @@ export function HouseStatementPanel({
               />
             </div>
             <div className="col-3">
-              <label className="form-label small" htmlFor={`${houseKey}-fin-time-utc`}>
-                Time (UTC)
-              </label>
-              <input
-                id={`${houseKey}-fin-time-utc`}
-                type="time"
-                step={60}
-                className="form-control form-control-sm"
-                required
-                value={lineForm.timePart}
-                onChange={(ev) =>
-                  setLineForm((f) => ({ ...f, timePart: ev.target.value }))
-                }
-              />
-            </div>
-            <div className="col-6">
               <label className="form-label small" htmlFor={`${houseKey}-fin-type`}>
                 Type
               </label>
@@ -363,7 +347,7 @@ export function HouseStatementPanel({
                 <option value="expenditure">Expenditure</option>
               </select>
             </div>
-            <div className="col-12">
+            <div className="col-6">
               <label className="form-label small" htmlFor={`${houseKey}-fin-desc`}>
                 Description
               </label>
