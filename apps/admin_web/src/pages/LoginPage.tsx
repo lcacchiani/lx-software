@@ -11,7 +11,7 @@ function consumeLoginDeniedFlash(): string | null {
 }
 
 export function LoginPage() {
-  const { loginWithGoogle, loginWithHostedUi } = useAuth();
+  const { loginWithGoogle } = useAuth();
   const [deniedMessage] = useState<string | null>(() =>
     consumeLoginDeniedFlash()
   );
@@ -26,10 +26,6 @@ export function LoginPage() {
               {deniedMessage}
             </div>
           ) : null}
-          <p className="text-muted small text-center mb-4">
-            Google accounts must be listed in the Cognito Pre Token Generation
-            allow-list. Use email/password for the break-glass bootstrap user.
-          </p>
           <div className="d-grid gap-2">
             <button
               type="button"
@@ -37,13 +33,6 @@ export function LoginPage() {
               onClick={() => void loginWithGoogle()}
             >
               Sign in with Google
-            </button>
-            <button
-              type="button"
-              className="btn btn-outline-secondary"
-              onClick={() => void loginWithHostedUi()}
-            >
-              Sign in with email (Hosted UI)
             </button>
           </div>
         </div>
