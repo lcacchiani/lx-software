@@ -95,8 +95,12 @@ jobs:
           set -eo pipefail
           npx cdk acknowledge 34892 || true
 
+          # Three stacks (post-consolidation, see docs/deployment/stack-consolidation.md):
+          #   1. lxsoftware-public-www  (S3 + CloudFront for the marketing site)
+          #   2. lxsoftware             (Cognito + DynamoDB + S3 assets + HTTP API)
+          #   3. lxsoftware-admin-web   (S3 + CloudFront for the admin SPA)
           PUBLIC_STACK="lxsoftware-public-www"
-          ADMIN_STACKS=(lx-admin-auth lx-admin-data lx-admin-assets lx-admin-api lx-admin-web)
+          ADMIN_STACKS=(lxsoftware lxsoftware-admin-web)
 
           PARAM_ARGS=()
           resolve_param_file() {
@@ -133,14 +137,17 @@ jobs:
             "${PARAM_ARGS[@]}" \
             "$PUBLIC_STACK"
 
+          # The consolidated `lxsoftware` stack owns Cognito + Lambda + API and exports
+          # the Cognito hosted UI / API endpoints consumed by `lxsoftware-admin-web` for
+          # CSP. Deploy them together so cross-stack references resolve.
           npx cdk deploy --require-approval never \
-            --parameters lx-admin-auth:AdminWebDomainName=admin.lx-software.com \
-            --parameters "lx-admin-auth:GoogleClientId=${P_GOOGLE_CLIENT_ID}" \
-            --parameters "lx-admin-auth:GoogleClientSecret=${P_GOOGLE_CLIENT_SECRET}" \
-            --parameters "lx-admin-auth:AdminFederatedEmailAllowlist=${P_EMAIL_ALLOWLIST}" \
-            --parameters "lx-admin-auth:AdminBootstrapEmail=${P_BOOTSTRAP_EMAIL}" \
-            --parameters "lx-admin-auth:AdminBootstrapTempPassword=${P_BOOTSTRAP_PASSWORD}" \
-            --parameters lx-admin-auth:CognitoDomainPrefix=lx-admin-auth \
-            --parameters lx-admin-web:AdminWebDomainName=admin.lx-software.com \
-            --parameters "lx-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
+            --parameters lxsoftware:AdminWebDomainName=admin.lx-software.com \
+            --parameters "lxsoftware:GoogleClientId=${P_GOOGLE_CLIENT_ID}" \
+            --parameters "lxsoftware:GoogleClientSecret=${P_GOOGLE_CLIENT_SECRET}" \
+            --parameters "lxsoftware:AdminFederatedEmailAllowlist=${P_EMAIL_ALLOWLIST}" \
+            --parameters "lxsoftware:AdminBootstrapEmail=${P_BOOTSTRAP_EMAIL}" \
+            --parameters "lxsoftware:AdminBootstrapTempPassword=${P_BOOTSTRAP_PASSWORD}" \
+            --parameters lxsoftware:CognitoDomainPrefix=lx-admin-auth \
+            --parameters lxsoftware-admin-web:AdminWebDomainName=admin.lx-software.com \
+            --parameters "lxsoftware-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
             "${ADMIN_STACKS[@]}"

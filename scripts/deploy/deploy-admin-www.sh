@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/admin_web"
 BUILD_DIR="$APP_DIR/dist"
-STACK_NAME="${ADMIN_WEB_STACK_NAME:-lx-admin-web}"
+STACK_NAME="${ADMIN_WEB_STACK_NAME:-lxsoftware-admin-web}"
 
 if [ ! -d "$BUILD_DIR" ]; then
   echo "Build output not found at $BUILD_DIR"

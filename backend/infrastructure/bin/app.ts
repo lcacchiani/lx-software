@@ -1,12 +1,23 @@
 import * as cdk from "aws-cdk-lib";
-import { AdminApiStack } from "../lib/admin-api-stack";
-import { AdminAssetsStack } from "../lib/admin-assets-stack";
-import { AdminAuthStack } from "../lib/admin-auth-stack";
-import { AdminDataStack } from "../lib/admin-data-stack";
-import { AdminWebStack } from "../lib/admin-web-stack";
+import { LxsoftwareAdminWebStack } from "../lib/lxsoftware-admin-web-stack";
+import { LxsoftwareStack } from "../lib/lxsoftware-stack";
 import { PublicWebsiteStack } from "../lib/public-website-stack";
 
 const app = new cdk.App();
+
+// Centralized tagging — applied to every resource in every stack that
+// supports tagging. Keep tag *keys* stable; rotating keys forces a churn
+// across every supported AWS resource.
+const COMMON_TAGS: Record<string, string> = {
+  Organization: "LX Software",
+  Repository: "lx-software",
+  Environment: "production",
+  ManagedBy: "CDK",
+};
+
+for (const [k, v] of Object.entries(COMMON_TAGS)) {
+  cdk.Tags.of(app).add(k, v);
+}
 
 const bootstrapQualifier = process.env.CDK_BOOTSTRAP_QUALIFIER;
 if (bootstrapQualifier) {
@@ -22,45 +33,39 @@ const env = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
-new PublicWebsiteStack(app, "lxsoftware-public-www", {
-  description: "LX Software Public Website",
-  env,
-  synthesizer,
-});
+/**
+ * Tag a stack with its name + a logical Component / Project so cost reports
+ * can group by stack or by product surface.
+ */
+function tagStack(stack: cdk.Stack, project: string, component: string) {
+  cdk.Tags.of(stack).add("Project", project);
+  cdk.Tags.of(stack).add("Component", component);
+  cdk.Tags.of(stack).add("Stack", stack.stackName);
+}
 
-const adminAuth = new AdminAuthStack(app, "lx-admin-auth", {
-  description: "LX Software admin Cognito auth",
+// 1) Public marketing website (S3 + CloudFront).
+const publicWeb = new PublicWebsiteStack(app, "lxsoftware-public-www", {
+  description: "LX Software public marketing website (S3 + CloudFront).",
   env,
   synthesizer,
 });
+tagStack(publicWeb, "Public Website", "marketing-site");
 
-const adminData = new AdminDataStack(app, "lx-admin-data", {
-  description: "LX Software admin DynamoDB tables",
+// 2) Consolidated admin backend (Cognito + DynamoDB + S3 assets + HTTP API).
+const lxsoftware = new LxsoftwareStack(app, "lxsoftware", {
+  description:
+    "LX Software admin backend: Cognito user pool, DynamoDB tables, private uploads bucket, and HTTP API.",
   env,
   synthesizer,
 });
+tagStack(lxsoftware, "Admin Console", "backend");
 
-const adminAssets = new AdminAssetsStack(app, "lx-admin-assets", {
-  description: "LX Software admin private S3 assets",
+// 3) Admin SPA delivery (S3 + CloudFront + WAF/CSP). Renamed from lx-admin-web.
+const adminWeb = new LxsoftwareAdminWebStack(app, "lxsoftware-admin-web", {
+  description: "LX Software admin SPA delivery (S3 + CloudFront).",
   env,
   synthesizer,
+  cspCognitoConnectOrigin: lxsoftware.auth.userPoolDomain.baseUrl(),
+  cspApiConnectOrigin: lxsoftware.httpApi.apiEndpoint,
 });
-
-const adminApi = new AdminApiStack(app, "lx-admin-api", {
-  description: "LX Software admin HTTP API",
-  env,
-  synthesizer,
-  userPool: adminAuth.auth.userPool,
-  userPoolClient: adminAuth.auth.userPoolClient,
-  recordsTable: adminData.recordsTable,
-  auditLogTable: adminData.auditLogTable,
-  assetsBucket: adminAssets.bucket,
-});
-
-new AdminWebStack(app, "lx-admin-web", {
-  description: "LX Software admin SPA on S3 and CloudFront",
-  env,
-  synthesizer,
-  cspCognitoConnectOrigin: adminAuth.auth.userPoolDomain.baseUrl(),
-  cspApiConnectOrigin: adminApi.httpApi.apiEndpoint,
-});
+tagStack(adminWeb, "Admin Console", "spa");

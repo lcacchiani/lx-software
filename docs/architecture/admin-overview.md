@@ -1,7 +1,7 @@
 # Admin console architecture
 
 The admin experience is a private Vite + React SPA (`apps/admin_web`) backed by
-dedicated AWS CDK stacks. Traffic flows from operators through Cloudflare DNS
+two AWS CDK stacks. Traffic flows from operators through Cloudflare DNS
 (gray cloud) to CloudFront, which serves static files from private S3. API
 calls go to API Gateway HTTP API with a Cognito JWT authorizer; Lambda
 functions enforce the `admin` Cognito group and integrate with DynamoDB and S3.
@@ -29,36 +29,29 @@ flowchart LR
 
 ## CDK deploy order
 
-`lx-admin-web` reads **CSP** values from Cognito and the HTTP API outputs, so it
-must deploy **after** `lx-admin-auth` and `lx-admin-api`. A safe order is:
+`lxsoftware-admin-web` reads **CSP** values from Cognito and the HTTP API
+outputs in `lxsoftware`, so it must deploy **after** `lxsoftware`:
 
 ```mermaid
 flowchart TD
-  A[lx-admin-auth]
-  B[lx-admin-data]
-  C[lx-admin-assets]
-  D[lx-admin-api]
-  W[lx-admin-web]
-  A --> D
-  B --> D
-  C --> D
-  A --> W
-  D --> W
+  L[lxsoftware]
+  W[lxsoftware-admin-web]
+  L --> W
 ```
-
-`lx-admin-data` and `lx-admin-assets` have no dependency on auth and can deploy
-in parallel with it; `lx-admin-api` depends on auth (JWT issuer), data, and
-assets buckets/tables.
 
 ## Stacks
 
-| Stack             | Purpose                                      |
-|-------------------|----------------------------------------------|
-| `lx-admin-auth`   | Cognito user pool, Google federation, MFA, Pre Token Generation |
-| `lx-admin-data`   | `lx-admin-records` and `lx-admin-audit-log` |
-| `lx-admin-assets` | Private uploads bucket with CORS for SPA   |
-| `lx-admin-api`    | HTTP API, JWT authorizer, Python Lambdas     |
-| `lx-admin-web`    | S3 + CloudFront for the SPA                  |
+The repository ships **three** CDK stacks. The admin backend lives in a single
+consolidated stack rather than the previous five-stack split — see
+`docs/deployment/stack-consolidation.md` for the migration runbook.
 
-The public marketing site (`lxsoftware-public-www`) is unchanged and deploys
-independently.
+| Stack                     | Purpose                                                                                  |
+|---------------------------|------------------------------------------------------------------------------------------|
+| `lxsoftware-public-www`   | Public marketing site: S3 origin + CloudFront.                                           |
+| `lxsoftware`              | Admin backend: Cognito + Pre Token Generation Lambda, DynamoDB tables, private uploads bucket, HTTP API + admin Lambda. |
+| `lxsoftware-admin-web`    | Admin SPA delivery: S3 + CloudFront + WAF/CSP.                                           |
+
+Physical resource names (DynamoDB tables `lx-admin-records` and
+`lx-admin-audit-log`, the user pool `lx-admin-user-pool`, S3 buckets
+`lx-admin-assets-*`, `lx-admin-web-*`, etc.) are kept stable across the
+consolidation so existing data is preserved on import.

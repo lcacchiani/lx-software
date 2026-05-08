@@ -6,24 +6,32 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
 
-export interface AdminWebStackProps extends cdk.StackProps {
+export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
   /** Full https Cognito hosted UI origin for Content-Security-Policy connect-src */
   readonly cspCognitoConnectOrigin: string;
   /** Admin HTTP API origin (https://{api-id}.execute-api.{region}.amazonaws.com) for CSP connect-src */
   readonly cspApiConnectOrigin: string;
 }
 
-export class AdminWebStack extends cdk.Stack {
+/**
+ * Admin SPA delivery: private S3 origin + CloudFront distribution + WAF/CSP.
+ *
+ * Renamed from `lx-admin-web` → `lxsoftware-admin-web`. Physical resource
+ * names (bucket names, response headers policy name) are kept identical to
+ * the legacy stack so the existing resources can be imported into this stack
+ * with `cdk import` without recreation. See
+ * docs/deployment/stack-consolidation.md for the runbook.
+ */
+export class LxsoftwareAdminWebStack extends cdk.Stack {
   public readonly bucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
   public readonly accessLogsBucket: s3.Bucket;
 
-  constructor(scope: Construct, id: string, props: AdminWebStackProps) {
+  constructor(scope: Construct, id: string, props: LxsoftwareAdminWebStackProps) {
     super(scope, id, props);
 
-    cdk.Tags.of(this).add("Organization", "LX Software");
-    cdk.Tags.of(this).add("Project", "Admin Console");
-
+    // Physical resource names use this prefix to remain stable across the
+    // stack rename (lx-admin-web -> lxsoftware-admin-web).
     const resourcePrefix = "lx-admin";
 
     const domainName = new cdk.CfnParameter(this, "AdminWebDomainName", {
@@ -228,22 +236,22 @@ export class AdminWebStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, "AdminWebBucketName", {
       value: this.bucket.bucketName,
-      exportName: "lx-admin-AdminWebBucketName",
+      exportName: "lxsoftware-admin-web-AdminWebBucketName",
     });
 
     new cdk.CfnOutput(this, "AdminWebDistributionId", {
       value: this.distribution.distributionId,
-      exportName: "lx-admin-AdminWebDistributionId",
+      exportName: "lxsoftware-admin-web-AdminWebDistributionId",
     });
 
     new cdk.CfnOutput(this, "AdminWebDistributionDomain", {
       value: this.distribution.distributionDomainName,
-      exportName: "lx-admin-AdminWebDistributionDomain",
+      exportName: "lxsoftware-admin-web-AdminWebDistributionDomain",
     });
 
     new cdk.CfnOutput(this, "AdminWebLoggingBucketName", {
       value: this.accessLogsBucket.bucketName,
-      exportName: "lx-admin-AdminWebLoggingBucketName",
+      exportName: "lxsoftware-admin-web-AdminWebLoggingBucketName",
     });
   }
 }
