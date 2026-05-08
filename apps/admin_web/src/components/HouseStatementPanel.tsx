@@ -88,7 +88,6 @@ function parseAmount(raw: string): number | null {
 
 export type HouseStatementPanelProps = {
   readonly houseKey: HouseKey;
-  readonly houseLabel: string;
   readonly data: HouseFinanceData;
   readonly onPatch: (patch: (prev: HouseFinanceData) => HouseFinanceData) => void;
 };
@@ -128,7 +127,6 @@ const COL_SPAN = TABLE_COLUMNS.length;
 
 export function HouseStatementPanel({
   houseKey,
-  houseLabel,
   data,
   onPatch,
 }: HouseStatementPanelProps) {
@@ -280,7 +278,6 @@ export function HouseStatementPanel({
     <div>
       <AdminEditorSection
         title="House details"
-        description={`Default currency for new statement lines and for coercing unsupported codes when loaded (platform default is HKD until saved). Cash float for ${houseLabel}. Both are stored with this house's finance state in the admin API.`}
         footer={
           <button type="button" className="btn btn-primary btn-sm" onClick={applyHouseDetails}>
             Save
@@ -340,7 +337,6 @@ export function HouseStatementPanel({
 
       <AdminEditorSection
         title="Statement line"
-        description='UTC calendar date (new lines use midnight UTC; saved time is kept when editing). Use “Clear” to discard and start a new line.'
         footer={
           <>
             <button type="submit" form={lineFormId} className="btn btn-primary btn-sm">
@@ -472,63 +468,65 @@ export function HouseStatementPanel({
         </form>
       </AdminEditorSection>
 
-      <h2 className="h6 text-uppercase text-muted mb-2">House statement</h2>
-      <AdminDataTable
-        columns={TABLE_COLUMNS}
-        filterValue={tableFilter}
-        onFilterChange={setTableFilter}
-        filterPlaceholder="Filter lines…"
-      >
-        {filteredLines.length ? (
-          filteredLines.map((line) => (
-            <tr key={line.id}>
-              <td className="small">
-                <DateTimeDisplay iso={line.dateUtc} />
-              </td>
-              <td className="small">
-                <span
-                  className={
-                    line.type === "income" ? "text-success" : "text-danger"
-                  }
-                >
-                  {line.type === "income" ? "Income" : "Expenditure"}
-                </span>
-              </td>
-              <td className="small">{line.description}</td>
-              <td className="small text-end">
-                <MoneyAmount amount={line.netAmount} currency={line.currency} />
-              </td>
-              <td className="small text-end">
-                <MoneyAmount amount={line.vat} currency={line.currency} />
-              </td>
-              <td className="small">{line.currency}</td>
-              <td className="small text-end">
-                <MoneyAmount amount={line.grossAmount} currency={line.currency} />
-              </td>
-              <td className="small text-end">
-                <TableIconButton
-                  iconClassName="bi bi-pencil"
-                  ariaLabel="Edit line"
-                  onClick={() => openEdit(line)}
-                />
-                <TableIconButton
-                  iconClassName="bi bi-trash"
-                  ariaLabel="Delete line"
-                  variant="danger"
-                  onClick={() => deleteLine(line.id)}
-                />
-              </td>
-            </tr>
-          ))
-        ) : (
-          <AdminDataTableEmptyRow
-            colSpan={COL_SPAN}
-            message={
-              sortedLines.length ? "No lines match the filter." : "No statement lines yet."
-            }
-          />
-        )}
-      </AdminDataTable>
+      <AdminEditorSection title="House statement">
+        <AdminDataTable
+          embedded
+          columns={TABLE_COLUMNS}
+          filterValue={tableFilter}
+          onFilterChange={setTableFilter}
+          filterPlaceholder="Filter lines…"
+        >
+          {filteredLines.length ? (
+            filteredLines.map((line) => (
+              <tr key={line.id}>
+                <td className="small">
+                  <DateTimeDisplay iso={line.dateUtc} />
+                </td>
+                <td className="small">
+                  <span
+                    className={
+                      line.type === "income" ? "text-success" : "text-danger"
+                    }
+                  >
+                    {line.type === "income" ? "Income" : "Expenditure"}
+                  </span>
+                </td>
+                <td className="small">{line.description}</td>
+                <td className="small text-end">
+                  <MoneyAmount amount={line.netAmount} currency={line.currency} />
+                </td>
+                <td className="small text-end">
+                  <MoneyAmount amount={line.vat} currency={line.currency} />
+                </td>
+                <td className="small">{line.currency}</td>
+                <td className="small text-end">
+                  <MoneyAmount amount={line.grossAmount} currency={line.currency} />
+                </td>
+                <td className="small text-end">
+                  <TableIconButton
+                    iconClassName="bi bi-pencil"
+                    ariaLabel="Edit line"
+                    onClick={() => openEdit(line)}
+                  />
+                  <TableIconButton
+                    iconClassName="bi bi-trash"
+                    ariaLabel="Delete line"
+                    variant="danger"
+                    onClick={() => deleteLine(line.id)}
+                  />
+                </td>
+              </tr>
+            ))
+          ) : (
+            <AdminDataTableEmptyRow
+              colSpan={COL_SPAN}
+              message={
+                sortedLines.length ? "No lines match the filter." : "No statement lines yet."
+              }
+            />
+          )}
+        </AdminDataTable>
+      </AdminEditorSection>
     </div>
   );
 }
