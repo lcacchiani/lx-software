@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { formatDateTimeHKT, formatMoneyAmount } from "./formatDisplay";
 
 describe("formatMoneyAmount", () => {
-  it("formats GBP", () => {
-    expect(formatMoneyAmount(12.5, "GBP")).toMatch(/12/);
+  it("formats HKD", () => {
+    expect(formatMoneyAmount(12.5, "HKD")).toMatch(/12/);
   });
 });
 

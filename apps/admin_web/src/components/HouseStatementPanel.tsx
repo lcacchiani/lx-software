@@ -1,4 +1,8 @@
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  coerceSupportedCurrency,
+  type CurrencyCode,
+} from "../lib/currencies";
 import {
   newStatementLineId,
   type FinanceLineType,
@@ -12,6 +16,7 @@ import {
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
+  CurrencySelect,
   DateTimeDisplay,
   MoneyAmount,
   TableIconButton,
@@ -37,7 +42,7 @@ function isoFromUtcParts(datePart: string, timePart: string): string {
   return `${datePart}T${t}:00.000Z`;
 }
 
-function emptyLineForm(): LineFormState {
+function emptyLineForm(defaultCurrency: CurrencyCode): LineFormState {
   const datePart = new Date().toISOString().slice(0, 10);
   return {
     datePart,
@@ -47,7 +52,7 @@ function emptyLineForm(): LineFormState {
     netAmount: "",
     vat: "",
     grossAmount: "",
-    currency: "GBP",
+    currency: defaultCurrency,
   };
 }
 
@@ -130,11 +135,29 @@ export function HouseStatementPanel({
   const lineFormId = `${houseKey}-line-form`;
   const [floatAmount, setFloatAmount] = useState(String(data.float.amount));
   const [floatCurrency, setFloatCurrency] = useState(data.float.currency);
+  const [houseDefaultDraft, setHouseDefaultDraft] = useState(data.defaultCurrency);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [lineForm, setLineForm] = useState<LineFormState>(emptyLineForm);
+  const [lineForm, setLineForm] = useState<LineFormState>(() =>
+    emptyLineForm(data.defaultCurrency),
+  );
   const [tableFilter, setTableFilter] = useState("");
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setFloatAmount(String(data.float.amount));
+      setFloatCurrency(data.float.currency);
+      setHouseDefaultDraft(data.defaultCurrency);
+    });
+  }, [data.float.amount, data.float.currency, data.defaultCurrency]);
+
+  useEffect(() => {
+    if (editingId !== null) return;
+    queueMicrotask(() => {
+      setLineForm((f) => ({ ...f, currency: data.defaultCurrency }));
+    });
+  }, [data.defaultCurrency, editingId]);
 
   const sortedLines = useMemo(() => {
     return [...data.lines].sort((a, b) => {
@@ -165,7 +188,7 @@ export function HouseStatementPanel({
 
   function applyFloat() {
     const amt = parseAmount(floatAmount);
-    const cur = floatCurrency.trim().toUpperCase().slice(0, 3) || "GBP";
+    const cur = coerceSupportedCurrency(floatCurrency, data.defaultCurrency);
     if (amt === null) {
       return;
     }
@@ -180,7 +203,7 @@ export function HouseStatementPanel({
   function resetLineForm() {
     setEditingId(null);
     setFormError(null);
-    setLineForm(emptyLineForm());
+    setLineForm(emptyLineForm(data.defaultCurrency));
   }
 
   function openEdit(line: HouseStatementLine) {
@@ -202,8 +225,7 @@ export function HouseStatementPanel({
       setFormError("Net, VAT, and gross must be valid numbers.");
       return;
     }
-    const currency =
-      lineForm.currency.trim().toUpperCase().slice(0, 3) || "GBP";
+    const currency = coerceSupportedCurrency(lineForm.currency, data.defaultCurrency);
     const dateUtc = isoFromUtcParts(lineForm.datePart, lineForm.timePart);
 
     const row: HouseStatementLine = {
@@ -244,8 +266,41 @@ export function HouseStatementPanel({
     }
   }
 
+  function applyHouseDefault() {
+    const next = coerceSupportedCurrency(houseDefaultDraft, data.defaultCurrency);
+    setHouseDefaultDraft(next);
+    onPatch((prev) => ({ ...prev, defaultCurrency: next }));
+  }
+
   return (
     <div>
+      <AdminEditorSection
+        title="House default currency"
+        description="New statement lines default to this code, and amounts stored with an unsupported currency are coerced to it when loaded. The platform default is HKD until you save a house preference."
+        footer={
+          <button type="button" className="btn btn-primary btn-sm" onClick={applyHouseDefault}>
+            Save house default
+          </button>
+        }
+      >
+        <div className="row g-2 align-items-end flex-wrap">
+          <div className="col-auto">
+            <label className="form-label small mb-0" htmlFor={`${houseKey}-house-default-ccy`}>
+              Default currency
+            </label>
+            <CurrencySelect
+              id={`${houseKey}-house-default-ccy`}
+              value={houseDefaultDraft}
+              onChange={(code) => setHouseDefaultDraft(code)}
+              className="form-select form-select-sm"
+            />
+          </div>
+        </div>
+        <p className="small text-muted mt-2 mb-0">
+          Stored with this house&apos;s finance state in the admin API.
+        </p>
+      </AdminEditorSection>
+
       <AdminEditorSection
         title="Float"
         description={`Cash float held for ${houseLabel}. Stored via the admin API.`}
@@ -269,18 +324,14 @@ export function HouseStatementPanel({
               onChange={(ev) => setFloatAmount(ev.target.value)}
             />
           </div>
-          <div className="col-auto">
+          <div className="col-auto" style={{ minWidth: "6.5rem" }}>
             <label className="form-label small mb-0" htmlFor={`float-cur-${houseKey}`}>
               Currency
             </label>
-            <input
+            <CurrencySelect
               id={`float-cur-${houseKey}`}
-              type="text"
-              className="form-control form-control-sm text-uppercase"
-              maxLength={3}
-              style={{ width: "5rem" }}
               value={floatCurrency}
-              onChange={(ev) => setFloatCurrency(ev.target.value)}
+              onChange={(code) => setFloatCurrency(code)}
             />
           </div>
         </div>
@@ -412,17 +463,13 @@ export function HouseStatementPanel({
             </div>
             <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-cur`}>
-                Currency (ISO)
+                Currency
               </label>
-              <input
+              <CurrencySelect
                 id={`${houseKey}-fin-cur`}
-                type="text"
-                className="form-control form-control-sm text-uppercase"
-                maxLength={3}
-                required
                 value={lineForm.currency}
-                onChange={(ev) =>
-                  setLineForm((f) => ({ ...f, currency: ev.target.value }))
+                onChange={(code) =>
+                  setLineForm((f) => ({ ...f, currency: code }))
                 }
               />
             </div>

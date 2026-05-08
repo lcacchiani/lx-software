@@ -6,10 +6,15 @@ import {
   type HouseFinanceData,
   type HouseKey,
   DEFAULT_FINANCE_STATE,
+  normalizeHouseFinanceData,
 } from "../lib/financeModel";
 
 async function fetchFinance(): Promise<FinancePersistedState> {
-  return adminFetchJson<FinancePersistedState>("/finance");
+  const raw = await adminFetchJson<FinancePersistedState>("/finance");
+  return {
+    hillmarton: normalizeHouseFinanceData(raw.hillmarton),
+    morrison: normalizeHouseFinanceData(raw.morrison),
+  };
 }
 
 type PutFinanceResponse = {

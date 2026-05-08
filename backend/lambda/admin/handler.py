@@ -24,6 +24,10 @@ ADMIN_GROUP = "admin"
 RECORD_PK_PREFIX = "RECORD#"
 FINANCE_HOUSE_KEYS = frozenset({"hillmarton", "morrison"})
 FINANCE_LINE_TYPES = frozenset({"income", "expenditure"})
+SUPPORTED_FINANCE_CURRENCIES = frozenset(
+    {"GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED"}
+)
+DEFAULT_FINANCE_CURRENCY = "HKD"
 MAX_FINANCE_LINES = 5000
 MAX_FINANCE_DESCRIPTION = 8000
 _s3 = boto3.client("s3")
@@ -157,7 +161,61 @@ def _from_ddb_nested(obj: Any) -> Any:
 
 
 def _default_finance_house() -> dict[str, Any]:
-    return {"float": {"amount": 0, "currency": "GBP"}, "lines": []}
+    return {
+        "defaultCurrency": DEFAULT_FINANCE_CURRENCY,
+        "float": {"amount": 0, "currency": DEFAULT_FINANCE_CURRENCY},
+        "lines": [],
+    }
+
+
+def _coerce_finance_currency_value(raw: Any, fallback: str) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        return fallback
+    c = raw.strip().upper()[:3]
+    if len(c) < 3 or c not in SUPPORTED_FINANCE_CURRENCIES:
+        return fallback
+    return c
+
+
+def _sanitize_finance_house(stored: dict[str, Any]) -> dict[str, Any]:
+    """Fill missing keys and coerce legacy currency strings for GET responses."""
+    base = _default_finance_house()
+    dc = _coerce_finance_currency_value(stored.get("defaultCurrency"), DEFAULT_FINANCE_CURRENCY)
+    fl = stored.get("float")
+    if isinstance(fl, dict):
+        amt = fl.get("amount", 0)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            amt = 0
+        cur = _coerce_finance_currency_value(fl.get("currency"), dc)
+        float_out: dict[str, Any] = {"amount": float(amt), "currency": cur}
+    else:
+        float_out = dict(base["float"])
+        float_out["currency"] = dc
+
+    lines_out: list[dict[str, Any]] = []
+    lines_raw = stored.get("lines")
+    if isinstance(lines_raw, list):
+        for raw in lines_raw:
+            if not isinstance(raw, dict):
+                continue
+            cur_line = _coerce_finance_currency_value(raw.get("currency"), dc)
+            row = dict(raw)
+            row["currency"] = cur_line
+            lines_out.append(row)
+
+    return {"defaultCurrency": dc, "float": float_out, "lines": lines_out}
+
+
+def _require_supported_currency(raw: Any, field_label: str) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(f"{field_label} is required")
+    c = raw.strip().upper()[:3]
+    if len(c) < 3:
+        raise ValueError(f"{field_label} must be a 3-letter ISO currency code")
+    if c not in SUPPORTED_FINANCE_CURRENCIES:
+        allowed = ", ".join(sorted(SUPPORTED_FINANCE_CURRENCIES))
+        raise ValueError(f"{field_label} must be one of: {allowed}")
+    return c
 
 
 def _valid_iso_instant(s: str) -> bool:
@@ -171,6 +229,14 @@ def _valid_iso_instant(s: str) -> bool:
 def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("Body must be a JSON object")
+
+    if "defaultCurrency" in body:
+        default_currency = _require_supported_currency(
+            body["defaultCurrency"], "defaultCurrency"
+        )
+    else:
+        default_currency = DEFAULT_FINANCE_CURRENCY
+
     fl = body.get("float")
     if not isinstance(fl, dict):
         raise ValueError("float is required")
@@ -179,12 +245,9 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("float.amount must be a number")
     if abs(float(amt)) > 1e15:
         raise ValueError("float.amount out of range")
-    cur_raw = fl.get("currency", "GBP")
-    if not isinstance(cur_raw, str) or not cur_raw.strip():
-        raise ValueError("float.currency is required")
-    cur = cur_raw.strip().upper()[:3]
-    if len(cur) < 3:
-        raise ValueError("float.currency must be a 3-letter ISO code")
+    cur = _require_supported_currency(
+        fl.get("currency", default_currency), "float.currency"
+    )
 
     lines_raw = body.get("lines")
     if not isinstance(lines_raw, list):
@@ -218,12 +281,9 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
             if abs(float(val)) > 1e15:
                 raise ValueError(f"lines[{i}].{key} out of range")
 
-        cur_line = raw.get("currency", "GBP")
-        if not isinstance(cur_line, str) or not cur_line.strip():
-            raise ValueError(f"lines[{i}].currency is required")
-        c = cur_line.strip().upper()[:3]
-        if len(c) < 3:
-            raise ValueError(f"lines[{i}].currency must be a 3-letter ISO code")
+        c = _require_supported_currency(
+            raw.get("currency", default_currency), f"lines[{i}].currency"
+        )
 
         lines_out.append(
             {
@@ -239,6 +299,7 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
         )
 
     return {
+        "defaultCurrency": default_currency,
         "float": {"amount": float(amt), "currency": cur},
         "lines": lines_out,
     }
@@ -254,7 +315,10 @@ def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
     if not item:
         return _default_finance_house()
     payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
-    return _from_ddb_nested(payload)
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return _default_finance_house()
+    return _sanitize_finance_house(nested)
 
 
 def _path_finance_house(event: dict[str, Any], path: str) -> str | None:

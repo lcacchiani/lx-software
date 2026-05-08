@@ -14,6 +14,7 @@ This document defines **reusable patterns** for the LX Software admin SPA (`apps
 | Component | Purpose |
 |-----------|---------|
 | `MoneyAmount` | Displays a numeric amount with ISO currency via `Intl.NumberFormat`. Props: `amount`, `currency`. |
+| `CurrencySelect` | Bootstrap `form-select` for admin-supported currency codes only (`src/lib/currencies.ts`). Props: `id`, `value`, `onChange`, optional `className`, `disabled`. |
 | `DateTimeDisplay` | Formats an ISO instant for **Hong Kong** wall time, e.g. `May 26, 2026 at 10:12pm HKT`. Uses `formatDateTimeHKT` in `src/lib/formatDisplay.ts`. |
 | `AdminEditorSection` | Card wrapper for editor blocks: optional title/description, body content, optional **footer** for Save/Update/Clear. |
 | `AdminDataTable` | Card + single filter field + standard table (`table-sm`, `table-striped`). Pass columns and row `<tr>` children. Use `AdminDataTableEmptyRow` for empty/filter-empty states. |
