@@ -14,8 +14,8 @@ export class PublicWebsiteStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    cdk.Tags.of(this).add("Organization", "LX Software");
-    cdk.Tags.of(this).add("Project", "Public Website");
+    // Common tags (Organization, Project, Environment, ManagedBy, Repository,
+    // Stack, Component) are applied centrally in bin/app.ts.
 
     const domainName = new cdk.CfnParameter(this, "PublicWebsiteDomainName", {
       type: "String",

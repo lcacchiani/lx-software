@@ -57,8 +57,8 @@ not wire it today.
 
 CloudFront attaches a response headers policy including a strict **CSP** whose
 `connect-src` includes the SPA origin, the Cognito hosted UI domain, and the
-execute-api origin. If either URL changes, redeploy `lx-admin-web` after
-updating dependent stacks so the CSP stays accurate.
+execute-api origin. If either URL changes, redeploy `lxsoftware-admin-web`
+after updating `lxsoftware` so the CSP stays accurate.
 
 ## IAM
 
@@ -93,7 +93,7 @@ updating dependent stacks so the CSP stays accurate.
 
 ## CloudFront distribution logging
 
-The `lx-admin-web` stack uses CloudFront’s **classic logging to S3** (same
+The `lxsoftware-admin-web` stack uses CloudFront’s **classic logging to S3** (same
 pattern as the public site). Some AWS Organizations block this logging delivery
 with strict bucket policies. If deploy fails with `InvalidViewerLogging`, switch
 to **logging to CloudWatch Logs** or follow the org-approved pattern.

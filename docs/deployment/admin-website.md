@@ -63,13 +63,10 @@ as described in the checklist above and in `docs/architecture/security.md`.
 ## 4. Deploy admin infrastructure
 
 Run the **Deploy Backend** workflow (or invoke CDK locally with the same
-parameters). Confirm all five stacks finish successfully:
+parameters). Confirm both admin stacks finish successfully:
 
-- `lx-admin-auth`
-- `lx-admin-data`
-- `lx-admin-assets`
-- `lx-admin-api`
-- `lx-admin-web`
+- `lxsoftware`           — Cognito, DynamoDB, S3 assets, HTTP API
+- `lxsoftware-admin-web` — S3 origin + CloudFront for the SPA
 
 Copy CloudFormation outputs for the user pool, client, hosted UI domain, API
 URL, and CloudFront domain name into the GitHub environment variables used by
@@ -116,4 +113,4 @@ bash scripts/deploy/deploy-admin-www.sh
 ```
 
 The script reads `AdminWebBucketName` and `AdminWebDistributionId` from the
-`lx-admin-web` stack outputs.
+`lxsoftware-admin-web` stack outputs (override with `ADMIN_WEB_STACK_NAME`).
