@@ -66,3 +66,12 @@ export async function adminFetchJson<T>(
   const res = await adminFetch(path, init);
   return (await res.json()) as T;
 }
+
+/** Presigned GET URL for a confirmed uploads/* asset (e.g. statement PDF). */
+export async function fetchAssetDownloadUrl(key: string): Promise<string> {
+  const data = await adminFetchJson<{ url: string }>("/assets/download-url", {
+    method: "POST",
+    body: JSON.stringify({ key }),
+  });
+  return data.url;
+}

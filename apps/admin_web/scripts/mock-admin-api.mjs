@@ -194,6 +194,18 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  if (req.method === "POST" && req.url === "/assets/download-url") {
+    const body = await readJson(req);
+    const key = body?.key;
+    if (!key) {
+      return send(res, 400, { message: "key is required" });
+    }
+    return send(res, 200, {
+      url: `https://example.com/mock-asset-download?key=${encodeURIComponent(String(key))}`,
+      expiresIn: 300,
+    });
+  }
+
   if (req.method === "GET") {
     let pathname = "";
     try {

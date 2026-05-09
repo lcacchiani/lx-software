@@ -418,7 +418,7 @@ export class LxsoftwareStack extends cdk.Stack {
 
     this.httpApi.addRoutes({
       path: "/assets/download-url",
-      methods: [apigwv2.HttpMethod.GET],
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
       integration,
       authorizer: jwtAuthorizer,
     });
