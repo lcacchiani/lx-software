@@ -2,11 +2,14 @@ import { type FormEvent, useMemo, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
+  type CurrencyCode,
 } from "../lib/currencies";
+import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   newStatementLineId,
   type FinanceLedgerRecord,
 } from "../lib/financeModel";
+import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
@@ -87,6 +90,9 @@ export function FinanceLedgerSheetPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [lineForm, setLineForm] = useState<LineFormState>(() => emptyForm());
   const [tableFilter, setTableFilter] = useState("");
+  const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
+    GLOBAL_DEFAULT_CURRENCY,
+  );
 
   const filtered = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
@@ -98,6 +104,41 @@ export function FinanceLedgerSheetPanel({
       return hay.includes(q);
     });
   }, [records, tableFilter]);
+
+  const recordCurrencies = useMemo(
+    () => records.map((r) => r.currency),
+    [records],
+  );
+
+  const needsFx = useMemo(() => {
+    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
+    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
+  }, [recordCurrencies, totalDisplayCurrency]);
+
+  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
+
+  const convertedTotal = useMemo(() => {
+    if (records.length === 0) return null;
+    if (needsFx && !ratesQuery.isSuccess) return null;
+    const map = needsFx ? ratesQuery.data.rateByQuote : new Map<string, number>();
+    try {
+      return records.reduce(
+        (sum, r) => sum + convertAmountToBase(r.amount, r.currency, totalDisplayCurrency, map),
+        0,
+      );
+    } catch {
+      return null;
+    }
+  }, [
+    records,
+    needsFx,
+    ratesQuery.isSuccess,
+    ratesQuery.data,
+    totalDisplayCurrency,
+  ]);
+
+  const fxLoading = needsFx && ratesQuery.isPending;
+  const fxError = needsFx && ratesQuery.isError;
 
   function resetForm() {
     setEditingId(null);
@@ -286,6 +327,45 @@ export function FinanceLedgerSheetPanel({
               }
             />
           )}
+          {records.length > 0 ? (
+            <tr className="table-group-divider table-secondary fw-semibold">
+              <td className="small">Total</td>
+              <td className="small text-muted fw-normal">
+                {fxError ? (
+                  <span className="text-danger">
+                    {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
+                  </span>
+                ) : fxLoading ? (
+                  "Loading rates…"
+                ) : needsFx && ratesQuery.isSuccess && ratesQuery.data.date ? (
+                  <>Frankfurter · {ratesQuery.data.date}</>
+                ) : (
+                  "\u2014"
+                )}
+              </td>
+              <td className="small text-end">
+                {convertedTotal !== null ? (
+                  <MoneyAmount
+                    amount={convertedTotal}
+                    currency={totalDisplayCurrency}
+                    amountOnly
+                  />
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </td>
+              <td className="small">
+                <CurrencySelect
+                  id={`${sheetId}-ledger-total-ccy`}
+                  className="form-select form-select-sm"
+                  value={totalDisplayCurrency}
+                  onChange={(code) => setTotalDisplayCurrency(code)}
+                  disabled={fxLoading}
+                />
+              </td>
+              <td className="small text-end" />
+            </tr>
+          ) : null}
         </AdminDataTable>
       </AdminEditorSection>
     </div>
