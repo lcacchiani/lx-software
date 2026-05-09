@@ -61,10 +61,26 @@ const lxsoftware = new LxsoftwareStack(app, "lxsoftware", {
 tagStack(lxsoftware, "Admin Console", "backend");
 
 // 3) Admin SPA delivery (S3 + CloudFront + WAF/CSP).
+//
+// The admin SPA uploads PDF statements directly to the private assets
+// bucket via presigned POST. The browser must be allowed to `fetch()` the
+// bucket S3 hostname under our CloudFront CSP, so we pass both the legacy
+// global virtual-hosted endpoint and the regional one — the Python admin
+// Lambda (default boto3 config) currently signs the legacy form, but a
+// future SDK upgrade may switch to the regional one. Allow-listing both
+// avoids a Safari "Load failed" / Chrome "Failed to fetch" the moment the
+// SDK changes its mind.
 const adminWeb = new LxsoftwareAdminWebStack(app, "lxsoftware-admin-web", {
   description: "LX Software admin SPA delivery (S3 + CloudFront).",
   env,
   synthesizer,
   cspApiConnectOrigin: lxsoftware.httpApi.apiEndpoint,
+  cspAssetsConnectOrigins: cdk.Fn.join(" ", [
+    cdk.Fn.join("", ["https://", lxsoftware.assetsBucket.bucketDomainName]),
+    cdk.Fn.join("", [
+      "https://",
+      lxsoftware.assetsBucket.bucketRegionalDomainName,
+    ]),
+  ]),
 });
 tagStack(adminWeb, "Admin Console", "spa");
