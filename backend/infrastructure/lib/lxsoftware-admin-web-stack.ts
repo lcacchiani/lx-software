@@ -139,6 +139,7 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
       props.cspApiConnectOrigin,
       " ",
       props.cspAssetsConnectOrigins,
+      " https://api.frankfurter.dev",
       "; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
     ]);
 
