@@ -1008,12 +1008,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         if not key.startswith(prefix):
             return _json_response(400, {"message": "Invalid key for this user"})
         try:
-            return _handle_parse_statement(
-                event=event,
-                user_sub=user_sub,
+            result = execute_parse_statement(
                 house=house,
                 s3_key=key,
+                user_sub=user_sub,
+                request_id=_request_id(event),
+                event=event,
             )
+            return _json_response(200, result)
         except _ParseStatementError as exc:
             return _json_response(exc.status, {"message": exc.message})
 
@@ -1056,17 +1058,20 @@ def _statement_basename_already_imported(
     return False
 
 
-def _handle_parse_statement(
+def execute_parse_statement(
     *,
-    event: dict[str, Any],
-    user_sub: str,
     house: str,
     s3_key: str,
+    user_sub: str | None,
+    request_id: str,
+    event: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run OpenRouter on an uploaded asset and append parsed lines.
+    """Run OpenRouter on an asset in the assets bucket and append parsed lines.
 
-    Returns the **full updated finance house payload** so the caller can
-    reuse the response to refresh local state without an extra GET.
+    Used by the HTTP API and by the inbound-email Lambda. Raises
+    ``_ParseStatementError`` on user-facing failures.
+
+    Returns a dict suitable for JSON (``data``, ``addedLines``, ``sourceAssetKey``).
     """
     bucket = os.environ["ASSETS_BUCKET_NAME"]
     _log_event(
@@ -1075,7 +1080,7 @@ def _handle_parse_statement(
         sub=user_sub,
         house=house,
         key=s3_key[:512],
-        request_id=_request_id(event),
+        request_id=request_id,
     )
     try:
         head = _s3.head_object(Bucket=bucket, Key=s3_key)
@@ -1089,7 +1094,7 @@ def _handle_parse_statement(
                 house=house,
                 key=s3_key[:512],
                 s3_error_code=code,
-                request_id=_request_id(event),
+                request_id=request_id,
             )
             raise _ParseStatementError(400, "Object not found in bucket") from exc
         raise
@@ -1107,7 +1112,7 @@ def _handle_parse_statement(
             sub=user_sub,
             house=house,
             basename=file_name[:256],
-            request_id=_request_id(event),
+            request_id=request_id,
         )
         raise _ParseStatementError(
             409,
@@ -1124,7 +1129,7 @@ def _handle_parse_statement(
         object_content_type=content_type[:128],
         object_size_bytes=object_size,
         default_currency=default_currency,
-        request_id=_request_id(event),
+        request_id=request_id,
     )
 
     # Lazy-import the parser so unit tests can stub urllib without paying
@@ -1149,7 +1154,7 @@ def _handle_parse_statement(
             house=house,
             key=s3_key[:512],
             error=str(exc)[:500],
-            request_id=_request_id(event),
+            request_id=request_id,
         )
         raise _ParseStatementError(502, f"Statement parser failed: {exc}") from exc
 
@@ -1167,7 +1172,7 @@ def _handle_parse_statement(
         key=s3_key[:512],
         added_lines=len(new_lines),
         existing_lines=len(house_data.get("lines", []) or []),
-        request_id=_request_id(event),
+        request_id=request_id,
     )
 
     merged_payload = {
@@ -1188,16 +1193,24 @@ def _handle_parse_statement(
 
     ddb_item = {**_finance_ddb_key(house), **_to_ddb_nested(normalized)}
     table.put_item(Item=ddb_item)
-    _audit(user_sub, "FINANCE_PARSE_STATEMENT", f"{house}|{s3_key}", event)
-
-    return _json_response(
-        200,
-        {
-            "data": normalized,
-            "addedLines": len(new_lines),
-            "sourceAssetKey": s3_key,
+    audit_event = {
+        **event,
+        "requestContext": {
+            **event.get("requestContext", {}),
+            "requestId": request_id,
+            "http": {
+                **(event.get("requestContext") or {}).get("http", {}),
+                "requestId": request_id,
+            },
         },
-    )
+    }
+    _audit(user_sub, "FINANCE_PARSE_STATEMENT", f"{house}|{s3_key}", audit_event)
+
+    return {
+        "data": normalized,
+        "addedLines": len(new_lines),
+        "sourceAssetKey": s3_key,
+    }
 
 
 def _to_ddb(obj: dict[str, Any]) -> dict[str, Any]:

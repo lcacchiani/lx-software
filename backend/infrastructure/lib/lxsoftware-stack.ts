@@ -5,8 +5,11 @@ import { HttpJwtAuthorizer } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as ses from "aws-cdk-lib/aws-ses";
+import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import type { Construct } from "constructs";
 import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
@@ -327,6 +330,99 @@ export class LxsoftwareStack extends cdk.Stack {
     const cfnSecretPolicy = openRouterSecretPolicy.node.defaultChild as iam.CfnPolicy;
     cfnSecretPolicy.cfnOptions.condition = hasOpenRouterSecret;
 
+    // ------------------------------------------------------------------
+    // Inbound mail: SES → S3 (raw) → Lambda extracts PDF → same parser as UI
+    // ------------------------------------------------------------------
+    const inboundMailDomain = new cdk.CfnParameter(this, "InboundMailDomain", {
+      type: "String",
+      default: "inbound.lx-software.com",
+      description:
+        "Domain for receiving statement mail (verify domain + MX to SES in this region before use).",
+    });
+
+    const inboundMailLocalPart = new cdk.CfnParameter(this, "InboundMailLocalPart", {
+      type: "String",
+      default: "hillmarton",
+      description: "Local part of the Hillmarton statement inbox address.",
+    });
+
+    const inboundStatementAddress = cdk.Fn.join("", [
+      inboundMailLocalPart.valueAsString,
+      "@",
+      inboundMailDomain.valueAsString,
+    ]);
+
+    const inboundMailBucketName = [
+      "lxsoftware-admin-inbound-mail",
+      cdk.Aws.ACCOUNT_ID,
+      cdk.Aws.REGION,
+    ].join("-");
+
+    const inboundMailBucket = new s3.Bucket(this, "InboundMailBucket", {
+      bucketName: inboundMailBucketName,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      lifecycleRules: [
+        {
+          id: "ExpireRawInboundMail",
+          enabled: true,
+          expiration: cdk.Duration.days(30),
+          prefix: "hillmarton-raw/",
+        },
+      ],
+    });
+
+    const inboundStatementFn = createPythonLambda(this, "InboundStatementMailFn", {
+      entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
+      handler: "inbound_email_handler.lambda_handler",
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 1024,
+      environment: {
+        RECORDS_TABLE_NAME: this.recordsTable.tableName,
+        AUDIT_LOG_TABLE_NAME: this.auditLogTable.tableName,
+        ASSETS_BUCKET_NAME: this.assetsBucket.bucketName,
+        INBOUND_MAIL_BUCKET_NAME: inboundMailBucket.bucketName,
+        INBOUND_FINANCE_HOUSE: "hillmarton",
+        INBOUND_AUDIT_USER_SUB: "inbound-email",
+        ASSET_MAX_BYTES: String(20 * 1024 * 1024),
+        OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
+        OPENROUTER_MODEL: openRouterModel.valueAsString,
+        OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
+      },
+    });
+
+    this.recordsTable.grantReadWriteData(inboundStatementFn);
+    this.auditLogTable.grantReadWriteData(inboundStatementFn);
+    this.assetsBucket.grantReadWrite(inboundStatementFn);
+    inboundMailBucket.grantRead(inboundStatementFn);
+    inboundMailBucket.grantDelete(inboundStatementFn);
+    openRouterSecretPolicy.attachToRole(inboundStatementFn.role!);
+
+    inboundStatementFn.addEventSource(
+      new lambdaEventSources.S3EventSource(inboundMailBucket, {
+        events: [s3.EventType.OBJECT_CREATED],
+        filters: [{ prefix: "hillmarton-raw/" }],
+      })
+    );
+
+    const inboundReceiptRuleSet = new ses.ReceiptRuleSet(this, "InboundMailReceiptRuleSet", {
+      receiptRuleSetName: "lxsoftware-inbound-mail",
+    });
+
+    inboundReceiptRuleSet.addRule("HillmartonStatementInbox", {
+      recipients: [inboundStatementAddress],
+      enabled: true,
+      actions: [
+        new sesActions.S3({
+          bucket: inboundMailBucket,
+          objectKeyPrefix: "hillmarton-raw/",
+        }),
+      ],
+    });
+
     const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
 
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
@@ -534,6 +630,32 @@ export class LxsoftwareStack extends cdk.Stack {
     new cdk.CfnOutput(this, "AssetsBucketArn", {
       value: this.assetsBucket.bucketArn,
       exportName: "lxsoftware-AssetsBucketArn",
+    });
+
+    new cdk.CfnOutput(this, "InboundStatementEmail", {
+      value: inboundStatementAddress,
+      description:
+        "Address to email Hillmarton PDF statements (SES domain verification, MX, and active receipt rule set required).",
+      exportName: "lxsoftware-InboundStatementEmail",
+    });
+
+    new cdk.CfnOutput(this, "InboundMailReceiptRuleSetName", {
+      value: inboundReceiptRuleSet.receiptRuleSetName,
+      description:
+        "SES receipt rule set for inbound mail. Activate once per region: aws ses set-active-receipt-rule-set --rule-set-name lxsoftware-inbound-mail",
+      exportName: "lxsoftware-InboundMailReceiptRuleSetName",
+    });
+
+    new cdk.CfnOutput(this, "InboundMailMxTarget", {
+      value: cdk.Fn.join("", ["inbound-smtp.", cdk.Aws.REGION, ".amazonaws.com"]),
+      description: "MX record hostname (use priority 10) for the inbound mail domain.",
+      exportName: "lxsoftware-InboundMailMxTarget",
+    });
+
+    new cdk.CfnOutput(this, "InboundMailBucketName", {
+      value: inboundMailBucket.bucketName,
+      description: "S3 bucket where SES stores raw inbound messages before processing.",
+      exportName: "lxsoftware-InboundMailBucketName",
     });
 
     new cdk.CfnOutput(this, "AdminApiBaseUrl", {
