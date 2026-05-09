@@ -4,7 +4,7 @@ import {
   coerceSupportedCurrency,
   type CurrencyCode,
 } from "../lib/currencies";
-import { adminFetchJson } from "../lib/apiAdminClient";
+import { AdminApiError, fetchAssetDownloadUrl } from "../lib/apiAdminClient";
 import {
   newStatementLineId,
   type FinanceLineType,
@@ -53,35 +53,39 @@ function basenameFromAssetKey(key: string): string {
   return parts[parts.length - 1] || key.trim();
 }
 
-function StatementPdfOpenButton({
-  sourceAssetKey,
+/** Opens PDFs using the shared download-url helper (popup + loading state from Finance main). */
+function StatementPdfLaunchButton({
+  assetKey,
+  openingPdfKey,
+  onOpen,
 }: {
-  readonly sourceAssetKey: string;
+  readonly assetKey: string;
+  readonly openingPdfKey: string | null;
+  readonly onOpen: (key: string) => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const open = async () => {
-    setBusy(true);
-    try {
-      const qs = `?key=${encodeURIComponent(sourceAssetKey)}`;
-      const { url } = await adminFetchJson<{ url: string }>(
-        `/assets/download-url${qs}`,
-      );
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch {
-      window.alert(
-        "Could not open the file. Check your connection and try again.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
+  const busy = openingPdfKey === assetKey;
   return (
-    <TableIconButton
-      iconClassName="bi bi-file-earmark-pdf"
-      ariaLabel="Open statement PDF"
-      onClick={() => void open()}
+    <button
+      type="button"
+      className="badge text-bg-light border align-middle btn btn-sm lh-base"
+      title={`Open statement PDF (${basenameFromAssetKey(assetKey)})`}
+      aria-label="Open statement PDF for this line"
       disabled={busy}
-    />
+      onClick={() => onOpen(assetKey)}
+    >
+      {busy ? (
+        <span
+          className="spinner-border spinner-border-sm"
+          role="status"
+          aria-hidden="true"
+        />
+      ) : (
+        <>
+          <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
+          PDF
+        </>
+      )}
+    </button>
   );
 }
 
@@ -191,6 +195,7 @@ export function HouseStatementPanel({
   const linePdfInputRef = useRef<HTMLInputElement | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [parseSuccess, setParseSuccess] = useState<string | null>(null);
+  const [openingPdfKey, setOpeningPdfKey] = useState<string | null>(null);
   const parseStatement = useParseStatement(houseKey);
   const queryClient = useQueryClient();
 
@@ -366,6 +371,34 @@ export function HouseStatementPanel({
     });
 
     resetLineForm();
+  }
+
+  function openStatementPdf(assetKey: string) {
+    const tab = window.open("", "_blank", "noopener,noreferrer");
+    if (!tab) {
+      window.alert(
+        "Your browser blocked the new tab. Allow popups for this site to open PDFs.",
+      );
+      return;
+    }
+    setOpeningPdfKey(assetKey);
+    void fetchAssetDownloadUrl(assetKey)
+      .then((url) => {
+        tab.location.href = url;
+      })
+      .catch((err) => {
+        tab.close();
+        const msg =
+          err instanceof AdminApiError
+            ? err.responseBody || err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not open the PDF.";
+        window.alert(msg);
+      })
+      .finally(() => {
+        setOpeningPdfKey(null);
+      });
   }
 
   function deleteLine(id: string) {
@@ -692,8 +725,10 @@ export function HouseStatementPanel({
                   <span className="fw-medium text-break">
                     {basenameFromAssetKey(editingLine.sourceAssetKey)}
                   </span>
-                  <StatementPdfOpenButton
-                    sourceAssetKey={editingLine.sourceAssetKey}
+                  <StatementPdfLaunchButton
+                    assetKey={editingLine.sourceAssetKey}
+                    openingPdfKey={openingPdfKey}
+                    onOpen={openStatementPdf}
                   />
                   <button
                     type="button"
@@ -749,8 +784,10 @@ export function HouseStatementPanel({
                     <span>{line.description}</span>
                     {line.sourceAssetKey ? (
                       <>
-                        <StatementPdfOpenButton
-                          sourceAssetKey={line.sourceAssetKey}
+                        <StatementPdfLaunchButton
+                          assetKey={line.sourceAssetKey}
+                          openingPdfKey={openingPdfKey}
+                          onOpen={openStatementPdf}
                         />
                         <span
                           className="text-muted small text-truncate"
