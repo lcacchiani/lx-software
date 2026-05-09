@@ -2,14 +2,25 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import {
+  type FinanceLedgerRecord,
+  type FinanceLedgerSheetKey,
   type FinancePersistedState,
   type HouseFinanceData,
   type HouseKey,
-  type IncomeRecord,
   DEFAULT_FINANCE_STATE,
+  EXPENSE_CATEGORIES,
+  INCOME_CATEGORIES,
   normalizeHouseFinanceData,
-  normalizeIncomeRecords,
+  normalizeLedgerRecords,
 } from "../lib/financeModel";
+
+const LEDGER_CONFIG: Record<
+  FinanceLedgerSheetKey,
+  { readonly path: string; readonly bodyKey: keyof FinancePersistedState }
+> = {
+  income: { path: "/finance/income", bodyKey: "incomeRecords" },
+  expenses: { path: "/finance/expenses", bodyKey: "expenseRecords" },
+};
 
 async function fetchFinance(): Promise<FinancePersistedState> {
   const raw = await adminFetchJson<FinancePersistedState>("/finance");
@@ -17,16 +28,13 @@ async function fetchFinance(): Promise<FinancePersistedState> {
   return {
     hillmarton: normalizeHouseFinanceData(raw.hillmarton),
     morrison: normalizeHouseFinanceData(raw.morrison),
-    incomeRecords: normalizeIncomeRecords(rawObj.incomeRecords),
+    incomeRecords: normalizeLedgerRecords(rawObj.incomeRecords, INCOME_CATEGORIES),
+    expenseRecords: normalizeLedgerRecords(rawObj.expenseRecords, EXPENSE_CATEGORIES),
   };
 }
 
 type PutFinanceResponse = {
   readonly data: HouseFinanceData;
-};
-
-type PutIncomeResponse = {
-  readonly incomeRecords: IncomeRecord[];
 };
 
 export function useFinance() {
@@ -58,18 +66,30 @@ export function useFinance() {
     },
   });
 
-  const saveIncome = useMutation({
-    mutationFn: async (records: readonly IncomeRecord[]) => {
-      const res = await adminFetchJson<PutIncomeResponse>("/finance/income", {
-        method: "PUT",
-        body: JSON.stringify({ incomeRecords: records }),
-      });
-      return normalizeIncomeRecords(res.incomeRecords);
+  const saveLedgerSheet = useMutation({
+    mutationFn: async ({
+      sheet,
+      records,
+    }: {
+      sheet: FinanceLedgerSheetKey;
+      records: readonly FinanceLedgerRecord[];
+    }) => {
+      const { path, bodyKey } = LEDGER_CONFIG[sheet];
+      const res = await adminFetchJson<Record<string, FinanceLedgerRecord[]>>(
+        path,
+        {
+          method: "PUT",
+          body: JSON.stringify({ [bodyKey]: records }),
+        },
+      );
+      const list = res[bodyKey];
+      const categories = sheet === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+      return { sheet, bodyKey, records: normalizeLedgerRecords(list, categories) };
     },
-    onSuccess: (incomeRecords) => {
+    onSuccess: ({ bodyKey, records }) => {
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
         ...(old ?? DEFAULT_FINANCE_STATE),
-        incomeRecords,
+        [bodyKey]: records,
       }));
     },
   });
@@ -84,14 +104,20 @@ export function useFinance() {
     [qc, saveHouse],
   );
 
-  const patchIncomeRecords = useCallback(
-    (patch: (prev: readonly IncomeRecord[]) => IncomeRecord[]) => {
+  const patchLedgerRecords = useCallback(
+    (
+      sheet: FinanceLedgerSheetKey,
+      patch: (prev: readonly FinanceLedgerRecord[]) => FinanceLedgerRecord[],
+    ) => {
       const state = qc.getQueryData<FinancePersistedState>(["finance"]);
-      const prev = state?.incomeRecords ?? DEFAULT_FINANCE_STATE.incomeRecords;
+      const prev =
+        sheet === "income"
+          ? (state?.incomeRecords ?? DEFAULT_FINANCE_STATE.incomeRecords)
+          : (state?.expenseRecords ?? DEFAULT_FINANCE_STATE.expenseRecords);
       const next = patch(prev);
-      saveIncome.mutate(next);
+      saveLedgerSheet.mutate({ sheet, records: next });
     },
-    [qc, saveIncome],
+    [qc, saveLedgerSheet],
   );
 
   return {
@@ -100,8 +126,8 @@ export function useFinance() {
     isError: q.isError,
     error: q.error,
     patchHouse,
-    patchIncomeRecords,
-    isSaving: saveHouse.isPending || saveIncome.isPending,
-    saveError: saveHouse.error ?? saveIncome.error,
+    patchLedgerRecords,
+    isSaving: saveHouse.isPending || saveLedgerSheet.isPending,
+    saveError: saveHouse.error ?? saveLedgerSheet.error,
   };
 }

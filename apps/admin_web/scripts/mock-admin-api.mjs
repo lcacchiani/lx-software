@@ -13,6 +13,7 @@ let financeState = {
       currency: "HKD",
     },
   ],
+  expenseRecords: [],
   hillmarton: {
     defaultCurrency: "GBP",
     float: { amount: 500, currency: "GBP" },
@@ -150,6 +151,13 @@ const server = createServer(async (req, res) => {
     const next = Array.isArray(body.incomeRecords) ? body.incomeRecords : [];
     financeState = { ...financeState, incomeRecords: next };
     return send(res, 200, { incomeRecords: next });
+  }
+
+  if (req.method === "PUT" && req.url === "/finance/expenses") {
+    const body = await readJson(req);
+    const next = Array.isArray(body.expenseRecords) ? body.expenseRecords : [];
+    financeState = { ...financeState, expenseRecords: next };
+    return send(res, 200, { expenseRecords: next });
   }
 
   if (req.method === "POST" && req.url === "/assets/upload-url") {

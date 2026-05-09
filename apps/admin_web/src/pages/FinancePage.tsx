@@ -1,8 +1,11 @@
 import { useState } from "react";
-import { ExpensesPlanPanel } from "../components/ExpensesPlanPanel";
+import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
-import { IncomeRecordsPanel } from "../components/IncomeRecordsPanel";
 import { useFinance } from "../hooks/useFinance";
+import {
+  EXPENSE_CATEGORIES,
+  INCOME_CATEGORIES,
+} from "../lib/financeModel";
 
 type FinanceTab = "hillmarton" | "morrison" | "income" | "expenses";
 
@@ -10,7 +13,7 @@ export function FinancePage() {
   const {
     data,
     patchHouse,
-    patchIncomeRecords,
+    patchLedgerRecords,
     isLoading,
     isError,
     isSaving,
@@ -22,7 +25,8 @@ export function FinancePage() {
     <div>
       <h1 className="h3 mb-3">Finance</h1>
       <p className="text-muted mb-4">
-        House statements, floats, and income records are stored in the admin API (DynamoDB).
+        House statements, floats, and income and expense ledgers are stored in the admin API
+        (DynamoDB).
       </p>
       {isLoading ? (
         <p className="text-muted small mb-3">Loading finance data…</p>
@@ -104,12 +108,29 @@ export function FinancePage() {
               />
             ) : null}
             {tab === "income" ? (
-              <IncomeRecordsPanel
+              <FinanceLedgerSheetPanel
+                sheetId="income"
+                categories={INCOME_CATEGORIES}
                 records={data.incomeRecords}
-                onPatch={patchIncomeRecords}
+                onPatch={(patch) => patchLedgerRecords("income", patch)}
+                formSectionTitle="Income record"
+                tableSectionTitle="Saved income"
+                deleteConfirmMessage="Delete this income record?"
+                emptyMessage="No income records yet."
               />
             ) : null}
-            {tab === "expenses" ? <ExpensesPlanPanel /> : null}
+            {tab === "expenses" ? (
+              <FinanceLedgerSheetPanel
+                sheetId="expenses"
+                categories={EXPENSE_CATEGORIES}
+                records={data.expenseRecords}
+                onPatch={(patch) => patchLedgerRecords("expenses", patch)}
+                formSectionTitle="Expense record"
+                tableSectionTitle="Saved expenses"
+                deleteConfirmMessage="Delete this expense record?"
+                emptyMessage="No expense records yet."
+              />
+            ) : null}
           </div>
         </>
       )}

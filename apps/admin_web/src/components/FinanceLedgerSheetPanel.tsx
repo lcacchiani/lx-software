@@ -4,10 +4,8 @@ import {
   GLOBAL_DEFAULT_CURRENCY,
 } from "../lib/currencies";
 import {
-  INCOME_CATEGORIES,
   newStatementLineId,
-  type IncomeCategory,
-  type IncomeRecord,
+  type FinanceLedgerRecord,
 } from "../lib/financeModel";
 import {
   AdminDataTable,
@@ -25,33 +23,10 @@ function parseAmount(raw: string): number | null {
 }
 
 type LineFormState = {
-  category: IncomeCategory;
+  category: string;
   description: string;
   amount: string;
   currency: string;
-};
-
-function emptyForm(): LineFormState {
-  return {
-    category: "Salary",
-    description: "",
-    amount: "",
-    currency: GLOBAL_DEFAULT_CURRENCY,
-  };
-}
-
-function recordToForm(r: IncomeRecord): LineFormState {
-  return {
-    category: r.category,
-    description: r.description,
-    amount: String(r.amount),
-    currency: r.currency,
-  };
-}
-
-export type IncomeRecordsPanelProps = {
-  readonly records: readonly IncomeRecord[];
-  readonly onPatch: (patch: (prev: readonly IncomeRecord[]) => IncomeRecord[]) => void;
 };
 
 const TABLE_COLUMNS: AdminDataTableColumn[] = [
@@ -74,8 +49,40 @@ const TABLE_COLUMNS: AdminDataTableColumn[] = [
 
 const COL_SPAN = TABLE_COLUMNS.length;
 
-export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps) {
-  const formId = "income-record-form";
+export type FinanceLedgerSheetPanelProps = {
+  readonly sheetId: string;
+  readonly categories: readonly string[];
+  readonly records: readonly FinanceLedgerRecord[];
+  readonly onPatch: (
+    patch: (prev: readonly FinanceLedgerRecord[]) => FinanceLedgerRecord[],
+  ) => void;
+  readonly formSectionTitle: string;
+  readonly tableSectionTitle: string;
+  readonly deleteConfirmMessage: string;
+  readonly emptyMessage: string;
+  readonly filterPlaceholder?: string;
+};
+
+export function FinanceLedgerSheetPanel({
+  sheetId,
+  categories,
+  records,
+  onPatch,
+  formSectionTitle,
+  tableSectionTitle,
+  deleteConfirmMessage,
+  emptyMessage,
+  filterPlaceholder = "Filter records…",
+}: FinanceLedgerSheetPanelProps) {
+  const formId = `${sheetId}-ledger-form`;
+  const defaultCategory = categories[0] ?? "";
+  const emptyForm = (): LineFormState => ({
+    category: defaultCategory,
+    description: "",
+    amount: "",
+    currency: GLOBAL_DEFAULT_CURRENCY,
+  });
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [lineForm, setLineForm] = useState<LineFormState>(() => emptyForm());
@@ -98,10 +105,15 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
     setLineForm(emptyForm());
   }
 
-  function openEdit(row: IncomeRecord) {
+  function openEdit(row: FinanceLedgerRecord) {
     setEditingId(row.id);
     setFormError(null);
-    setLineForm(recordToForm(row));
+    setLineForm({
+      category: row.category,
+      description: row.description,
+      amount: String(row.amount),
+      currency: row.currency,
+    });
   }
 
   function submitLine(e: FormEvent) {
@@ -115,11 +127,12 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
       setFormError("Amount must be a valid number.");
       return;
     }
-    const currency = coerceSupportedCurrency(
-      lineForm.currency,
-      GLOBAL_DEFAULT_CURRENCY,
-    );
-    const row: IncomeRecord = {
+    if (!categories.includes(lineForm.category)) {
+      setFormError("Pick a valid category.");
+      return;
+    }
+    const currency = coerceSupportedCurrency(lineForm.currency, GLOBAL_DEFAULT_CURRENCY);
+    const row: FinanceLedgerRecord = {
       id: editingId ?? newStatementLineId(),
       category: lineForm.category,
       description: lineForm.description.trim(),
@@ -138,7 +151,7 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
   }
 
   function deleteRow(id: string) {
-    if (!window.confirm("Delete this income record?")) return;
+    if (!window.confirm(deleteConfirmMessage)) return;
     onPatch((prev) => prev.filter((r) => r.id !== id));
     if (editingId === id) {
       resetForm();
@@ -148,7 +161,7 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
   return (
     <div>
       <AdminEditorSection
-        title="Income record"
+        title={formSectionTitle}
         footer={
           <>
             <button type="submit" form={formId} className="btn btn-primary btn-sm">
@@ -168,21 +181,18 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
           ) : null}
           <div className="row g-3">
             <div className="col-md-3">
-              <label className="form-label small" htmlFor="income-cat">
+              <label className="form-label small" htmlFor={`${sheetId}-ledger-cat`}>
                 Category
               </label>
               <select
-                id="income-cat"
+                id={`${sheetId}-ledger-cat`}
                 className="form-select form-select-sm"
                 value={lineForm.category}
                 onChange={(ev) =>
-                  setLineForm((f) => ({
-                    ...f,
-                    category: ev.target.value as IncomeCategory,
-                  }))
+                  setLineForm((f) => ({ ...f, category: ev.target.value }))
                 }
               >
-                {INCOME_CATEGORIES.map((c) => (
+                {categories.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -190,11 +200,11 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
               </select>
             </div>
             <div className="col-md-5">
-              <label className="form-label small" htmlFor="income-desc">
+              <label className="form-label small" htmlFor={`${sheetId}-ledger-desc`}>
                 Description
               </label>
               <input
-                id="income-desc"
+                id={`${sheetId}-ledger-desc`}
                 type="text"
                 className="form-control form-control-sm"
                 required
@@ -205,11 +215,11 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
               />
             </div>
             <div className="col-md-2">
-              <label className="form-label small" htmlFor="income-amt">
+              <label className="form-label small" htmlFor={`${sheetId}-ledger-amt`}>
                 Amount
               </label>
               <input
-                id="income-amt"
+                id={`${sheetId}-ledger-amt`}
                 type="number"
                 step="0.01"
                 className="form-control form-control-sm"
@@ -221,11 +231,11 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
               />
             </div>
             <div className="col-md-2">
-              <label className="form-label small" htmlFor="income-ccy">
+              <label className="form-label small" htmlFor={`${sheetId}-ledger-ccy`}>
                 Currency
               </label>
               <CurrencySelect
-                id="income-ccy"
+                id={`${sheetId}-ledger-ccy`}
                 value={lineForm.currency}
                 onChange={(code) =>
                   setLineForm((f) => ({ ...f, currency: code }))
@@ -236,13 +246,13 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
         </form>
       </AdminEditorSection>
 
-      <AdminEditorSection title="Saved income">
+      <AdminEditorSection title={tableSectionTitle}>
         <AdminDataTable
           embedded
           columns={TABLE_COLUMNS}
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
-          filterPlaceholder="Filter records…"
+          filterPlaceholder={filterPlaceholder}
         >
           {filtered.length ? (
             filtered.map((r) => (
@@ -272,7 +282,7 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
             <AdminDataTableEmptyRow
               colSpan={COL_SPAN}
               message={
-                records.length ? "No records match the filter." : "No income records yet."
+                records.length ? "No records match the filter." : emptyMessage
               }
             />
           )}

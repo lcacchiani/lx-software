@@ -39,11 +39,22 @@ export type HouseFinanceData = {
 /** Income tab categories (aligned with admin Lambda validation). */
 export const INCOME_CATEGORIES = ["Salary", "Rent"] as const;
 
-export type IncomeCategory = (typeof INCOME_CATEGORIES)[number];
+/** Expense tab categories (aligned with admin Lambda validation). */
+export const EXPENSE_CATEGORIES = [
+  "Utility",
+  "Saving",
+  "Investment",
+  "Rent",
+  "Insurance",
+  "Retirement",
+] as const;
 
-export type IncomeRecord = {
+export type FinanceLedgerSheetKey = "income" | "expenses";
+
+/** One row in the Income or Expenses ledger (same shape; category lists differ per sheet). */
+export type FinanceLedgerRecord = {
   readonly id: string;
-  readonly category: IncomeCategory;
+  readonly category: string;
   readonly description: string;
   readonly amount: number;
   readonly currency: string;
@@ -52,7 +63,8 @@ export type IncomeRecord = {
 export type FinancePersistedState = {
   readonly hillmarton: HouseFinanceData;
   readonly morrison: HouseFinanceData;
-  readonly incomeRecords: readonly IncomeRecord[];
+  readonly incomeRecords: readonly FinanceLedgerRecord[];
+  readonly expenseRecords: readonly FinanceLedgerRecord[];
 };
 
 export type HouseKey = "hillmarton" | "morrison";
@@ -74,27 +86,30 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   hillmarton: emptyHouse(),
   morrison: emptyHouse(),
   incomeRecords: [],
+  expenseRecords: [],
 };
 
-const INCOME_CATEGORY_SET = new Set<string>(INCOME_CATEGORIES);
-
-function isIncomeCategory(v: unknown): v is IncomeCategory {
-  return typeof v === "string" && INCOME_CATEGORY_SET.has(v);
+function categorySet(categories: readonly string[]): Set<string> {
+  return new Set(categories);
 }
 
-/** Coerces API payloads into validated income rows (drops invalid entries). */
-export function normalizeIncomeRecords(input: unknown): IncomeRecord[] {
+/** Coerces API payloads into ledger rows; drops entries with unknown categories. */
+export function normalizeLedgerRecords(
+  input: unknown,
+  allowedCategories: readonly string[],
+): FinanceLedgerRecord[] {
   if (!Array.isArray(input)) {
     return [];
   }
-  const out: IncomeRecord[] = [];
+  const allowed = categorySet(allowedCategories);
+  const out: FinanceLedgerRecord[] = [];
   for (const raw of input) {
     if (!raw || typeof raw !== "object") continue;
     const row = raw as Record<string, unknown>;
     const id = typeof row.id === "string" ? row.id.trim() : "";
-    const category = row.category;
+    const category = typeof row.category === "string" ? row.category : "";
     const description = typeof row.description === "string" ? row.description.trim() : "";
-    if (!id || !isIncomeCategory(category) || !description) {
+    if (!id || !allowed.has(category) || !description) {
       continue;
     }
     const amtRaw = row.amount;
