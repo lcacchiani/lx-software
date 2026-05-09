@@ -58,6 +58,16 @@ def _is_allowed_upload_content_type(content_type: str) -> bool:
     return ct in ALLOWED_UPLOAD_CONTENT_TYPES
 
 
+def _normalize_public_asset_key(raw: Any) -> str | None:
+    """Return an uploads/* S3 object key, or None if invalid (path traversal, etc.)."""
+    if raw is None:
+        return None
+    key = str(raw).strip()
+    if not key or ".." in key or not key.startswith("uploads/"):
+        return None
+    return key
+
+
 def _json_response(
     status_code: int, payload: dict[str, Any] | list[Any] | str
 ) -> dict[str, Any]:
@@ -700,6 +710,57 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
         _audit(user_sub, "ASSET_CONFIRM", str(key), event)
         return _json_response(201, {"item": _from_ddb(item)})
+
+    if method == "POST" and path == "/assets/download-url":
+        body = _parse_json_body(event)
+        key = _normalize_public_asset_key(body.get("key"))
+        if key is None:
+            return _json_response(400, {"message": "key is required"})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        meta = table.get_item(Key={"pk": f"ASSET#{key}", "sk": "META"})
+        if "Item" not in meta:
+            _log_event(
+                "warning",
+                tag="asset_download_url_rejected",
+                reason="not_confirmed",
+                sub=user_sub,
+                key=key[:512],
+                request_id=_request_id(event),
+            )
+            return _json_response(404, {"message": "Asset not found"})
+        bucket = os.environ["ASSETS_BUCKET_NAME"]
+        try:
+            _s3.head_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                _log_event(
+                    "warning",
+                    tag="asset_download_url_missing_object",
+                    sub=user_sub,
+                    key=key[:512],
+                    s3_error_code=code,
+                    request_id=_request_id(event),
+                )
+                return _json_response(
+                    404, {"message": "Object not found in bucket"}
+                )
+            raise
+        url = _s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=300,
+        )
+        _log_event(
+            "info",
+            tag="asset_download_url_issued",
+            sub=user_sub,
+            key=key[:512],
+            expires_in_seconds=300,
+            request_id=_request_id(event),
+        )
+        _audit(user_sub, "ASSET_DOWNLOAD_URL", key, event)
+        return _json_response(200, {"url": url, "expiresIn": 300})
 
     if method == "GET" and path == "/records":
         qs = event.get("rawQueryString") or ""

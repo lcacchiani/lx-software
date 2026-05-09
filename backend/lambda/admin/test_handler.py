@@ -30,9 +30,30 @@ from handler import (  # noqa: E402
     _is_allowed_upload_content_type,
     _normalize_finance_payload,
     _normalize_ledger_sheet_payload,
+    _normalize_public_asset_key,
     _path_finance_house_for_parse,
     _statement_basename_already_imported,
 )
+
+
+class TestNormalizePublicAssetKey(unittest.TestCase):
+    def test_accepts_uploads_prefix(self) -> None:
+        self.assertEqual(
+            _normalize_public_asset_key("uploads/sub/x/file.pdf"),
+            "uploads/sub/x/file.pdf",
+        )
+
+    def test_rejects_traversal(self) -> None:
+        self.assertIsNone(_normalize_public_asset_key("uploads/../etc/passwd"))
+        self.assertIsNone(_normalize_public_asset_key("../x"))
+
+    def test_rejects_other_prefix(self) -> None:
+        self.assertIsNone(_normalize_public_asset_key("other/key"))
+
+    def test_empty(self) -> None:
+        self.assertIsNone(_normalize_public_asset_key(None))
+        self.assertIsNone(_normalize_public_asset_key(""))
+        self.assertIsNone(_normalize_public_asset_key("   "))
 
 
 class TestGroups(unittest.TestCase):

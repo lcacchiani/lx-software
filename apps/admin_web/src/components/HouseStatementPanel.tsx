@@ -10,6 +10,7 @@ import {
   type HouseKey,
   type HouseStatementLine,
 } from "../lib/financeModel";
+import { AdminApiError, fetchAssetDownloadUrl } from "../lib/apiAdminClient";
 import { formatDateUtc } from "../lib/formatDisplay";
 import { useParseStatement } from "../hooks/useParseStatement";
 import {
@@ -147,6 +148,7 @@ export function HouseStatementPanel({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [parseSuccess, setParseSuccess] = useState<string | null>(null);
+  const [openingPdfKey, setOpeningPdfKey] = useState<string | null>(null);
   const parseStatement = useParseStatement(houseKey);
 
   useEffect(() => {
@@ -242,6 +244,9 @@ export function HouseStatementPanel({
     const currency = coerceSupportedCurrency(lineForm.currency, data.defaultCurrency);
     const dateUtc = isoFromUtcParts(lineForm.datePart, lineForm.timePart);
 
+    const existing =
+      editingId !== null ? data.lines.find((l) => l.id === editingId) : undefined;
+
     const row: HouseStatementLine = {
       id: editingId ?? newStatementLineId(),
       dateUtc,
@@ -251,6 +256,9 @@ export function HouseStatementPanel({
       vat,
       currency,
       grossAmount: gross,
+      ...(existing?.sourceAssetKey
+        ? { sourceAssetKey: existing.sourceAssetKey }
+        : {}),
     };
 
     onPatch((prev) => {
@@ -267,6 +275,34 @@ export function HouseStatementPanel({
     });
 
     resetLineForm();
+  }
+
+  function openStatementPdf(assetKey: string) {
+    const tab = window.open("", "_blank", "noopener,noreferrer");
+    if (!tab) {
+      window.alert(
+        "Your browser blocked the new tab. Allow popups for this site to open PDFs.",
+      );
+      return;
+    }
+    setOpeningPdfKey(assetKey);
+    void fetchAssetDownloadUrl(assetKey)
+      .then((url) => {
+        tab.location.href = url;
+      })
+      .catch((err) => {
+        tab.close();
+        const msg =
+          err instanceof AdminApiError
+            ? err.responseBody || err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not open the PDF.";
+        window.alert(msg);
+      })
+      .finally(() => {
+        setOpeningPdfKey(null);
+      });
   }
 
   function deleteLine(id: string) {
@@ -588,13 +624,27 @@ export function HouseStatementPanel({
                 <td className="small">
                   {line.description}
                   {line.sourceAssetKey ? (
-                    <span
-                      className="badge text-bg-light border ms-2 align-middle"
-                      title={`Imported from ${line.sourceAssetKey}`}
+                    <button
+                      type="button"
+                      className="badge text-bg-light border ms-2 align-middle btn btn-sm lh-base"
+                      title={`Open statement PDF (${line.sourceAssetKey.split("/").pop() ?? line.sourceAssetKey})`}
+                      aria-label="Open statement PDF for this line"
+                      disabled={openingPdfKey === line.sourceAssetKey}
+                      onClick={() => void openStatementPdf(line.sourceAssetKey!)}
                     >
-                      <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
-                      PDF
-                    </span>
+                      {openingPdfKey === line.sourceAssetKey ? (
+                        <span
+                          className="spinner-border spinner-border-sm"
+                          role="status"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <>
+                          <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
+                          PDF
+                        </>
+                      )}
+                    </button>
                   ) : null}
                 </td>
                 <td className="small text-end">
