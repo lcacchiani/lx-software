@@ -32,7 +32,7 @@ logger.setLevel(logging.INFO)
 _s3 = boto3.client("s3")
 
 
-def house_key_from_raw_mail_s3_key(*, object_key: str, raw_mail_prefix: str) -> str | None:
+def house_key_from_raw_mail_s3_key(*, ses_drop_path: str, raw_mail_prefix: str) -> str | None:
     """Resolve finance house key from an SES drop key.
 
     Expected layout: ``<raw_mail_prefix>/<house_key>/…`` where ``house_key`` is
@@ -41,9 +41,9 @@ def house_key_from_raw_mail_s3_key(*, object_key: str, raw_mail_prefix: str) -> 
     root = raw_mail_prefix.strip().strip("/")
     if not root:
         return None
-    if not object_key.startswith(f"{root}/"):
+    if not ses_drop_path.startswith(f"{root}/"):
         return None
-    rest = object_key[len(root) + 1 :]
+    rest = ses_drop_path[len(root) + 1 :]
     segment = rest.split("/", 1)[0].strip().lower()
     if segment not in FINANCE_HOUSE_KEYS:
         return None
@@ -99,7 +99,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
         src_bucket = record.get("s3", {}).get("bucket", {}).get("name", "")
         house_key = house_key_from_raw_mail_s3_key(
-            object_key=raw_key, raw_mail_prefix=raw_mail_prefix
+            ses_drop_path=raw_key, raw_mail_prefix=raw_mail_prefix
         )
         if src_bucket != inbound_bucket or house_key is None:
             logger.info(

@@ -40,7 +40,7 @@ class TestHouseKeyFromRawMailKey(unittest.TestCase):
     def test_resolves_hillmarton(self) -> None:
         self.assertEqual(
             house_key_from_raw_mail_s3_key(
-                object_key="inbound-raw/hillmarton/AMAZON_SES_msg",
+                ses_drop_path="inbound-raw/hillmarton/AMAZON_SES_msg",
                 raw_mail_prefix="inbound-raw",
             ),
             "hillmarton",
@@ -49,7 +49,7 @@ class TestHouseKeyFromRawMailKey(unittest.TestCase):
     def test_resolves_morrison(self) -> None:
         self.assertEqual(
             house_key_from_raw_mail_s3_key(
-                object_key="inbound-raw/morrison/x",
+                ses_drop_path="inbound-raw/morrison/x",
                 raw_mail_prefix="inbound-raw",
             ),
             "morrison",
@@ -58,7 +58,7 @@ class TestHouseKeyFromRawMailKey(unittest.TestCase):
     def test_rejects_unknown_house_segment(self) -> None:
         self.assertIsNone(
             house_key_from_raw_mail_s3_key(
-                object_key="inbound-raw/unknown/x",
+                ses_drop_path="inbound-raw/unknown/x",
                 raw_mail_prefix="inbound-raw",
             )
         )
@@ -66,7 +66,7 @@ class TestHouseKeyFromRawMailKey(unittest.TestCase):
     def test_rejects_wrong_prefix(self) -> None:
         self.assertIsNone(
             house_key_from_raw_mail_s3_key(
-                object_key="other/hillmarton/x",
+                ses_drop_path="other/hillmarton/x",
                 raw_mail_prefix="inbound-raw",
             )
         )
