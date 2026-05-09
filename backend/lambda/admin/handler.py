@@ -9,10 +9,12 @@ import logging
 import os
 import time
 import uuid
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 import boto3
 from botocore.exceptions import ClientError
@@ -518,6 +520,77 @@ def _validate_record_pk(pk: str) -> bool:
     return isinstance(pk, str) and pk.startswith(RECORD_PK_PREFIX)
 
 
+FRANKFURTER_API_BASE = "https://api.frankfurter.dev"
+
+
+def _parse_fx_v2_rates_query(
+    qs: dict[str, Any] | None,
+) -> tuple[str, list[str]] | str:
+    """Return ``(base, sorted_unique_quotes)`` or a validation error message."""
+    if not qs:
+        return "base is required"
+    base = str(qs.get("base") or "").strip().upper()
+    quotes_raw = str(qs.get("quotes") or "").strip()
+    if not base:
+        return "base is required"
+    parts = [p.strip().upper() for p in quotes_raw.split(",") if p.strip()]
+    need = sorted({p for p in parts if p != base})
+    for c in [base, *need]:
+        if c not in SUPPORTED_FINANCE_CURRENCIES:
+            return f"Unsupported currency: {c}"
+    return (base, need)
+
+
+def _proxy_fx_v2_rates(qs: dict[str, Any] | None, request_id: str) -> dict[str, Any]:
+    """ECB-oriented FX rows from Frankfurter (server-side; keeps browser CSP tight)."""
+    parsed = _parse_fx_v2_rates_query(qs)
+    if isinstance(parsed, str):
+        return _json_response(400, {"message": parsed})
+    base, quotes_need = parsed
+    if not quotes_need:
+        return _json_response(200, [])
+    quotes_param = ",".join(quote(q, safe="") for q in quotes_need)
+    upstream = (
+        f"{FRANKFURTER_API_BASE}/v2/rates?"
+        f"base={quote(base, safe='')}&quotes={quotes_param}"
+    )
+    try:
+        req = urllib.request.Request(
+            upstream,
+            headers={"User-Agent": "lxsoftware-admin-api/1.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:500]
+        _log_event(
+            "warning",
+            tag="fx_rates_upstream_http_error",
+            status=exc.code,
+            body_snip=body,
+            request_id=request_id,
+        )
+        return _json_response(
+            502, {"message": f"FX upstream returned HTTP {exc.code}"}
+        )
+    except urllib.error.URLError as exc:
+        _log_event(
+            "warning",
+            tag="fx_rates_upstream_url_error",
+            err=str(exc)[:256],
+            request_id=request_id,
+        )
+        return _json_response(502, {"message": "FX upstream unreachable"})
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return _json_response(502, {"message": "FX upstream returned invalid JSON"})
+    if not isinstance(payload, list):
+        return _json_response(502, {"message": "FX upstream unexpected shape"})
+    return _json_response(200, payload)
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     method, path = _route(event)
 
@@ -570,6 +643,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 "email": admin_claims.get("email"),
                 "cognito_username": admin_claims.get("cognito:username"),
             },
+        )
+
+    if method == "GET" and path == "/fx/v2/rates":
+        return _proxy_fx_v2_rates(
+            event.get("queryStringParameters"),
+            _request_id(event),
         )
 
     if method == "POST" and path == "/assets/upload-url":
