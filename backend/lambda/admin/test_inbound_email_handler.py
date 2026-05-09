@@ -13,7 +13,7 @@ class TestExtractFirstPdf(unittest.TestCase):
         msg = EmailMessage()
         msg["Subject"] = "Stmt"
         msg["From"] = "a@b.com"
-        msg["To"] = "hillmarton@inbound.lx-software.com"
+        msg["To"] = "32-hillmarton@inbound.lx-software.com"
         msg.set_content("See attached.")
         pdf = b"%PDF-1.4 minimal"
         msg.add_attachment(

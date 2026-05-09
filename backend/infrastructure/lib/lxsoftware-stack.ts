@@ -347,14 +347,16 @@ export class LxsoftwareStack extends cdk.Stack {
     const inboundRawMailPrefix = "inbound-raw";
 
     /**
-     * Map each inbox local-part to a finance house key. Add rows for more
-     * addresses (e.g. ``{ localPart: "the-morrison", houseKey: "morrison" }``).
+     * Map each inbox local-part to a finance house key (must match
+     * ``FINANCE_HOUSE_KEYS`` / ``HouseKey`` in the admin app). Display names
+     * differ: e.g. "32 Hillmarton" in the UI uses key ``hillmarton``; the
+     * Morrison house uses key ``morrison``.
      */
     const inboundHouseMailboxes: ReadonlyArray<{
       readonly localPart: string;
       readonly houseKey: string;
     }> = [
-      { localPart: "hillmarton", houseKey: "hillmarton" },
+      { localPart: "32-hillmarton", houseKey: "hillmarton" },
       // { localPart: "the-morrison", houseKey: "morrison" },
     ];
 
@@ -646,9 +648,13 @@ export class LxsoftwareStack extends cdk.Stack {
 
     for (const mailbox of inboundHouseMailboxes) {
       const suffix = mailbox.houseKey.replace(/[^a-zA-Z0-9]/g, "");
+      const displayHint =
+        mailbox.houseKey === "hillmarton"
+          ? 'Statement PDF inbox for "32 Hillmarton"'
+          : `Statement PDF inbox (finance house key "${mailbox.houseKey}")`;
       new cdk.CfnOutput(this, `InboundMailboxAddress${suffix}`, {
         value: cdk.Fn.join("", [mailbox.localPart, "@", inboundMailDomain.valueAsString]),
-        description: `Statement PDF inbox → finance house "${mailbox.houseKey}".`,
+        description: `${displayHint}; DDB/API key is "${mailbox.houseKey}".`,
         exportName: `lxsoftware-InboundMailbox-${mailbox.houseKey}`,
       });
     }

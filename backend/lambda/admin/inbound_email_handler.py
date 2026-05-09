@@ -6,6 +6,11 @@ this Lambda on those prefixes. The first PDF attachment is copied into the
 admin assets bucket and parsed with the same OpenRouter path as
 ``POST /finance/{house}/parse-statement``.
 
+``house_key`` values are the stable finance identifiers in the repo
+(``FINANCE_HOUSE_KEYS``), e.g. ``hillmarton`` for the house labelled
+"32 Hillmarton" in the admin UI. The inbox local-part (e.g. ``32-hillmarton``)
+is configured separately in CDK and does not have to match the key.
+
 Add more inboxes by extending the CDK ``inboundHouseMailboxes`` list (each row
 maps ``localPart@domain`` → a finance ``house_key`` such as ``morrison``).
 """
@@ -36,7 +41,8 @@ def house_key_from_raw_mail_s3_key(*, ses_drop_path: str, raw_mail_prefix: str) 
     """Resolve finance house key from an SES drop key.
 
     Expected layout: ``<raw_mail_prefix>/<house_key>/…`` where ``house_key`` is
-    a member of ``FINANCE_HOUSE_KEYS`` (e.g. ``inbound-raw/morrison/amazon-ses-…``).
+    a member of ``FINANCE_HOUSE_KEYS`` (e.g. ``hillmarton`` for "32 Hillmarton",
+    or ``inbound-raw/morrison/…`` for the Morrison house).
     """
     root = raw_mail_prefix.strip().strip("/")
     if not root:
