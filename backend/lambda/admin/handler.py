@@ -32,6 +32,8 @@ SUPPORTED_FINANCE_CURRENCIES = frozenset(
 DEFAULT_FINANCE_CURRENCY = "HKD"
 MAX_FINANCE_LINES = 5000
 MAX_FINANCE_DESCRIPTION = 8000
+MAX_SOURCE_ASSET_KEYS_PER_LINE = 20
+MAX_SOURCE_ASSET_KEY_LEN = 1024
 INCOME_RECORD_CATEGORIES = frozenset({"Salary", "Rent"})
 EXPENSE_RECORD_CATEGORIES = frozenset(
     {"Utility", "Saving", "Investment", "Rent", "Insurance", "Retirement"}
@@ -294,6 +296,47 @@ def _default_finance_house() -> dict[str, Any]:
     }
 
 
+def _line_source_asset_keys_raw(line: dict[str, Any]) -> list[str]:
+    """Collect source S3 keys from ``sourceAssetKeys`` and legacy ``sourceAssetKey``."""
+    keys: list[str] = []
+    raw_arr = line.get("sourceAssetKeys")
+    if isinstance(raw_arr, list):
+        for x in raw_arr:
+            if isinstance(x, str) and x.strip():
+                keys.append(x.strip())
+    legacy = line.get("sourceAssetKey")
+    if isinstance(legacy, str) and legacy.strip():
+        keys.append(legacy.strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _validated_line_source_asset_keys(raw: dict[str, Any], i: int) -> list[str]:
+    """Strict validation for finance writes; merges legacy ``sourceAssetKey``."""
+    if "sourceAssetKeys" in raw:
+        sa = raw["sourceAssetKeys"]
+        if sa is not None:
+            if not isinstance(sa, list):
+                raise ValueError(f"lines[{i}].sourceAssetKeys must be an array")
+            for j, x in enumerate(sa):
+                if not isinstance(x, str) or not x.strip():
+                    raise ValueError(
+                        f"lines[{i}].sourceAssetKeys[{j}] must be a non-empty string"
+                    )
+    if "sourceAssetKey" in raw:
+        sk = raw["sourceAssetKey"]
+        if sk is not None and (not isinstance(sk, str) or not sk.strip()):
+            raise ValueError(
+                f"lines[{i}].sourceAssetKey must be a non-empty string when provided"
+            )
+    return _line_source_asset_keys_raw(raw)
+
+
 def _coerce_finance_currency_value(raw: Any, fallback: str) -> str:
     if not isinstance(raw, str) or not raw.strip():
         return fallback
@@ -327,11 +370,11 @@ def _sanitize_finance_house(stored: dict[str, Any]) -> dict[str, Any]:
             cur_line = _coerce_finance_currency_value(raw.get("currency"), dc)
             row = dict(raw)
             row["currency"] = cur_line
-            src = row.get("sourceAssetKey")
-            if isinstance(src, str) and src.strip():
-                row["sourceAssetKey"] = src.strip()
-            elif "sourceAssetKey" in row:
-                del row["sourceAssetKey"]
+            merged = _line_source_asset_keys_raw(row)
+            row.pop("sourceAssetKey", None)
+            row.pop("sourceAssetKeys", None)
+            if merged:
+                row["sourceAssetKeys"] = merged[:MAX_SOURCE_ASSET_KEYS_PER_LINE]
             lines_out.append(row)
 
     return {"defaultCurrency": dc, "float": float_out, "lines": lines_out}
@@ -427,12 +470,17 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
             "currency": c,
         }
 
-        # Optional reference to the asset (e.g. uploaded statement PDF) the
-        # line originated from. Stored as the S3 object key so the UI can
-        # later resolve it back to the asset record.
-        source_key = raw.get("sourceAssetKey")
-        if isinstance(source_key, str) and source_key.strip():
-            line_out["sourceAssetKey"] = source_key.strip()[:1024]
+        merged_keys = _validated_line_source_asset_keys(raw, i)
+        if len(merged_keys) > MAX_SOURCE_ASSET_KEYS_PER_LINE:
+            raise ValueError(
+                f"lines[{i}] must have at most {MAX_SOURCE_ASSET_KEYS_PER_LINE} "
+                "source asset keys"
+            )
+        for k in merged_keys:
+            if len(k) > MAX_SOURCE_ASSET_KEY_LEN:
+                raise ValueError(f"lines[{i}] source asset key is too long")
+        if merged_keys:
+            line_out["sourceAssetKeys"] = merged_keys
 
         lines_out.append(line_out)
 
@@ -570,9 +618,8 @@ def _source_key_to_house_map(table: Any) -> dict[str, str]:
         for ln in data.get("lines") or []:
             if not isinstance(ln, dict):
                 continue
-            raw_key = ln.get("sourceAssetKey")
-            if isinstance(raw_key, str) and raw_key.strip():
-                out.setdefault(raw_key.strip(), house)
+            for raw_key in _line_source_asset_keys_raw(ln):
+                out.setdefault(raw_key, house)
     return out
 
 
@@ -1204,15 +1251,13 @@ def _path_finance_house_for_parse(event: dict[str, Any], path: str) -> str | Non
 def _statement_basename_already_imported(
     house_data: dict[str, Any], basename: str
 ) -> bool:
-    """True if any finance line was extracted from an asset with this exact filename."""
+    """True if any finance line references an asset with this exact filename."""
     for ln in house_data.get("lines") or []:
         if not isinstance(ln, dict):
             continue
-        key = ln.get("sourceAssetKey")
-        if not isinstance(key, str) or not key.strip():
-            continue
-        if os.path.basename(key.strip()) == basename:
-            return True
+        for key in _line_source_asset_keys_raw(ln):
+            if os.path.basename(key) == basename:
+                return True
     return False
 
 
@@ -1318,7 +1363,9 @@ def _handle_parse_statement(
     for raw_line in parsed_lines:
         if not isinstance(raw_line, dict):
             continue
-        new_lines.append({**raw_line, "id": uuid.uuid4().hex, "sourceAssetKey": s3_key})
+        nl = {**raw_line, "id": uuid.uuid4().hex, "sourceAssetKeys": [s3_key]}
+        nl.pop("sourceAssetKey", None)
+        new_lines.append(nl)
     _log_event(
         "info",
         tag="parse_statement_extracted",
@@ -1363,6 +1410,7 @@ def _handle_parse_statement(
         {
             "data": normalized,
             "addedLines": len(new_lines),
+            "sourceAssetKeys": [s3_key],
             "sourceAssetKey": s3_key,
         },
     )

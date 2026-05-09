@@ -22,12 +22,39 @@ export type HouseStatementLine = {
   readonly currency: string;
   readonly grossAmount: number;
   /**
-   * Optional S3 object key of the asset (e.g. statement PDF) this line was
-   * extracted from. Set automatically when lines are imported via the
-   * OpenRouter PDF parser; absent on manually-entered lines.
+   * Optional S3 object keys for assets (e.g. statement PDFs) tied to this line.
+   * Populated by imports and optional manual uploads. Legacy records may only
+   * have `sourceAssetKey` in JSON until they are saved again.
    */
-  readonly sourceAssetKey?: string;
+  readonly sourceAssetKeys?: readonly string[];
 };
+
+/** Resolved attachment keys for a line (normalized data uses `sourceAssetKeys` only). */
+export function statementLineAssetKeys(line: HouseStatementLine): readonly string[] {
+  const keys = line.sourceAssetKeys;
+  return keys?.length ? keys : [];
+}
+
+function mergeRawSourceAssetKeys(row: Record<string, unknown>): string[] | undefined {
+  const merged: string[] = [];
+  const rawArr = row.sourceAssetKeys;
+  if (Array.isArray(rawArr)) {
+    for (const x of rawArr) {
+      if (typeof x === "string" && x.trim()) merged.push(x.trim());
+    }
+  }
+  const legacy = row.sourceAssetKey;
+  if (typeof legacy === "string" && legacy.trim()) merged.push(legacy.trim());
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of merged) {
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(k);
+    }
+  }
+  return out.length ? out : undefined;
+}
 
 export type HouseFinanceData = {
   /** House-level default for new money fields and unsupported legacy codes. */
@@ -206,10 +233,7 @@ export function normalizeHouseFinanceData(input: unknown): HouseFinanceData {
         continue;
       }
       const curRaw = typeof row.currency === "string" ? row.currency : defaultCurrency;
-      const sourceAssetKey =
-        typeof row.sourceAssetKey === "string" && row.sourceAssetKey.trim()
-          ? row.sourceAssetKey.trim()
-          : undefined;
+      const sourceAssetKeys = mergeRawSourceAssetKeys(row);
       linesOut.push({
         id: id.trim(),
         dateUtc: dateUtc.trim(),
@@ -219,7 +243,7 @@ export function normalizeHouseFinanceData(input: unknown): HouseFinanceData {
         vat,
         grossAmount: gross,
         currency: coerceSupportedCurrency(curRaw, defaultCurrency),
-        ...(sourceAssetKey ? { sourceAssetKey } : {}),
+        ...(sourceAssetKeys?.length ? { sourceAssetKeys } : {}),
       });
     }
   }

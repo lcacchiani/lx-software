@@ -91,8 +91,7 @@ async function uploadToS3(presigned: PresignedUpload, file: File): Promise<void>
 
 /**
  * Upload a finance asset (PDF or statement image) to S3, confirm metadata in DynamoDB,
- * and invalidate the admin asset list cache. Returns the S3 object key for use as
- * `sourceAssetKey` on a statement line.
+ * Returns the S3 object key so callers can append it to a statement line's `sourceAssetKeys`.
  */
 export async function uploadFinanceAsset(
   file: File,
