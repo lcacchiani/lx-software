@@ -1,5 +1,25 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
+import type { FinancePersistedState, HouseKey } from "../lib/financeModel";
+
+const HOUSE_KEYS: readonly HouseKey[] = ["hillmarton", "morrison"];
+
+function objectKeyFromAssetPk(pk: string): string {
+  return pk.startsWith("ASSET#") ? pk.slice("ASSET#".length) : pk;
+}
+
+function inferHouseFromFinanceLines(
+  objectKey: string,
+  finance: FinancePersistedState | undefined,
+): HouseKey | undefined {
+  if (!finance) return undefined;
+  for (const hk of HOUSE_KEYS) {
+    for (const line of finance[hk].lines) {
+      if ((line.sourceAssetKey ?? "").trim() === objectKey) return hk;
+    }
+  }
+  return undefined;
+}
 
 export interface AdminAssetMeta {
   readonly pk: string;
@@ -16,8 +36,10 @@ export interface AdminAssetMeta {
 }
 
 export function useAdminAssets() {
+  const qc = useQueryClient();
+  const financeUpdatedAt = qc.getQueryState(["finance"])?.dataUpdatedAt ?? 0;
   return useInfiniteQuery({
-    queryKey: ["admin", "asset-records"],
+    queryKey: ["admin", "asset-records", financeUpdatedAt],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
       const qs = pageParam
@@ -27,9 +49,17 @@ export function useAdminAssets() {
         items: AdminAssetMeta[];
         nextCursor?: string | null;
       }>(`/records${qs}`);
-      const items = data.items.filter(
-        (row) => row.pk.startsWith("ASSET#") && row.sk === "META"
-      );
+      const finance = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const items = data.items
+        .filter(
+          (row) => row.pk.startsWith("ASSET#") && row.sk === "META",
+        )
+        .map((row) => {
+          if (row.house?.trim()) return row;
+          const objectKey = objectKeyFromAssetPk(row.pk);
+          const inferred = inferHouseFromFinanceLines(objectKey, finance);
+          return inferred ? { ...row, house: inferred } : row;
+        });
       return { items, nextCursor: data.nextCursor ?? null };
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
