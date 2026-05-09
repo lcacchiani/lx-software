@@ -4,6 +4,15 @@ import { createServer } from "node:http";
 const PORT = 3001;
 
 let financeState = {
+  incomeRecords: [
+    {
+      id: "sample-income-1",
+      category: "Salary",
+      description: "Sample pay (mock API)",
+      amount: 12000,
+      currency: "HKD",
+    },
+  ],
   hillmarton: {
     defaultCurrency: "GBP",
     float: { amount: 500, currency: "GBP" },
@@ -134,6 +143,13 @@ const server = createServer(async (req, res) => {
     const body = await readJson(req);
     setHouseFinance(HOUSE_MORRISON, body);
     return send(res, 200, { data: body });
+  }
+
+  if (req.method === "PUT" && req.url === "/finance/income") {
+    const body = await readJson(req);
+    const next = Array.isArray(body.incomeRecords) ? body.incomeRecords : [];
+    financeState = { ...financeState, incomeRecords: next };
+    return send(res, 200, { incomeRecords: next });
   }
 
   if (req.method === "POST" && req.url === "/assets/upload-url") {

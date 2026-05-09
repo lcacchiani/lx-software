@@ -1,19 +1,28 @@
 import { useState } from "react";
+import { ExpensesPlanPanel } from "../components/ExpensesPlanPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
+import { IncomeRecordsPanel } from "../components/IncomeRecordsPanel";
 import { useFinance } from "../hooks/useFinance";
 
-type FinanceTab = "hillmarton" | "morrison" | "family";
+type FinanceTab = "hillmarton" | "morrison" | "income" | "expenses";
 
 export function FinancePage() {
-  const { data, patchHouse, isLoading, isError, isSaving, saveError } =
-    useFinance();
+  const {
+    data,
+    patchHouse,
+    patchIncomeRecords,
+    isLoading,
+    isError,
+    isSaving,
+    saveError,
+  } = useFinance();
   const [tab, setTab] = useState<FinanceTab>("hillmarton");
 
   return (
     <div>
       <h1 className="h3 mb-3">Finance</h1>
       <p className="text-muted mb-4">
-        House statements and floats are stored in the admin API (DynamoDB).
+        House statements, floats, and income records are stored in the admin API (DynamoDB).
       </p>
       {isLoading ? (
         <p className="text-muted small mb-3">Loading finance data…</p>
@@ -58,12 +67,23 @@ export function FinancePage() {
             <li className="nav-item" role="presentation">
               <button
                 type="button"
-                className={`nav-link ${tab === "family" ? "active" : ""}`}
+                className={`nav-link ${tab === "income" ? "active" : ""}`}
                 role="tab"
-                aria-selected={tab === "family"}
-                onClick={() => setTab("family")}
+                aria-selected={tab === "income"}
+                onClick={() => setTab("income")}
               >
-                Family
+                Income
+              </button>
+            </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${tab === "expenses" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "expenses"}
+                onClick={() => setTab("expenses")}
+              >
+                Expenses
               </button>
             </li>
           </ul>
@@ -83,18 +103,13 @@ export function FinancePage() {
                 onPatch={(patch) => patchHouse("morrison", patch)}
               />
             ) : null}
-            {tab === "family" ? (
-              <div className="card shadow-sm">
-                <div className="card-body">
-                  <h2 className="h6 text-uppercase text-muted">Family</h2>
-                  <p className="mb-0 text-muted">
-                    No finance worksheet is configured for this tab yet. Use{" "}
-                    <strong>32 Hillmarton</strong> and <strong>The Morrison</strong> for house
-                    statements and floats.
-                  </p>
-                </div>
-              </div>
+            {tab === "income" ? (
+              <IncomeRecordsPanel
+                records={data.incomeRecords}
+                onPatch={patchIncomeRecords}
+              />
             ) : null}
+            {tab === "expenses" ? <ExpensesPlanPanel /> : null}
           </div>
         </>
       )}

@@ -27,6 +27,7 @@ from handler import (  # noqa: E402
     _groups_include_admin,
     _is_allowed_upload_content_type,
     _normalize_finance_payload,
+    _normalize_income_records_payload,
     _path_finance_house_for_parse,
 )
 
@@ -161,6 +162,44 @@ class TestFinancePayload(unittest.TestCase):
         }
         out = _normalize_finance_payload(body)
         self.assertNotIn("sourceAssetKey", out["lines"][0])
+
+
+class TestIncomeRecordsPayload(unittest.TestCase):
+    def test_valid(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Rent",
+                    "description": "Room sublet",
+                    "amount": 500.5,
+                    "currency": "GBP",
+                }
+            ]
+        }
+        out = _normalize_income_records_payload(body)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["category"], "Rent")
+        self.assertEqual(out[0]["amount"], 500.5)
+
+    def test_invalid_category(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Bonus",
+                    "description": "x",
+                    "amount": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_income_records_payload(body)
+
+    def test_missing_income_records(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_income_records_payload({})
 
 
 class TestUploadContentTypeAllowList(unittest.TestCase):

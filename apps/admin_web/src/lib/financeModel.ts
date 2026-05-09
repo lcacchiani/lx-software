@@ -36,9 +36,23 @@ export type HouseFinanceData = {
   readonly lines: readonly HouseStatementLine[];
 };
 
+/** Income tab categories (aligned with admin Lambda validation). */
+export const INCOME_CATEGORIES = ["Salary", "Rent"] as const;
+
+export type IncomeCategory = (typeof INCOME_CATEGORIES)[number];
+
+export type IncomeRecord = {
+  readonly id: string;
+  readonly category: IncomeCategory;
+  readonly description: string;
+  readonly amount: number;
+  readonly currency: string;
+};
+
 export type FinancePersistedState = {
   readonly hillmarton: HouseFinanceData;
   readonly morrison: HouseFinanceData;
+  readonly incomeRecords: readonly IncomeRecord[];
 };
 
 export type HouseKey = "hillmarton" | "morrison";
@@ -59,7 +73,52 @@ function emptyHouse(): HouseFinanceData {
 export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   hillmarton: emptyHouse(),
   morrison: emptyHouse(),
+  incomeRecords: [],
 };
+
+const INCOME_CATEGORY_SET = new Set<string>(INCOME_CATEGORIES);
+
+function isIncomeCategory(v: unknown): v is IncomeCategory {
+  return typeof v === "string" && INCOME_CATEGORY_SET.has(v);
+}
+
+/** Coerces API payloads into validated income rows (drops invalid entries). */
+export function normalizeIncomeRecords(input: unknown): IncomeRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: IncomeRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const category = row.category;
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (!id || !isIncomeCategory(category) || !description) {
+      continue;
+    }
+    const amtRaw = row.amount;
+    const amount =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (!Number.isFinite(amount) || Math.abs(amount) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    out.push({
+      id,
+      category,
+      description,
+      amount,
+      currency,
+    });
+  }
+  return out;
+}
 
 export function newStatementLineId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
