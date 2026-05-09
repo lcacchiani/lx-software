@@ -1,6 +1,22 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { useAuth } from "../components/AuthProvider";
 import { LOGIN_DENIED_FLASH_KEY } from "../lib/auth";
+
+const googleSignInButtonStyle = {
+  "--bs-btn-bg": "#fff",
+  "--bs-btn-color": "#000",
+  "--bs-btn-border-color": "var(--bs-primary)",
+  "--bs-btn-border-width": "2px",
+  "--bs-btn-hover-bg": "#fff",
+  "--bs-btn-hover-color": "#000",
+  "--bs-btn-hover-border-color": "var(--bs-primary)",
+  "--bs-btn-active-bg": "#fff",
+  "--bs-btn-active-color": "#000",
+  "--bs-btn-active-border-color": "var(--bs-primary)",
+  "--bs-btn-disabled-bg": "#fff",
+  "--bs-btn-disabled-color": "rgba(0, 0, 0, 0.45)",
+  "--bs-btn-disabled-border-color": "var(--bs-primary)",
+} as CSSProperties;
 
 function GoogleGLogo({ className }: { className?: string }) {
   return (
@@ -61,6 +77,7 @@ export function LoginPage() {
           <button
             type="button"
             className="btn btn-primary btn-lg d-inline-flex align-items-center justify-content-center gap-2"
+            style={googleSignInButtonStyle}
             onClick={() => void loginWithGoogle()}
             aria-label="Sign in with Google"
           >
