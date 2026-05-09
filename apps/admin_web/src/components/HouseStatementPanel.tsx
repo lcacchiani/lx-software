@@ -1,8 +1,10 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   coerceSupportedCurrency,
   type CurrencyCode,
 } from "../lib/currencies";
+import { adminFetchJson } from "../lib/apiAdminClient";
 import {
   newStatementLineId,
   type FinanceLineType,
@@ -11,7 +13,11 @@ import {
   type HouseStatementLine,
 } from "../lib/financeModel";
 import { formatDateUtc } from "../lib/formatDisplay";
-import { useParseStatement } from "../hooks/useParseStatement";
+import {
+  existingImportedStatementBasenames,
+  useParseStatement,
+} from "../hooks/useParseStatement";
+import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
@@ -40,6 +46,43 @@ function utcPartsFromIso(iso: string): { datePart: string; timePart: string } {
 function isoFromUtcParts(datePart: string, timePart: string): string {
   const t = timePart.length >= 5 ? timePart.slice(0, 5) : "00:00";
   return `${datePart}T${t}:00.000Z`;
+}
+
+function basenameFromAssetKey(key: string): string {
+  const parts = key.trim().split("/");
+  return parts[parts.length - 1] || key.trim();
+}
+
+function StatementPdfOpenButton({
+  sourceAssetKey,
+}: {
+  readonly sourceAssetKey: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try {
+      const qs = `?key=${encodeURIComponent(sourceAssetKey)}`;
+      const { url } = await adminFetchJson<{ url: string }>(
+        `/assets/download-url${qs}`,
+      );
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      window.alert(
+        "Could not open the file. Check your connection and try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <TableIconButton
+      iconClassName="bi bi-file-earmark-pdf"
+      ariaLabel="Open statement PDF"
+      onClick={() => void open()}
+      disabled={busy}
+    />
+  );
 }
 
 function emptyLineForm(defaultCurrency: CurrencyCode): LineFormState {
@@ -145,9 +188,15 @@ export function HouseStatementPanel({
   const [tableFilter, setTableFilter] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const linePdfInputRef = useRef<HTMLInputElement | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [parseSuccess, setParseSuccess] = useState<string | null>(null);
   const parseStatement = useParseStatement(houseKey);
+  const queryClient = useQueryClient();
+
+  const [linePdfFile, setLinePdfFile] = useState<File | null>(null);
+  const [stripLinePdf, setStripLinePdf] = useState(false);
+  const [lineSubmitBusy, setLineSubmitBusy] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -194,6 +243,11 @@ export function HouseStatementPanel({
     });
   }, [sortedLines, tableFilter]);
 
+  const editingLine =
+    editingId === null ? undefined : data.lines.find((l) => l.id === editingId);
+  const showExistingAttachment =
+    Boolean(editingLine?.sourceAssetKey) && !stripLinePdf;
+
   function applyHouseDetails() {
     const amt = parseAmount(floatAmount);
     if (amt === null) {
@@ -218,15 +272,25 @@ export function HouseStatementPanel({
     setEditingId(null);
     setFormError(null);
     setLineForm(emptyLineForm(data.defaultCurrency));
+    setLinePdfFile(null);
+    setStripLinePdf(false);
+    if (linePdfInputRef.current) {
+      linePdfInputRef.current.value = "";
+    }
   }
 
   function openEdit(line: HouseStatementLine) {
     setEditingId(line.id);
     setFormError(null);
     setLineForm(lineToForm(line));
+    setLinePdfFile(null);
+    setStripLinePdf(false);
+    if (linePdfInputRef.current) {
+      linePdfInputRef.current.value = "";
+    }
   }
 
-  function submitLine(e: FormEvent) {
+  async function submitLine(e: FormEvent) {
     e.preventDefault();
     const net = parseAmount(lineForm.netAmount);
     const vat = parseAmount(lineForm.vat);
@@ -242,6 +306,40 @@ export function HouseStatementPanel({
     const currency = coerceSupportedCurrency(lineForm.currency, data.defaultCurrency);
     const dateUtc = isoFromUtcParts(lineForm.datePart, lineForm.timePart);
 
+    let sourceAssetKey: string | undefined;
+    if (stripLinePdf) {
+      sourceAssetKey = undefined;
+    } else if (linePdfFile) {
+      const basenames = existingImportedStatementBasenames(
+        data,
+        editingId ?? undefined,
+      );
+      if (basenames.has(linePdfFile.name)) {
+        setFormError(
+          `A statement file named "${linePdfFile.name}" is already linked to another line for this house. Remove it from that line or rename the file.`,
+        );
+        return;
+      }
+      setLineSubmitBusy(true);
+      setFormError(null);
+      try {
+        sourceAssetKey = await uploadFinanceAsset(
+          linePdfFile,
+          houseKey,
+          queryClient,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setFormError(msg || "Could not upload the PDF.");
+        return;
+      } finally {
+        setLineSubmitBusy(false);
+      }
+    } else if (editingId) {
+      const existing = data.lines.find((l) => l.id === editingId);
+      sourceAssetKey = existing?.sourceAssetKey;
+    }
+
     const row: HouseStatementLine = {
       id: editingId ?? newStatementLineId(),
       dateUtc,
@@ -251,6 +349,7 @@ export function HouseStatementPanel({
       vat,
       currency,
       grossAmount: gross,
+      ...(sourceAssetKey ? { sourceAssetKey } : {}),
     };
 
     onPatch((prev) => {
@@ -433,10 +532,20 @@ export function HouseStatementPanel({
         title="Statement line"
         footer={
           <>
-            <button type="submit" form={lineFormId} className="btn btn-primary btn-sm">
-              {editingId ? "Update line" : "Add line"}
+            <button
+              type="submit"
+              form={lineFormId}
+              className="btn btn-primary btn-sm"
+              disabled={lineSubmitBusy}
+            >
+              {lineSubmitBusy ? "Uploading…" : editingId ? "Update line" : "Add line"}
             </button>
-            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetLineForm}>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              disabled={lineSubmitBusy}
+              onClick={resetLineForm}
+            >
               Clear
             </button>
           </>
@@ -558,6 +667,56 @@ export function HouseStatementPanel({
                 }
               />
             </div>
+            <div className="col-12">
+              <label className="form-label small mb-1" htmlFor={`${houseKey}-line-pdf`}>
+                Statement PDF{" "}
+                <span className="text-muted fw-normal">(optional)</span>
+              </label>
+              <input
+                id={`${houseKey}-line-pdf`}
+                ref={linePdfInputRef}
+                type="file"
+                accept="application/pdf"
+                className="form-control form-control-sm"
+                disabled={lineSubmitBusy}
+                onChange={(ev) => {
+                  const next = ev.target.files?.[0] ?? null;
+                  setLinePdfFile(next);
+                  setStripLinePdf(false);
+                  setFormError(null);
+                }}
+              />
+              {showExistingAttachment && editingLine?.sourceAssetKey ? (
+                <div className="small mt-2 d-flex flex-wrap align-items-center gap-2">
+                  <span className="text-muted">Attached:</span>
+                  <span className="fw-medium text-break">
+                    {basenameFromAssetKey(editingLine.sourceAssetKey)}
+                  </span>
+                  <StatementPdfOpenButton
+                    sourceAssetKey={editingLine.sourceAssetKey}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm py-0"
+                    disabled={lineSubmitBusy}
+                    onClick={() => {
+                      setStripLinePdf(true);
+                      setLinePdfFile(null);
+                      if (linePdfInputRef.current) {
+                        linePdfInputRef.current.value = "";
+                      }
+                    }}
+                  >
+                    Remove attachment
+                  </button>
+                </div>
+              ) : null}
+              {stripLinePdf && editingId ? (
+                <p className="small text-muted mb-0 mt-2">
+                  The PDF attachment will be removed when you save this line.
+                </p>
+              ) : null}
+            </div>
           </div>
         </form>
       </AdminEditorSection>
@@ -586,16 +745,23 @@ export function HouseStatementPanel({
                   </span>
                 </td>
                 <td className="small">
-                  {line.description}
-                  {line.sourceAssetKey ? (
-                    <span
-                      className="badge text-bg-light border ms-2 align-middle"
-                      title={`Imported from ${line.sourceAssetKey}`}
-                    >
-                      <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
-                      PDF
-                    </span>
-                  ) : null}
+                  <div className="d-flex flex-wrap align-items-center gap-2">
+                    <span>{line.description}</span>
+                    {line.sourceAssetKey ? (
+                      <>
+                        <StatementPdfOpenButton
+                          sourceAssetKey={line.sourceAssetKey}
+                        />
+                        <span
+                          className="text-muted small text-truncate"
+                          style={{ maxWidth: "12rem" }}
+                          title={basenameFromAssetKey(line.sourceAssetKey)}
+                        >
+                          {basenameFromAssetKey(line.sourceAssetKey)}
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="small text-end">
                   <MoneyAmount amount={line.netAmount} currency={line.currency} />
