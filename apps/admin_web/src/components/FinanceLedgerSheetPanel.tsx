@@ -260,7 +260,7 @@ export function FinanceLedgerSheetPanel({
                 <td className="small">{r.category}</td>
                 <td className="small">{r.description}</td>
                 <td className="small text-end">
-                  <MoneyAmount amount={r.amount} currency={r.currency} />
+                  <MoneyAmount amount={r.amount} currency={r.currency} amountOnly />
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-end">
