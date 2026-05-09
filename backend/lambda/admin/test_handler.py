@@ -167,7 +167,60 @@ class TestFinancePayload(unittest.TestCase):
         }
         out = _normalize_finance_payload(body)
         self.assertEqual(
-            out["lines"][0]["sourceAssetKey"], "uploads/abc/123/statement.pdf"
+            out["lines"][0]["sourceAssetKeys"], ["uploads/abc/123/statement.pdf"]
+        )
+        self.assertNotIn("sourceAssetKey", out["lines"][0])
+
+    def test_source_asset_keys_multiple(self) -> None:
+        body = {
+            "defaultCurrency": "GBP",
+            "float": {"amount": 0, "currency": "GBP"},
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "expenditure",
+                    "description": "Coffee",
+                    "netAmount": 2.5,
+                    "vat": 0.5,
+                    "grossAmount": 3.0,
+                    "currency": "GBP",
+                    "sourceAssetKeys": [
+                        "uploads/abc/1/a.pdf",
+                        "uploads/abc/2/b.pdf",
+                    ],
+                }
+            ],
+        }
+        out = _normalize_finance_payload(body)
+        self.assertEqual(
+            out["lines"][0]["sourceAssetKeys"],
+            ["uploads/abc/1/a.pdf", "uploads/abc/2/b.pdf"],
+        )
+
+    def test_source_asset_key_legacy_merges_with_keys(self) -> None:
+        body = {
+            "defaultCurrency": "GBP",
+            "float": {"amount": 0, "currency": "GBP"},
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "expenditure",
+                    "description": "Coffee",
+                    "netAmount": 2.5,
+                    "vat": 0.5,
+                    "grossAmount": 3.0,
+                    "currency": "GBP",
+                    "sourceAssetKey": "uploads/legacy/x.pdf",
+                    "sourceAssetKeys": ["uploads/new/y.pdf"],
+                }
+            ],
+        }
+        out = _normalize_finance_payload(body)
+        self.assertEqual(
+            out["lines"][0]["sourceAssetKeys"],
+            ["uploads/new/y.pdf", "uploads/legacy/x.pdf"],
         )
 
     def test_source_asset_key_optional(self) -> None:
@@ -189,6 +242,7 @@ class TestFinancePayload(unittest.TestCase):
         }
         out = _normalize_finance_payload(body)
         self.assertNotIn("sourceAssetKey", out["lines"][0])
+        self.assertNotIn("sourceAssetKeys", out["lines"][0])
 
 
 class TestLedgerSheetPayload(unittest.TestCase):
@@ -314,6 +368,22 @@ class TestStatementBasenameDuplicate(unittest.TestCase):
             _statement_basename_already_imported(house, "BankStmt.pdf")
         )
         self.assertFalse(
+            _statement_basename_already_imported(house, "Other.pdf")
+        )
+
+    def test_basename_in_source_asset_keys_array(self) -> None:
+        house = {
+            "lines": [
+                {
+                    "id": "a",
+                    "sourceAssetKeys": [
+                        "uploads/u1/x/BankStmt.pdf",
+                        "uploads/u2/y/Other.pdf",
+                    ],
+                }
+            ]
+        }
+        self.assertTrue(
             _statement_basename_already_imported(house, "Other.pdf")
         )
 

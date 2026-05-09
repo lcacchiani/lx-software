@@ -99,7 +99,7 @@ function fakeParsedLines(sourceKey) {
       vat: 16.83,
       grossAmount: 100.99,
       currency: "GBP",
-      sourceAssetKey: sourceKey,
+      sourceAssetKeys: [sourceKey],
     },
     {
       id: `parsed-${Date.now()}-2`,
@@ -110,7 +110,7 @@ function fakeParsedLines(sourceKey) {
       vat: 0,
       grossAmount: 32.5,
       currency: "GBP",
-      sourceAssetKey: sourceKey,
+      sourceAssetKeys: [sourceKey],
     },
     {
       id: `parsed-${Date.now()}-3`,
@@ -121,7 +121,7 @@ function fakeParsedLines(sourceKey) {
       vat: 0,
       grossAmount: 45,
       currency: "GBP",
-      sourceAssetKey: sourceKey,
+      sourceAssetKeys: [sourceKey],
     },
   ];
 }
@@ -253,6 +253,7 @@ const server = createServer(async (req, res) => {
     return send(res, 200, {
       data: next,
       addedLines: fakeLines.length,
+      sourceAssetKeys: [body.key],
       sourceAssetKey: body.key,
     });
   }

@@ -70,7 +70,7 @@ describe("existingImportedStatementBasenames", () => {
     expect([...existingImportedStatementBasenames(data)]).toEqual([]);
   });
 
-  it("collects the basename from each sourceAssetKey", () => {
+  it("collects basenames from each attachment key", () => {
     const data = minimalHouse({
       lines: [
         {
@@ -82,7 +82,7 @@ describe("existingImportedStatementBasenames", () => {
           vat: 0,
           grossAmount: 1,
           currency: "HKD",
-          sourceAssetKey: "uploads/sub/abc/Bank.pdf",
+          sourceAssetKeys: ["uploads/sub/abc/Bank.pdf"],
         },
         {
           id: "2",
@@ -93,7 +93,7 @@ describe("existingImportedStatementBasenames", () => {
           vat: 0,
           grossAmount: 2,
           currency: "HKD",
-          sourceAssetKey: "uploads/sub/xyz/Other.PDF",
+          sourceAssetKeys: ["uploads/sub/xyz/Other.PDF"],
         },
       ],
     });
@@ -101,6 +101,27 @@ describe("existingImportedStatementBasenames", () => {
     expect(names.has("Bank.pdf")).toBe(true);
     expect(names.has("Other.PDF")).toBe(true);
     expect(names.has("uploads")).toBe(false);
+  });
+
+  it("collects basenames from every key when a line has multiple attachments", () => {
+    const data = minimalHouse({
+      lines: [
+        {
+          id: "1",
+          dateUtc: "2026-01-01T00:00:00.000Z",
+          type: "expenditure",
+          description: "Split docs",
+          netAmount: 1,
+          vat: 0,
+          grossAmount: 1,
+          currency: "HKD",
+          sourceAssetKeys: ["uploads/h1/part-a.pdf", "uploads/h2/part-b.PDF"],
+        },
+      ],
+    });
+    const names = existingImportedStatementBasenames(data);
+    expect(names.has("part-a.pdf")).toBe(true);
+    expect(names.has("part-b.PDF")).toBe(true);
   });
 
   it("excludes a line when excludeLineId matches", () => {
@@ -115,7 +136,7 @@ describe("existingImportedStatementBasenames", () => {
           vat: 0,
           grossAmount: 1,
           currency: "HKD",
-          sourceAssetKey: "uploads/sub/abc/Dup.pdf",
+          sourceAssetKeys: ["uploads/sub/abc/Dup.pdf"],
         },
         {
           id: "exclude-me",
@@ -126,7 +147,7 @@ describe("existingImportedStatementBasenames", () => {
           vat: 0,
           grossAmount: 2,
           currency: "HKD",
-          sourceAssetKey: "uploads/sub/xyz/Other.pdf",
+          sourceAssetKeys: ["uploads/sub/xyz/Other.pdf"],
         },
       ],
     });

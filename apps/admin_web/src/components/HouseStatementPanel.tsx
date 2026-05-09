@@ -11,6 +11,7 @@ import {
   type HouseFinanceData,
   type HouseKey,
   type HouseStatementLine,
+  statementLineAssetKeys,
 } from "../lib/financeModel";
 import { formatDateUtc } from "../lib/formatDisplay";
 import {
@@ -53,8 +54,20 @@ function basenameFromAssetKey(key: string): string {
   return parts[parts.length - 1] || key.trim();
 }
 
-/** Opens PDFs via presigned URL in a new tab (same pattern as Assets page). */
-function StatementPdfLaunchButton({
+function dedupeAssetKeys(keys: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of keys) {
+    const t = k.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+/** Opens stored statement files in a new tab via a presigned URL (same pattern as Assets). */
+function StatementAssetLaunchButton({
   assetKey,
   openingPdfKey,
   onOpen,
@@ -64,12 +77,14 @@ function StatementPdfLaunchButton({
   readonly onOpen: (key: string) => void;
 }) {
   const busy = openingPdfKey === assetKey;
+  const base = basenameFromAssetKey(assetKey);
+  const isPdf = base.toLowerCase().endsWith(".pdf");
   return (
     <button
       type="button"
       className="badge text-bg-light border align-middle btn btn-sm lh-base"
-      title={`Open statement PDF (${basenameFromAssetKey(assetKey)})`}
-      aria-label="Open statement PDF for this line"
+      title={`Open attachment (${base})`}
+      aria-label={`Open attachment ${base}`}
       disabled={busy}
       onClick={() => onOpen(assetKey)}
     >
@@ -81,8 +96,11 @@ function StatementPdfLaunchButton({
         />
       ) : (
         <>
-          <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
-          PDF
+          <i
+            className={`bi me-1 ${isPdf ? "bi-file-earmark-pdf" : "bi-file-earmark"}`}
+            aria-hidden="true"
+          />
+          {isPdf ? "PDF" : "File"}
         </>
       )}
     </button>
@@ -199,8 +217,8 @@ export function HouseStatementPanel({
   const parseStatement = useParseStatement(houseKey);
   const queryClient = useQueryClient();
 
-  const [linePdfFile, setLinePdfFile] = useState<File | null>(null);
-  const [stripLinePdf, setStripLinePdf] = useState(false);
+  const [pendingLineFiles, setPendingLineFiles] = useState<File[]>([]);
+  const [removedAssetKeys, setRemovedAssetKeys] = useState<string[]>([]);
   const [lineSubmitBusy, setLineSubmitBusy] = useState(false);
 
   useEffect(() => {
@@ -241,6 +259,7 @@ export function HouseStatementPanel({
         String(line.grossAmount),
         line.dateUtc.slice(0, 10),
         formatDateUtc(line.dateUtc),
+        ...statementLineAssetKeys(line).flatMap((k) => [k, basenameFromAssetKey(k)]),
       ]
         .join(" ")
         .toLowerCase();
@@ -250,8 +269,10 @@ export function HouseStatementPanel({
 
   const editingLine =
     editingId === null ? undefined : data.lines.find((l) => l.id === editingId);
-  const showExistingAttachment =
-    Boolean(editingLine?.sourceAssetKey) && !stripLinePdf;
+  const keptAttachmentKeys =
+    editingLine === undefined
+      ? []
+      : statementLineAssetKeys(editingLine).filter((k) => !removedAssetKeys.includes(k));
 
   function applyHouseDetails() {
     const amt = parseAmount(floatAmount);
@@ -277,8 +298,8 @@ export function HouseStatementPanel({
     setEditingId(null);
     setFormError(null);
     setLineForm(emptyLineForm(data.defaultCurrency));
-    setLinePdfFile(null);
-    setStripLinePdf(false);
+    setPendingLineFiles([]);
+    setRemovedAssetKeys([]);
     if (linePdfInputRef.current) {
       linePdfInputRef.current.value = "";
     }
@@ -288,8 +309,8 @@ export function HouseStatementPanel({
     setEditingId(line.id);
     setFormError(null);
     setLineForm(lineToForm(line));
-    setLinePdfFile(null);
-    setStripLinePdf(false);
+    setPendingLineFiles([]);
+    setRemovedAssetKeys([]);
     if (linePdfInputRef.current) {
       linePdfInputRef.current.value = "";
     }
@@ -311,39 +332,42 @@ export function HouseStatementPanel({
     const currency = coerceSupportedCurrency(lineForm.currency, data.defaultCurrency);
     const dateUtc = isoFromUtcParts(lineForm.datePart, lineForm.timePart);
 
-    let sourceAssetKey: string | undefined;
-    if (stripLinePdf) {
-      sourceAssetKey = undefined;
-    } else if (linePdfFile) {
-      const basenames = existingImportedStatementBasenames(
-        data,
-        editingId ?? undefined,
-      );
-      if (basenames.has(linePdfFile.name)) {
+    const basenames = existingImportedStatementBasenames(data, editingId ?? undefined);
+    const pendingNames = new Set<string>();
+    for (const f of pendingLineFiles) {
+      if (pendingNames.has(f.name)) {
         setFormError(
-          `A statement file named "${linePdfFile.name}" is already linked to another line for this house. Remove it from that line or rename the file.`,
+          `You added "${f.name}" more than once. Remove duplicate staged files.`,
         );
         return;
       }
+      pendingNames.add(f.name);
+      if (basenames.has(f.name)) {
+        setFormError(
+          `A statement file named "${f.name}" is already linked to another line for this house. Remove it from that line or rename the file.`,
+        );
+        return;
+      }
+    }
+
+    const uploadedKeys: string[] = [];
+    if (pendingLineFiles.length > 0) {
       setLineSubmitBusy(true);
       setFormError(null);
       try {
-        sourceAssetKey = await uploadFinanceAsset(
-          linePdfFile,
-          houseKey,
-          queryClient,
-        );
+        for (const file of pendingLineFiles) {
+          uploadedKeys.push(await uploadFinanceAsset(file, houseKey, queryClient));
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setFormError(msg || "Could not upload the PDF.");
+        setFormError(msg || "Could not upload a statement file.");
         return;
       } finally {
         setLineSubmitBusy(false);
       }
-    } else if (editingId) {
-      const existing = data.lines.find((l) => l.id === editingId);
-      sourceAssetKey = existing?.sourceAssetKey;
     }
+
+    const sourceAssetKeys = dedupeAssetKeys([...keptAttachmentKeys, ...uploadedKeys]);
 
     const row: HouseStatementLine = {
       id: editingId ?? newStatementLineId(),
@@ -354,7 +378,7 @@ export function HouseStatementPanel({
       vat,
       currency,
       grossAmount: gross,
-      ...(sourceAssetKey ? { sourceAssetKey } : {}),
+      ...(sourceAssetKeys.length ? { sourceAssetKeys } : {}),
     };
 
     onPatch((prev) => {
@@ -386,7 +410,7 @@ export function HouseStatementPanel({
             ? err.responseBody || err.message
             : err instanceof Error
               ? err.message
-              : "Could not open the PDF.";
+              : "Could not open the file.";
         window.alert(msg);
       })
       .finally(() => {
@@ -695,53 +719,88 @@ export function HouseStatementPanel({
             </div>
             <div className="col-12">
               <label className="form-label small mb-1" htmlFor={`${houseKey}-line-pdf`}>
-                Statement PDF{" "}
-                <span className="text-muted fw-normal">(optional)</span>
+                Statement files{" "}
+                <span className="text-muted fw-normal">(optional, PDF or images)</span>
               </label>
               <input
                 id={`${houseKey}-line-pdf`}
                 ref={linePdfInputRef}
                 type="file"
-                accept="application/pdf"
+                multiple
+                accept="application/pdf,image/*"
                 className="form-control form-control-sm"
                 disabled={lineSubmitBusy}
                 onChange={(ev) => {
-                  const next = ev.target.files?.[0] ?? null;
-                  setLinePdfFile(next);
-                  setStripLinePdf(false);
+                  const picked = ev.target.files ? Array.from(ev.target.files) : [];
+                  setPendingLineFiles((prev) => [...prev, ...picked]);
                   setFormError(null);
+                  ev.target.value = "";
                 }}
               />
-              {showExistingAttachment && editingLine?.sourceAssetKey ? (
-                <div className="small mt-2 d-flex flex-wrap align-items-center gap-2">
-                  <span className="text-muted">Attached:</span>
-                  <span className="fw-medium text-break">
-                    {basenameFromAssetKey(editingLine.sourceAssetKey)}
-                  </span>
-                  <StatementPdfLaunchButton
-                    assetKey={editingLine.sourceAssetKey}
-                    openingPdfKey={openingPdfKey}
-                    onOpen={openStatementPdf}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-outline-secondary btn-sm py-0"
-                    disabled={lineSubmitBusy}
-                    onClick={() => {
-                      setStripLinePdf(true);
-                      setLinePdfFile(null);
-                      if (linePdfInputRef.current) {
-                        linePdfInputRef.current.value = "";
-                      }
-                    }}
-                  >
-                    Remove attachment
-                  </button>
+              {keptAttachmentKeys.length > 0 ? (
+                <div className="small mt-2">
+                  <div className="text-muted mb-1">Attached:</div>
+                  <ul className="list-unstyled mb-0 d-flex flex-column gap-2">
+                    {keptAttachmentKeys.map((key) => (
+                      <li
+                        key={key}
+                        className="d-flex flex-wrap align-items-center gap-2"
+                      >
+                        <span className="fw-medium text-break">
+                          {basenameFromAssetKey(key)}
+                        </span>
+                        <StatementAssetLaunchButton
+                          assetKey={key}
+                          openingPdfKey={openingPdfKey}
+                          onOpen={openStatementPdf}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm py-0"
+                          disabled={lineSubmitBusy}
+                          onClick={() =>
+                            setRemovedAssetKeys((prev) =>
+                              prev.includes(key) ? prev : [...prev, key],
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
-              {stripLinePdf && editingId ? (
+              {pendingLineFiles.length > 0 ? (
+                <div className="small mt-2">
+                  <div className="text-muted mb-1">Staged uploads:</div>
+                  <ul className="list-unstyled mb-0 d-flex flex-column gap-1">
+                    {pendingLineFiles.map((file, idx) => (
+                      <li
+                        key={`${file.name}-${idx}-${file.size}`}
+                        className="d-flex flex-wrap align-items-center gap-2"
+                      >
+                        <span className="text-break">{file.name}</span>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm py-0"
+                          disabled={lineSubmitBusy}
+                          onClick={() =>
+                            setPendingLineFiles((prev) =>
+                              prev.filter((_, i) => i !== idx),
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {removedAssetKeys.length > 0 && editingId ? (
                 <p className="small text-muted mb-0 mt-2">
-                  The PDF attachment will be removed when you save this line.
+                  Removed attachments are dropped when you save this line.
                 </p>
               ) : null}
             </div>
@@ -775,22 +834,25 @@ export function HouseStatementPanel({
                 <td className="small">
                   <div className="d-flex flex-wrap align-items-center gap-2">
                     <span>{line.description}</span>
-                    {line.sourceAssetKey ? (
-                      <>
-                        <StatementPdfLaunchButton
-                          assetKey={line.sourceAssetKey}
+                    {statementLineAssetKeys(line).map((assetKey) => (
+                      <span
+                        key={assetKey}
+                        className="d-inline-flex flex-wrap align-items-center gap-2"
+                      >
+                        <StatementAssetLaunchButton
+                          assetKey={assetKey}
                           openingPdfKey={openingPdfKey}
                           onOpen={openStatementPdf}
                         />
                         <span
                           className="text-muted small text-truncate"
                           style={{ maxWidth: "12rem" }}
-                          title={basenameFromAssetKey(line.sourceAssetKey)}
+                          title={basenameFromAssetKey(assetKey)}
                         >
-                          {basenameFromAssetKey(line.sourceAssetKey)}
+                          {basenameFromAssetKey(assetKey)}
                         </span>
-                      </>
-                    ) : null}
+                      </span>
+                    ))}
                   </div>
                 </td>
                 <td className="small text-end">
