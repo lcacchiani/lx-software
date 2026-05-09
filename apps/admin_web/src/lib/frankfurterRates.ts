@@ -1,6 +1,6 @@
-/** Public Frankfurter API (ECB-oriented FX); no API key. See https://www.frankfurter.dev/docs/ */
+/** ECB-oriented FX via admin API proxy (Frankfurter upstream). See https://www.frankfurter.dev/docs/ */
 
-export const FRANKFURTER_API_BASE = "https://api.frankfurter.dev";
+import { AdminApiError, adminFetch } from "./apiAdminClient";
 
 export type FrankfurterV2RateRow = {
   readonly date?: string;
@@ -23,11 +23,18 @@ export async function fetchFrankfurterRatesToBase(
     return { date: undefined, rateByQuote: new Map() };
   }
 
-  const url = `${FRANKFURTER_API_BASE}/v2/rates?base=${encodeURIComponent(upperBase)}&quotes=${need.map(encodeURIComponent).join(",")}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Frankfurter request failed (${res.status}) ${text}`.slice(0, 240));
+  const quotesParam = need.map((q) => encodeURIComponent(q)).join(",");
+  const path = `/fx/v2/rates?base=${encodeURIComponent(upperBase)}&quotes=${quotesParam}`;
+  let res: Response;
+  try {
+    res = await adminFetch(path);
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      throw new Error(
+        `Frankfurter request failed (${err.status}) ${err.responseBody}`.slice(0, 240),
+      );
+    }
+    throw err;
   }
 
   const rows = (await res.json()) as unknown;
