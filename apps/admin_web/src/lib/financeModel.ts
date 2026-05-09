@@ -36,9 +36,35 @@ export type HouseFinanceData = {
   readonly lines: readonly HouseStatementLine[];
 };
 
+/** Income tab categories (aligned with admin Lambda validation). */
+export const INCOME_CATEGORIES = ["Salary", "Rent"] as const;
+
+/** Expense tab categories (aligned with admin Lambda validation). */
+export const EXPENSE_CATEGORIES = [
+  "Utility",
+  "Saving",
+  "Investment",
+  "Rent",
+  "Insurance",
+  "Retirement",
+] as const;
+
+export type FinanceLedgerSheetKey = "income" | "expenses";
+
+/** One row in the Income or Expenses ledger (same shape; category lists differ per sheet). */
+export type FinanceLedgerRecord = {
+  readonly id: string;
+  readonly category: string;
+  readonly description: string;
+  readonly amount: number;
+  readonly currency: string;
+};
+
 export type FinancePersistedState = {
   readonly hillmarton: HouseFinanceData;
   readonly morrison: HouseFinanceData;
+  readonly incomeRecords: readonly FinanceLedgerRecord[];
+  readonly expenseRecords: readonly FinanceLedgerRecord[];
 };
 
 export type HouseKey = "hillmarton" | "morrison";
@@ -59,7 +85,55 @@ function emptyHouse(): HouseFinanceData {
 export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   hillmarton: emptyHouse(),
   morrison: emptyHouse(),
+  incomeRecords: [],
+  expenseRecords: [],
 };
+
+function categorySet(categories: readonly string[]): Set<string> {
+  return new Set(categories);
+}
+
+/** Coerces API payloads into ledger rows; drops entries with unknown categories. */
+export function normalizeLedgerRecords(
+  input: unknown,
+  allowedCategories: readonly string[],
+): FinanceLedgerRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const allowed = categorySet(allowedCategories);
+  const out: FinanceLedgerRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const category = typeof row.category === "string" ? row.category : "";
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (!id || !allowed.has(category) || !description) {
+      continue;
+    }
+    const amtRaw = row.amount;
+    const amount =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (!Number.isFinite(amount) || Math.abs(amount) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    out.push({
+      id,
+      category,
+      description,
+      amount,
+      currency,
+    });
+  }
+  return out;
+}
 
 export function newStatementLineId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {

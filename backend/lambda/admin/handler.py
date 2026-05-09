@@ -30,6 +30,11 @@ SUPPORTED_FINANCE_CURRENCIES = frozenset(
 DEFAULT_FINANCE_CURRENCY = "HKD"
 MAX_FINANCE_LINES = 5000
 MAX_FINANCE_DESCRIPTION = 8000
+INCOME_RECORD_CATEGORIES = frozenset({"Salary", "Rent"})
+EXPENSE_RECORD_CATEGORIES = frozenset(
+    {"Utility", "Saving", "Investment", "Rent", "Insurance", "Retirement"}
+)
+MAX_LEDGER_RECORDS = 2000
 # Asset uploads accept any image/* type plus statement PDFs.
 ALLOWED_UPLOAD_CONTENT_TYPES = frozenset({"application/pdf"})
 _s3 = boto3.client("s3")
@@ -354,6 +359,109 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _sanitize_ledger_records_list(
+    raw: Any, categories: frozenset[str]
+) -> list[dict[str, Any]]:
+    """Best-effort coercion for GET responses (drops invalid rows)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        cat = row.get("category")
+        if cat not in categories:
+            continue
+        desc = row.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            continue
+        amt = row.get("amount")
+        if isinstance(amt, Decimal):
+            amt_f = float(amt)
+        elif isinstance(amt, (int, float)) and not isinstance(amt, bool):
+            amt_f = float(amt)
+        elif isinstance(amt, str):
+            try:
+                amt_f = float(amt)
+            except ValueError:
+                continue
+        else:
+            continue
+        if abs(amt_f) > 1e15:
+            continue
+        cur = _coerce_finance_currency_value(
+            row.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        d = desc.strip()
+        if len(d) > MAX_FINANCE_DESCRIPTION:
+            d = d[:MAX_FINANCE_DESCRIPTION]
+        out.append(
+            {
+                "id": rid.strip(),
+                "category": cat,
+                "description": d,
+                "amount": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _normalize_ledger_sheet_payload(
+    body: dict[str, Any],
+    *,
+    body_key: str,
+    categories: frozenset[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get(body_key)
+    if not isinstance(raw, list):
+        raise ValueError(f"{body_key} must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(f"At most {MAX_LEDGER_RECORDS} records allowed in {body_key}")
+    allowed = ", ".join(sorted(categories))
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"{body_key}[{i}] must be an object")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"{body_key}[{i}].id is required")
+        cat = row.get("category")
+        if cat not in categories:
+            raise ValueError(f"{body_key}[{i}].category must be one of: {allowed}")
+        desc = row.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            raise ValueError(f"{body_key}[{i}].description is required")
+        if len(desc) > MAX_FINANCE_DESCRIPTION:
+            raise ValueError(f"{body_key}[{i}].description is too long")
+        amt = row.get("amount")
+        if isinstance(amt, Decimal):
+            amt = float(amt)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            raise ValueError(f"{body_key}[{i}].amount must be a number")
+        if abs(float(amt)) > 1e15:
+            raise ValueError(f"{body_key}[{i}].amount out of range")
+        cur = _require_supported_currency(
+            row.get("currency", DEFAULT_FINANCE_CURRENCY),
+            f"{body_key}[{i}].currency",
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "category": cat,
+                "description": desc.strip(),
+                "amount": float(amt),
+                "currency": cur,
+            }
+        )
+    return out
+
+
 def _finance_ddb_key(house: str) -> dict[str, str]:
     return {"pk": f"FINANCE#house#{house}", "sk": "STATE"}
 
@@ -368,6 +476,24 @@ def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
     if not isinstance(nested, dict):
         return _default_finance_house()
     return _sanitize_finance_house(nested)
+
+
+def _finance_sheet_ddb_key(sheet_slug: str) -> dict[str, str]:
+    return {"pk": f"FINANCE#sheet#{sheet_slug}", "sk": "STATE"}
+
+
+def _load_finance_sheet(
+    table: Any, sheet_slug: str, categories: frozenset[str]
+) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key(sheet_slug))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_ledger_records_list(nested.get("records"), categories)
 
 
 def _path_finance_house(event: dict[str, Any], path: str) -> str | None:
@@ -666,8 +792,38 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             {
                 "hillmarton": _load_finance_house(table, "hillmarton"),
                 "morrison": _load_finance_house(table, "morrison"),
+                "incomeRecords": _load_finance_sheet(
+                    table, "income", INCOME_RECORD_CATEGORIES
+                ),
+                "expenseRecords": _load_finance_sheet(
+                    table, "expenses", EXPENSE_RECORD_CATEGORIES
+                ),
             },
         )
+
+    if method == "PUT" and path in ("/finance/income", "/finance/expenses"):
+        sheet_routes: dict[str, tuple[str, frozenset[str], str]] = {
+            "/finance/income": ("income", INCOME_RECORD_CATEGORIES, "incomeRecords"),
+            "/finance/expenses": (
+                "expenses",
+                EXPENSE_RECORD_CATEGORIES,
+                "expenseRecords",
+            ),
+        }
+        sheet_slug, cats, body_key = sheet_routes[path]
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_ledger_sheet_payload(
+                body, body_key=body_key, categories=cats
+            )
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        doc = {"records": normalized}
+        ddb_item = {**_finance_sheet_ddb_key(sheet_slug), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", sheet_slug, event)
+        return _json_response(200, {body_key: normalized})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"

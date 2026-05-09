@@ -24,9 +24,12 @@ def _install_stubs() -> None:
 _install_stubs()
 
 from handler import (  # noqa: E402
+    EXPENSE_RECORD_CATEGORIES,
+    INCOME_RECORD_CATEGORIES,
     _groups_include_admin,
     _is_allowed_upload_content_type,
     _normalize_finance_payload,
+    _normalize_ledger_sheet_payload,
     _path_finance_house_for_parse,
 )
 
@@ -161,6 +164,72 @@ class TestFinancePayload(unittest.TestCase):
         }
         out = _normalize_finance_payload(body)
         self.assertNotIn("sourceAssetKey", out["lines"][0])
+
+
+class TestLedgerSheetPayload(unittest.TestCase):
+    def test_income_valid(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Rent",
+                    "description": "Room sublet",
+                    "amount": 500.5,
+                    "currency": "GBP",
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="incomeRecords",
+            categories=INCOME_RECORD_CATEGORIES,
+        )
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["category"], "Rent")
+        self.assertEqual(out[0]["amount"], 500.5)
+
+    def test_income_invalid_category(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Bonus",
+                    "description": "x",
+                    "amount": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_ledger_sheet_payload(
+                body, body_key="incomeRecords", categories=INCOME_RECORD_CATEGORIES
+            )
+
+    def test_income_missing_body_key(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_ledger_sheet_payload(
+                {}, body_key="incomeRecords", categories=INCOME_RECORD_CATEGORIES
+            )
+
+    def test_expense_valid(self) -> None:
+        body = {
+            "expenseRecords": [
+                {
+                    "id": "e1",
+                    "category": "Utility",
+                    "description": "Electric",
+                    "amount": 88,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="expenseRecords",
+            categories=EXPENSE_RECORD_CATEGORIES,
+        )
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["category"], "Utility")
 
 
 class TestUploadContentTypeAllowList(unittest.TestCase):

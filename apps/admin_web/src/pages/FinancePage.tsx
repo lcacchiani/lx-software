@@ -1,19 +1,32 @@
 import { useState } from "react";
+import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { useFinance } from "../hooks/useFinance";
+import {
+  EXPENSE_CATEGORIES,
+  INCOME_CATEGORIES,
+} from "../lib/financeModel";
 
-type FinanceTab = "hillmarton" | "morrison" | "family";
+type FinanceTab = "hillmarton" | "morrison" | "income" | "expenses";
 
 export function FinancePage() {
-  const { data, patchHouse, isLoading, isError, isSaving, saveError } =
-    useFinance();
+  const {
+    data,
+    patchHouse,
+    patchLedgerRecords,
+    isLoading,
+    isError,
+    isSaving,
+    saveError,
+  } = useFinance();
   const [tab, setTab] = useState<FinanceTab>("hillmarton");
 
   return (
     <div>
       <h1 className="h3 mb-3">Finance</h1>
       <p className="text-muted mb-4">
-        House statements and floats are stored in the admin API (DynamoDB).
+        House statements, floats, and income and expense ledgers are stored in the admin API
+        (DynamoDB).
       </p>
       {isLoading ? (
         <p className="text-muted small mb-3">Loading finance data…</p>
@@ -58,12 +71,23 @@ export function FinancePage() {
             <li className="nav-item" role="presentation">
               <button
                 type="button"
-                className={`nav-link ${tab === "family" ? "active" : ""}`}
+                className={`nav-link ${tab === "income" ? "active" : ""}`}
                 role="tab"
-                aria-selected={tab === "family"}
-                onClick={() => setTab("family")}
+                aria-selected={tab === "income"}
+                onClick={() => setTab("income")}
               >
-                Family
+                Income
+              </button>
+            </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${tab === "expenses" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "expenses"}
+                onClick={() => setTab("expenses")}
+              >
+                Expenses
               </button>
             </li>
           </ul>
@@ -83,17 +107,29 @@ export function FinancePage() {
                 onPatch={(patch) => patchHouse("morrison", patch)}
               />
             ) : null}
-            {tab === "family" ? (
-              <div className="card shadow-sm">
-                <div className="card-body">
-                  <h2 className="h6 text-uppercase text-muted">Family</h2>
-                  <p className="mb-0 text-muted">
-                    No finance worksheet is configured for this tab yet. Use{" "}
-                    <strong>32 Hillmarton</strong> and <strong>The Morrison</strong> for house
-                    statements and floats.
-                  </p>
-                </div>
-              </div>
+            {tab === "income" ? (
+              <FinanceLedgerSheetPanel
+                sheetId="income"
+                categories={INCOME_CATEGORIES}
+                records={data.incomeRecords}
+                onPatch={(patch) => patchLedgerRecords("income", patch)}
+                formSectionTitle="Income record"
+                tableSectionTitle="Saved income"
+                deleteConfirmMessage="Delete this income record?"
+                emptyMessage="No income records yet."
+              />
+            ) : null}
+            {tab === "expenses" ? (
+              <FinanceLedgerSheetPanel
+                sheetId="expenses"
+                categories={EXPENSE_CATEGORIES}
+                records={data.expenseRecords}
+                onPatch={(patch) => patchLedgerRecords("expenses", patch)}
+                formSectionTitle="Expense record"
+                tableSectionTitle="Saved expenses"
+                deleteConfirmMessage="Delete this expense record?"
+                emptyMessage="No expense records yet."
+              />
             ) : null}
           </div>
         </>
