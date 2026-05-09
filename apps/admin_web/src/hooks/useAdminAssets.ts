@@ -1,6 +1,10 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
-import type { FinancePersistedState, HouseKey } from "../lib/financeModel";
+import {
+  statementLineAssetKeys,
+  type FinancePersistedState,
+  type HouseKey,
+} from "../lib/financeModel";
 
 const HOUSE_KEYS: readonly HouseKey[] = ["hillmarton", "morrison"];
 
@@ -15,7 +19,7 @@ function inferHouseFromFinanceLines(
   if (!finance) return undefined;
   for (const hk of HOUSE_KEYS) {
     for (const line of finance[hk].lines) {
-      if ((line.sourceAssetKey ?? "").trim() === objectKey) return hk;
+      if (statementLineAssetKeys(line).some((k) => k === objectKey)) return hk;
     }
   }
   return undefined;

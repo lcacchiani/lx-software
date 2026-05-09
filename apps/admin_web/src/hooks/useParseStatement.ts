@@ -3,6 +3,7 @@ import { AdminApiError, adminFetchJson } from "../lib/apiAdminClient";
 import {
   DEFAULT_FINANCE_STATE,
   normalizeHouseFinanceData,
+  statementLineAssetKeys,
   type FinancePersistedState,
   type HouseFinanceData,
   type HouseKey,
@@ -13,9 +14,9 @@ const DUPLICATE_STATEMENT_BASE_MSG =
   "Remove its imported lines or rename the file, then try again.";
 
 /**
- * Collects exact filenames (S3 key basenames) already used by lines with a
- * `sourceAssetKey`. When `excludeLineId` is set, that line is ignored (e.g. while
- * editing the same record).
+ * Collects exact filenames (S3 key basenames) already used by lines with
+ * statement attachments. When `excludeLineId` is set, that line is ignored (e.g.
+ * while editing the same record).
  */
 export function existingImportedStatementBasenames(
   data: HouseFinanceData,
@@ -24,11 +25,11 @@ export function existingImportedStatementBasenames(
   const out = new Set<string>();
   for (const line of data.lines) {
     if (excludeLineId && line.id === excludeLineId) continue;
-    const key = line.sourceAssetKey?.trim();
-    if (!key) continue;
-    const parts = key.split("/");
-    const base = parts[parts.length - 1];
-    if (base) out.add(base);
+    for (const key of statementLineAssetKeys(line)) {
+      const parts = key.split("/");
+      const base = parts[parts.length - 1];
+      if (base) out.add(base);
+    }
   }
   return out;
 }
@@ -49,12 +50,13 @@ function adminErrorJsonMessage(err: unknown): string | null {
 type ParseStatementResponse = {
   readonly data: HouseFinanceData;
   readonly addedLines: number;
-  readonly sourceAssetKey: string;
+  readonly sourceAssetKeys?: readonly string[];
+  readonly sourceAssetKey?: string;
 };
 
 export type ParseStatementResult = {
   readonly addedLines: number;
-  readonly sourceAssetKey: string;
+  readonly sourceAssetKeys: readonly string[];
 };
 
 /**
@@ -139,9 +141,16 @@ export function useParseStatement(house: HouseKey) {
         [house]: normalized,
       }));
 
+      const keys =
+        Array.isArray(parsed.sourceAssetKeys) && parsed.sourceAssetKeys.length > 0
+          ? [...parsed.sourceAssetKeys]
+          : parsed.sourceAssetKey
+            ? [parsed.sourceAssetKey]
+            : [];
+
       return {
         addedLines: parsed.addedLines,
-        sourceAssetKey: parsed.sourceAssetKey,
+        sourceAssetKeys: keys,
       };
     },
   });
