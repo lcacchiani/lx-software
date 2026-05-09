@@ -53,7 +53,7 @@ function basenameFromAssetKey(key: string): string {
   return parts[parts.length - 1] || key.trim();
 }
 
-/** Opens PDFs using the shared download-url helper (popup + loading state from Finance main). */
+/** Opens PDFs via presigned URL in a new tab (same pattern as Assets page). */
 function StatementPdfLaunchButton({
   assetKey,
   openingPdfKey,
@@ -374,20 +374,13 @@ export function HouseStatementPanel({
   }
 
   function openStatementPdf(assetKey: string) {
-    const tab = window.open("", "_blank", "noopener,noreferrer");
-    if (!tab) {
-      window.alert(
-        "Your browser blocked the new tab. Allow popups for this site to open PDFs.",
-      );
-      return;
-    }
     setOpeningPdfKey(assetKey);
     void fetchAssetDownloadUrl(assetKey)
       .then((url) => {
-        tab.location.href = url;
+        // Same as Assets: open URL directly; blank+noopener tabs often get a null handle.
+        window.open(url, "_blank", "noopener,noreferrer");
       })
       .catch((err) => {
-        tab.close();
         const msg =
           err instanceof AdminApiError
             ? err.responseBody || err.message
