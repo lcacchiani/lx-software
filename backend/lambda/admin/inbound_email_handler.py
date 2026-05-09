@@ -1,9 +1,13 @@
 """Process raw inbound email stored by SES in S3: extract PDF, parse statement.
 
-SES receipt rules deliver matching mail to the inbound bucket; S3 invokes this
-Lambda on new objects under ``hillmarton-raw/``. The first PDF attachment is
-copied into the admin assets bucket and parsed with the same OpenRouter path
-as ``POST /finance/hillmarton/parse-statement``.
+SES receipt rules deliver mail for configured addresses into
+``{INBOUND_RAW_MAIL_PREFIX}/{house_key}/…`` in the inbound bucket. S3 invokes
+this Lambda on those prefixes. The first PDF attachment is copied into the
+admin assets bucket and parsed with the same OpenRouter path as
+``POST /finance/{house}/parse-statement``.
+
+Add more inboxes by extending the CDK ``inboundHouseMailboxes`` list (each row
+maps ``localPart@domain`` → a finance ``house_key`` such as ``morrison``).
 """
 
 from __future__ import annotations
@@ -20,14 +24,30 @@ from typing import Any
 
 import boto3
 
-from handler import _ParseStatementError, execute_parse_statement
+from handler import FINANCE_HOUSE_KEYS, _ParseStatementError, execute_parse_statement
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 _s3 = boto3.client("s3")
 
-INBOUND_PREFIX = "hillmarton-raw/"
+
+def house_key_from_raw_mail_s3_key(*, object_key: str, raw_mail_prefix: str) -> str | None:
+    """Resolve finance house key from an SES drop key.
+
+    Expected layout: ``<raw_mail_prefix>/<house_key>/…`` where ``house_key`` is
+    a member of ``FINANCE_HOUSE_KEYS`` (e.g. ``inbound-raw/morrison/amazon-ses-…``).
+    """
+    root = raw_mail_prefix.strip().strip("/")
+    if not root:
+        return None
+    if not object_key.startswith(f"{root}/"):
+        return None
+    rest = object_key[len(root) + 1 :]
+    segment = rest.split("/", 1)[0].strip().lower()
+    if segment not in FINANCE_HOUSE_KEYS:
+        return None
+    return segment
 
 
 def _sanitize_filename(name: str) -> str:
@@ -57,7 +77,7 @@ def extract_first_pdf_attachment(raw: bytes) -> tuple[bytes, str] | None:
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     inbound_bucket = os.environ.get("INBOUND_MAIL_BUCKET_NAME", "").strip()
     assets_bucket = os.environ.get("ASSETS_BUCKET_NAME", "").strip()
-    house = os.environ.get("INBOUND_FINANCE_HOUSE", "hillmarton").strip().lower()
+    raw_mail_prefix = os.environ.get("INBOUND_RAW_MAIL_PREFIX", "inbound-raw").strip()
     user_sub = os.environ.get("INBOUND_AUDIT_USER_SUB", "inbound-email").strip()
     max_pdf = int(os.environ.get("ASSET_MAX_BYTES", str(20 * 1024 * 1024)))
 
@@ -78,12 +98,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             record.get("s3", {}).get("object", {}).get("key", "")
         )
         src_bucket = record.get("s3", {}).get("bucket", {}).get("name", "")
-        if src_bucket != inbound_bucket or not raw_key.startswith(INBOUND_PREFIX):
+        house_key = house_key_from_raw_mail_s3_key(
+            object_key=raw_key, raw_mail_prefix=raw_mail_prefix
+        )
+        if src_bucket != inbound_bucket or house_key is None:
             logger.info(
                 json.dumps(
                     {
                         "tag": "inbound_mail_skip",
-                        "reason": "wrong_bucket_or_prefix",
+                        "reason": "wrong_bucket_or_unknown_prefix",
                         "key": raw_key[:512],
                     }
                 )
@@ -132,7 +155,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             )
             continue
 
-        dest_key = f"inbound/{house}/{uuid.uuid4().hex}/{safe_name}"
+        dest_key = f"inbound/{house_key}/{uuid.uuid4().hex}/{safe_name}"
         try:
             _s3.put_object(
                 Bucket=assets_bucket,
@@ -154,11 +177,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         stub_event: dict[str, Any] = {
             "requestContext": {"requestId": request_id},
-            "inboundMail": {"rawKey": raw_key, "sourceBucket": inbound_bucket},
+            "inboundMail": {
+                "rawKey": raw_key,
+                "sourceBucket": inbound_bucket,
+                "houseKey": house_key,
+            },
         }
         try:
             result = execute_parse_statement(
-                house=house,
+                house=house_key,
                 s3_key=dest_key,
                 user_sub=user_sub,
                 request_id=request_id,
@@ -169,7 +196,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 json.dumps(
                     {
                         "tag": "inbound_mail_parse_failed",
-                        "house": house,
+                        "houseKey": house_key,
                         "dest": dest_key[:512],
                         "status": exc.status,
                         "message": exc.message[:500],
@@ -195,7 +222,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             json.dumps(
                 {
                     "tag": "inbound_mail_parsed",
-                    "house": house,
+                    "houseKey": house_key,
                     "dest": dest_key[:512],
                     "addedLines": result.get("addedLines"),
                 }

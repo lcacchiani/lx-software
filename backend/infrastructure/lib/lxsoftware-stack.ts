@@ -340,17 +340,23 @@ export class LxsoftwareStack extends cdk.Stack {
         "Domain for receiving statement mail (verify domain + MX to SES in this region before use).",
     });
 
-    const inboundMailLocalPart = new cdk.CfnParameter(this, "InboundMailLocalPart", {
-      type: "String",
-      default: "hillmarton",
-      description: "Local part of the Hillmarton statement inbox address.",
-    });
+    /**
+     * Raw objects land at ``<inboundRawMailPrefix>/<houseKey>/…``. Lambda env
+     * ``INBOUND_RAW_MAIL_PREFIX`` must match ``inboundRawMailPrefix``.
+     */
+    const inboundRawMailPrefix = "inbound-raw";
 
-    const inboundStatementAddress = cdk.Fn.join("", [
-      inboundMailLocalPart.valueAsString,
-      "@",
-      inboundMailDomain.valueAsString,
-    ]);
+    /**
+     * Map each inbox local-part to a finance house key. Add rows for more
+     * addresses (e.g. ``{ localPart: "the-morrison", houseKey: "morrison" }``).
+     */
+    const inboundHouseMailboxes: ReadonlyArray<{
+      readonly localPart: string;
+      readonly houseKey: string;
+    }> = [
+      { localPart: "hillmarton", houseKey: "hillmarton" },
+      // { localPart: "the-morrison", houseKey: "morrison" },
+    ];
 
     const inboundMailBucketName = [
       "lxsoftware-admin-inbound-mail",
@@ -370,7 +376,7 @@ export class LxsoftwareStack extends cdk.Stack {
           id: "ExpireRawInboundMail",
           enabled: true,
           expiration: cdk.Duration.days(30),
-          prefix: "hillmarton-raw/",
+          prefix: `${inboundRawMailPrefix}/`,
         },
       ],
     });
@@ -385,7 +391,7 @@ export class LxsoftwareStack extends cdk.Stack {
         AUDIT_LOG_TABLE_NAME: this.auditLogTable.tableName,
         ASSETS_BUCKET_NAME: this.assetsBucket.bucketName,
         INBOUND_MAIL_BUCKET_NAME: inboundMailBucket.bucketName,
-        INBOUND_FINANCE_HOUSE: "hillmarton",
+        INBOUND_RAW_MAIL_PREFIX: inboundRawMailPrefix,
         INBOUND_AUDIT_USER_SUB: "inbound-email",
         ASSET_MAX_BYTES: String(20 * 1024 * 1024),
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
@@ -401,27 +407,33 @@ export class LxsoftwareStack extends cdk.Stack {
     inboundMailBucket.grantDelete(inboundStatementFn);
     openRouterSecretPolicy.attachToRole(inboundStatementFn.role!);
 
-    inboundStatementFn.addEventSource(
-      new lambdaEventSources.S3EventSource(inboundMailBucket, {
-        events: [s3.EventType.OBJECT_CREATED],
-        filters: [{ prefix: "hillmarton-raw/" }],
-      })
-    );
-
     const inboundReceiptRuleSet = new ses.ReceiptRuleSet(this, "InboundMailReceiptRuleSet", {
       receiptRuleSetName: "lxsoftware-inbound-mail",
     });
 
-    inboundReceiptRuleSet.addRule("HillmartonStatementInbox", {
-      recipients: [inboundStatementAddress],
-      enabled: true,
-      actions: [
-        new sesActions.S3({
-          bucket: inboundMailBucket,
-          objectKeyPrefix: "hillmarton-raw/",
-        }),
-      ],
-    });
+    for (const mailbox of inboundHouseMailboxes) {
+      const rawKeyPrefix = `${inboundRawMailPrefix}/${mailbox.houseKey}/`;
+
+      inboundStatementFn.addEventSource(
+        new lambdaEventSources.S3EventSource(inboundMailBucket, {
+          events: [s3.EventType.OBJECT_CREATED],
+          filters: [{ prefix: rawKeyPrefix }],
+        })
+      );
+
+      inboundReceiptRuleSet.addRule(`InboundMailbox-${mailbox.houseKey}`, {
+        recipients: [
+          cdk.Fn.join("", [mailbox.localPart, "@", inboundMailDomain.valueAsString]),
+        ],
+        enabled: true,
+        actions: [
+          new sesActions.S3({
+            bucket: inboundMailBucket,
+            objectKeyPrefix: rawKeyPrefix,
+          }),
+        ],
+      });
+    }
 
     const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
 
@@ -632,12 +644,14 @@ export class LxsoftwareStack extends cdk.Stack {
       exportName: "lxsoftware-AssetsBucketArn",
     });
 
-    new cdk.CfnOutput(this, "InboundStatementEmail", {
-      value: inboundStatementAddress,
-      description:
-        "Address to email Hillmarton PDF statements (SES domain verification, MX, and active receipt rule set required).",
-      exportName: "lxsoftware-InboundStatementEmail",
-    });
+    for (const mailbox of inboundHouseMailboxes) {
+      const suffix = mailbox.houseKey.replace(/[^a-zA-Z0-9]/g, "");
+      new cdk.CfnOutput(this, `InboundMailboxAddress${suffix}`, {
+        value: cdk.Fn.join("", [mailbox.localPart, "@", inboundMailDomain.valueAsString]),
+        description: `Statement PDF inbox → finance house "${mailbox.houseKey}".`,
+        exportName: `lxsoftware-InboundMailbox-${mailbox.houseKey}`,
+      });
+    }
 
     new cdk.CfnOutput(this, "InboundMailReceiptRuleSetName", {
       value: inboundReceiptRuleSet.receiptRuleSetName,
