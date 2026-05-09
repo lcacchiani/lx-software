@@ -308,6 +308,8 @@ export function HouseStatementPanel({
               className="form-select form-select-sm"
             />
           </div>
+        </div>
+        <div className="row g-2 align-items-end flex-wrap mt-2">
           <div className="col-auto">
             <label className="form-label small mb-0" htmlFor={`float-amt-${houseKey}`}>
               Float amount
@@ -333,12 +335,6 @@ export function HouseStatementPanel({
             />
           </div>
         </div>
-        <p className="small text-muted mt-3 mb-0">
-          Saved float:{" "}
-          <strong>
-            <MoneyAmount amount={data.float.amount} currency={data.float.currency} />
-          </strong>
-        </p>
       </AdminEditorSection>
 
       <AdminEditorSection
