@@ -114,7 +114,7 @@ export function FinancePage() {
                 records={data.incomeRecords}
                 onPatch={(patch) => patchLedgerRecords("income", patch)}
                 formSectionTitle="Income record"
-                tableSectionTitle="Saved income"
+                tableSectionTitle="Monthly Income"
                 deleteConfirmMessage="Delete this income record?"
                 emptyMessage="No income records yet."
               />
@@ -126,7 +126,7 @@ export function FinancePage() {
                 records={data.expenseRecords}
                 onPatch={(patch) => patchLedgerRecords("expenses", patch)}
                 formSectionTitle="Expense record"
-                tableSectionTitle="Saved expenses"
+                tableSectionTitle="Monthly Expenses"
                 deleteConfirmMessage="Delete this expense record?"
                 emptyMessage="No expense records yet."
               />
