@@ -48,6 +48,19 @@ async function sha256Hex(file: File): Promise<string | undefined> {
   }
 }
 
+/**
+ * Pull the `<Code>…</Code>` value out of an S3 error XML body so we can
+ * surface a short, actionable message in the UI (e.g. `EntityTooLarge`,
+ * `AccessDenied`, `MalformedPOSTRequest`) instead of an XML wall.
+ *
+ * Exported for tests.
+ */
+export function extractS3ErrorCode(body: string): string | null {
+  if (!body) return null;
+  const m = /<Code>\s*([^<\s][^<]*?)\s*<\/Code>/i.exec(body);
+  return m ? m[1].trim() : null;
+}
+
 async function uploadToS3(presigned: PresignedUpload, file: File): Promise<void> {
   const form = new FormData();
   for (const [k, v] of Object.entries(presigned.fields)) {
@@ -56,13 +69,49 @@ async function uploadToS3(presigned: PresignedUpload, file: File): Promise<void>
   // Per S3 presigned POST contract, the binary content must be the LAST
   // field in the multipart body.
   form.append("file", file);
-  const res = await fetch(presigned.url, { method: "POST", body: form });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
+
+  const contentTypeField = presigned.fields["Content-Type"];
+  const keyField = presigned.fields.key;
+  console.info("[useParseStatement] uploading to S3", {
+    url: presigned.url,
+    key: keyField,
+    contentTypeField,
+    fileType: file.type,
+    fileSize: file.size,
+    fileName: file.name,
+  });
+
+  let res: Response;
+  try {
+    res = await fetch(presigned.url, { method: "POST", body: form });
+  } catch (err) {
+    // Network / CORS preflight failures land here as a TypeError with no
+    // status. Make the message say so explicitly so the bug report shows
+    // "TypeError: Failed to fetch" instead of a vague "Statement import
+    // failed".
+    console.error("[useParseStatement] S3 POST transport failure", err);
+    const reason = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `S3 upload failed (${res.status}): ${text.slice(0, 500) || "no body"}`,
+      `S3 upload network/CORS failure (no HTTP response): ${reason}`,
     );
   }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const code = extractS3ErrorCode(text);
+    const summary = code
+      ? `${code}`
+      : text.slice(0, 200) || "no body";
+    console.error("[useParseStatement] S3 POST rejected", {
+      status: res.status,
+      code,
+      bodyPreview: text.slice(0, 1000),
+      contentTypeField,
+      keyField,
+    });
+    throw new Error(`S3 upload failed (${res.status}): ${summary}`);
+  }
+  console.info("[useParseStatement] S3 upload OK", { status: res.status });
 }
 
 /**
@@ -92,6 +141,14 @@ export function useParseStatement(house: HouseKey) {
         throw new Error("Only PDF or image statements are supported.");
       }
 
+      console.info("[useParseStatement] start", {
+        house,
+        fileName: file.name,
+        fileType: file.type,
+        contentTypeRequested: contentType,
+        fileSize: file.size,
+      });
+
       const upload = await adminFetchJson<UploadUrlResponse>(
         "/assets/upload-url",
         {
@@ -102,6 +159,10 @@ export function useParseStatement(house: HouseKey) {
           }),
         },
       );
+      console.info("[useParseStatement] /assets/upload-url ok", {
+        key: upload.key,
+        contentTypeFieldFromServer: upload.upload.fields["Content-Type"],
+      });
 
       await uploadToS3(upload.upload, file);
 
@@ -114,6 +175,10 @@ export function useParseStatement(house: HouseKey) {
           ...(sha256 ? { sha256 } : {}),
         }),
       });
+      console.info("[useParseStatement] /assets/confirm ok", {
+        key: upload.key,
+        size: file.size,
+      });
 
       const parsed = await adminFetchJson<ParseStatementResponse>(
         `/finance/${house}/parse-statement`,
@@ -122,6 +187,10 @@ export function useParseStatement(house: HouseKey) {
           body: JSON.stringify({ key: upload.key }),
         },
       );
+      console.info("[useParseStatement] /parse-statement ok", {
+        key: upload.key,
+        addedLines: parsed.addedLines,
+      });
 
       const normalized = normalizeHouseFinanceData(parsed.data);
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
