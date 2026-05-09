@@ -5,7 +5,11 @@ from __future__ import annotations
 import unittest
 from email.message import EmailMessage
 
-from inbound_email_handler import extract_first_pdf_attachment, house_key_from_raw_mail_s3_key
+from inbound_email_handler import (
+    extract_first_pdf_attachment,
+    extract_pdf_attachments,
+    house_key_from_raw_mail_s3_key,
+)
 
 
 class TestExtractFirstPdf(unittest.TestCase):
@@ -34,6 +38,28 @@ class TestExtractFirstPdf(unittest.TestCase):
         msg.set_content("plain")
         msg.add_attachment(b"hello", maintype="text", subtype="plain", filename="x.txt")
         self.assertIsNone(extract_first_pdf_attachment(msg.as_bytes()))
+
+    def test_extracts_multiple_pdfs_in_order(self) -> None:
+        msg = EmailMessage()
+        msg.set_content("body")
+        msg.add_attachment(
+            b"%PDF-1 first",
+            maintype="application",
+            subtype="pdf",
+            filename="a.pdf",
+        )
+        msg.add_attachment(
+            b"%PDF-1 second",
+            maintype="application",
+            subtype="pdf",
+            filename="b.pdf",
+        )
+        parts = extract_pdf_attachments(msg.as_bytes())
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts[0][0], b"%PDF-1 first")
+        self.assertEqual(parts[0][1], "a.pdf")
+        self.assertEqual(parts[1][0], b"%PDF-1 second")
+        self.assertEqual(parts[1][1], "b.pdf")
 
 
 class TestHouseKeyFromRawMailKey(unittest.TestCase):

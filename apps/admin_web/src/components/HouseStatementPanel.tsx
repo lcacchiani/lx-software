@@ -1,17 +1,24 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   coerceSupportedCurrency,
   type CurrencyCode,
 } from "../lib/currencies";
+import { AdminApiError, fetchAssetDownloadUrl } from "../lib/apiAdminClient";
 import {
   newStatementLineId,
   type FinanceLineType,
   type HouseFinanceData,
   type HouseKey,
   type HouseStatementLine,
+  statementLineAssetKeys,
 } from "../lib/financeModel";
 import { formatDateUtc } from "../lib/formatDisplay";
-import { useParseStatement } from "../hooks/useParseStatement";
+import {
+  existingImportedStatementBasenames,
+  useParseStatement,
+} from "../hooks/useParseStatement";
+import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
@@ -40,6 +47,64 @@ function utcPartsFromIso(iso: string): { datePart: string; timePart: string } {
 function isoFromUtcParts(datePart: string, timePart: string): string {
   const t = timePart.length >= 5 ? timePart.slice(0, 5) : "00:00";
   return `${datePart}T${t}:00.000Z`;
+}
+
+function basenameFromAssetKey(key: string): string {
+  const parts = key.trim().split("/");
+  return parts[parts.length - 1] || key.trim();
+}
+
+function dedupeAssetKeys(keys: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of keys) {
+    const t = k.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+/** Opens stored statement files via the shared download-url helper. */
+function StatementAssetLaunchButton({
+  assetKey,
+  openingPdfKey,
+  onOpen,
+}: {
+  readonly assetKey: string;
+  readonly openingPdfKey: string | null;
+  readonly onOpen: (key: string) => void;
+}) {
+  const busy = openingPdfKey === assetKey;
+  const base = basenameFromAssetKey(assetKey);
+  const isPdf = base.toLowerCase().endsWith(".pdf");
+  return (
+    <button
+      type="button"
+      className="badge text-bg-light border align-middle btn btn-sm lh-base"
+      title={`Open attachment (${base})`}
+      aria-label={`Open attachment ${base}`}
+      disabled={busy}
+      onClick={() => onOpen(assetKey)}
+    >
+      {busy ? (
+        <span
+          className="spinner-border spinner-border-sm"
+          role="status"
+          aria-hidden="true"
+        />
+      ) : (
+        <>
+          <i
+            className={`bi me-1 ${isPdf ? "bi-file-earmark-pdf" : "bi-file-earmark"}`}
+            aria-hidden="true"
+          />
+          {isPdf ? "PDF" : "File"}
+        </>
+      )}
+    </button>
+  );
 }
 
 function emptyLineForm(defaultCurrency: CurrencyCode): LineFormState {
@@ -145,9 +210,16 @@ export function HouseStatementPanel({
   const [tableFilter, setTableFilter] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const linePdfInputRef = useRef<HTMLInputElement | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [parseSuccess, setParseSuccess] = useState<string | null>(null);
+  const [openingPdfKey, setOpeningPdfKey] = useState<string | null>(null);
   const parseStatement = useParseStatement(houseKey);
+  const queryClient = useQueryClient();
+
+  const [pendingLineFiles, setPendingLineFiles] = useState<File[]>([]);
+  const [removedAssetKeys, setRemovedAssetKeys] = useState<string[]>([]);
+  const [lineSubmitBusy, setLineSubmitBusy] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -187,12 +259,20 @@ export function HouseStatementPanel({
         String(line.grossAmount),
         line.dateUtc.slice(0, 10),
         formatDateUtc(line.dateUtc),
+        ...statementLineAssetKeys(line).flatMap((k) => [k, basenameFromAssetKey(k)]),
       ]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
     });
   }, [sortedLines, tableFilter]);
+
+  const editingLine =
+    editingId === null ? undefined : data.lines.find((l) => l.id === editingId);
+  const keptAttachmentKeys =
+    editingLine === undefined
+      ? []
+      : statementLineAssetKeys(editingLine).filter((k) => !removedAssetKeys.includes(k));
 
   function applyHouseDetails() {
     const amt = parseAmount(floatAmount);
@@ -218,15 +298,25 @@ export function HouseStatementPanel({
     setEditingId(null);
     setFormError(null);
     setLineForm(emptyLineForm(data.defaultCurrency));
+    setPendingLineFiles([]);
+    setRemovedAssetKeys([]);
+    if (linePdfInputRef.current) {
+      linePdfInputRef.current.value = "";
+    }
   }
 
   function openEdit(line: HouseStatementLine) {
     setEditingId(line.id);
     setFormError(null);
     setLineForm(lineToForm(line));
+    setPendingLineFiles([]);
+    setRemovedAssetKeys([]);
+    if (linePdfInputRef.current) {
+      linePdfInputRef.current.value = "";
+    }
   }
 
-  function submitLine(e: FormEvent) {
+  async function submitLine(e: FormEvent) {
     e.preventDefault();
     const net = parseAmount(lineForm.netAmount);
     const vat = parseAmount(lineForm.vat);
@@ -242,6 +332,43 @@ export function HouseStatementPanel({
     const currency = coerceSupportedCurrency(lineForm.currency, data.defaultCurrency);
     const dateUtc = isoFromUtcParts(lineForm.datePart, lineForm.timePart);
 
+    const basenames = existingImportedStatementBasenames(data, editingId ?? undefined);
+    const pendingNames = new Set<string>();
+    for (const f of pendingLineFiles) {
+      if (pendingNames.has(f.name)) {
+        setFormError(
+          `You added "${f.name}" more than once. Remove duplicate staged files.`,
+        );
+        return;
+      }
+      pendingNames.add(f.name);
+      if (basenames.has(f.name)) {
+        setFormError(
+          `A statement file named "${f.name}" is already linked to another line for this house. Remove it from that line or rename the file.`,
+        );
+        return;
+      }
+    }
+
+    const uploadedKeys: string[] = [];
+    if (pendingLineFiles.length > 0) {
+      setLineSubmitBusy(true);
+      setFormError(null);
+      try {
+        for (const file of pendingLineFiles) {
+          uploadedKeys.push(await uploadFinanceAsset(file, houseKey, queryClient));
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setFormError(msg || "Could not upload a statement file.");
+        return;
+      } finally {
+        setLineSubmitBusy(false);
+      }
+    }
+
+    const sourceAssetKeys = dedupeAssetKeys([...keptAttachmentKeys, ...uploadedKeys]);
+
     const row: HouseStatementLine = {
       id: editingId ?? newStatementLineId(),
       dateUtc,
@@ -251,6 +378,7 @@ export function HouseStatementPanel({
       vat,
       currency,
       grossAmount: gross,
+      ...(sourceAssetKeys.length ? { sourceAssetKeys } : {}),
     };
 
     onPatch((prev) => {
@@ -267,6 +395,34 @@ export function HouseStatementPanel({
     });
 
     resetLineForm();
+  }
+
+  function openStatementPdf(assetKey: string) {
+    const tab = window.open("", "_blank", "noopener,noreferrer");
+    if (!tab) {
+      window.alert(
+        "Your browser blocked the new tab. Allow popups for this site to open attachments.",
+      );
+      return;
+    }
+    setOpeningPdfKey(assetKey);
+    void fetchAssetDownloadUrl(assetKey)
+      .then((url) => {
+        tab.location.href = url;
+      })
+      .catch((err) => {
+        tab.close();
+        const msg =
+          err instanceof AdminApiError
+            ? err.responseBody || err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not open the file.";
+        window.alert(msg);
+      })
+      .finally(() => {
+        setOpeningPdfKey(null);
+      });
   }
 
   function deleteLine(id: string) {
@@ -433,10 +589,20 @@ export function HouseStatementPanel({
         title="Statement line"
         footer={
           <>
-            <button type="submit" form={lineFormId} className="btn btn-primary btn-sm">
-              {editingId ? "Update line" : "Add line"}
+            <button
+              type="submit"
+              form={lineFormId}
+              className="btn btn-primary btn-sm"
+              disabled={lineSubmitBusy}
+            >
+              {lineSubmitBusy ? "Uploading…" : editingId ? "Update line" : "Add line"}
             </button>
-            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetLineForm}>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              disabled={lineSubmitBusy}
+              onClick={resetLineForm}
+            >
               Clear
             </button>
           </>
@@ -558,6 +724,93 @@ export function HouseStatementPanel({
                 }
               />
             </div>
+            <div className="col-12">
+              <label className="form-label small mb-1" htmlFor={`${houseKey}-line-pdf`}>
+                Statement files{" "}
+                <span className="text-muted fw-normal">(optional, PDF or images)</span>
+              </label>
+              <input
+                id={`${houseKey}-line-pdf`}
+                ref={linePdfInputRef}
+                type="file"
+                multiple
+                accept="application/pdf,image/*"
+                className="form-control form-control-sm"
+                disabled={lineSubmitBusy}
+                onChange={(ev) => {
+                  const picked = ev.target.files ? Array.from(ev.target.files) : [];
+                  setPendingLineFiles((prev) => [...prev, ...picked]);
+                  setFormError(null);
+                  ev.target.value = "";
+                }}
+              />
+              {keptAttachmentKeys.length > 0 ? (
+                <div className="small mt-2">
+                  <div className="text-muted mb-1">Attached:</div>
+                  <ul className="list-unstyled mb-0 d-flex flex-column gap-2">
+                    {keptAttachmentKeys.map((key) => (
+                      <li
+                        key={key}
+                        className="d-flex flex-wrap align-items-center gap-2"
+                      >
+                        <span className="fw-medium text-break">
+                          {basenameFromAssetKey(key)}
+                        </span>
+                        <StatementAssetLaunchButton
+                          assetKey={key}
+                          openingPdfKey={openingPdfKey}
+                          onOpen={openStatementPdf}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm py-0"
+                          disabled={lineSubmitBusy}
+                          onClick={() =>
+                            setRemovedAssetKeys((prev) =>
+                              prev.includes(key) ? prev : [...prev, key],
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {pendingLineFiles.length > 0 ? (
+                <div className="small mt-2">
+                  <div className="text-muted mb-1">Staged uploads:</div>
+                  <ul className="list-unstyled mb-0 d-flex flex-column gap-1">
+                    {pendingLineFiles.map((file, idx) => (
+                      <li
+                        key={`${file.name}-${idx}-${file.size}`}
+                        className="d-flex flex-wrap align-items-center gap-2"
+                      >
+                        <span className="text-break">{file.name}</span>
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm py-0"
+                          disabled={lineSubmitBusy}
+                          onClick={() =>
+                            setPendingLineFiles((prev) =>
+                              prev.filter((_, i) => i !== idx),
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {removedAssetKeys.length > 0 && editingId ? (
+                <p className="small text-muted mb-0 mt-2">
+                  Removed attachments are dropped when you save this line.
+                </p>
+              ) : null}
+            </div>
           </div>
         </form>
       </AdminEditorSection>
@@ -586,16 +839,28 @@ export function HouseStatementPanel({
                   </span>
                 </td>
                 <td className="small">
-                  {line.description}
-                  {line.sourceAssetKey ? (
-                    <span
-                      className="badge text-bg-light border ms-2 align-middle"
-                      title={`Imported from ${line.sourceAssetKey}`}
-                    >
-                      <i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />
-                      PDF
-                    </span>
-                  ) : null}
+                  <div className="d-flex flex-wrap align-items-center gap-2">
+                    <span>{line.description}</span>
+                    {statementLineAssetKeys(line).map((assetKey) => (
+                      <span
+                        key={assetKey}
+                        className="d-inline-flex flex-wrap align-items-center gap-2"
+                      >
+                        <StatementAssetLaunchButton
+                          assetKey={assetKey}
+                          openingPdfKey={openingPdfKey}
+                          onOpen={openStatementPdf}
+                        />
+                        <span
+                          className="text-muted small text-truncate"
+                          style={{ maxWidth: "12rem" }}
+                          title={basenameFromAssetKey(assetKey)}
+                        >
+                          {basenameFromAssetKey(assetKey)}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
                 </td>
                 <td className="small text-end">
                   <MoneyAmount amount={line.netAmount} currency={line.currency} />

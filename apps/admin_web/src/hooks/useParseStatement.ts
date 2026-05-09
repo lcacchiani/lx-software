@@ -3,25 +3,33 @@ import { AdminApiError, adminFetchJson } from "../lib/apiAdminClient";
 import {
   DEFAULT_FINANCE_STATE,
   normalizeHouseFinanceData,
+  statementLineAssetKeys,
   type FinancePersistedState,
   type HouseFinanceData,
   type HouseKey,
 } from "../lib/financeModel";
+import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 
 const DUPLICATE_STATEMENT_BASE_MSG =
   "Remove its imported lines or rename the file, then try again.";
 
-/** Collects exact filenames (S3 key basenames) already used by imported lines. */
+/**
+ * Collects exact filenames (S3 key basenames) already used by lines with
+ * statement attachments. When `excludeLineId` is set, that line is ignored (e.g.
+ * while editing the same record).
+ */
 export function existingImportedStatementBasenames(
   data: HouseFinanceData,
+  excludeLineId?: string,
 ): ReadonlySet<string> {
   const out = new Set<string>();
   for (const line of data.lines) {
-    const key = line.sourceAssetKey?.trim();
-    if (!key) continue;
-    const parts = key.split("/");
-    const base = parts[parts.length - 1];
-    if (base) out.add(base);
+    if (excludeLineId && line.id === excludeLineId) continue;
+    for (const key of statementLineAssetKeys(line)) {
+      const parts = key.split("/");
+      const base = parts[parts.length - 1];
+      if (base) out.add(base);
+    }
   }
   return out;
 }
@@ -39,111 +47,23 @@ function adminErrorJsonMessage(err: unknown): string | null {
   return null;
 }
 
-type PresignedUpload = {
-  readonly url: string;
-  readonly fields: Record<string, string>;
-};
-
-type UploadUrlResponse = {
-  readonly upload: PresignedUpload;
-  readonly key: string;
-};
-
-type ConfirmAssetResponse = {
-  readonly item: { readonly pk: string };
-};
-
 type ParseStatementResponse = {
   readonly data: HouseFinanceData;
   readonly addedLines: number;
-  readonly sourceAssetKey: string;
+  readonly sourceAssetKeys?: readonly string[];
+  readonly sourceAssetKey?: string;
 };
 
 export type ParseStatementResult = {
   readonly addedLines: number;
-  readonly sourceAssetKey: string;
+  readonly sourceAssetKeys: readonly string[];
 };
 
-async function sha256Hex(file: File): Promise<string | undefined> {
-  if (typeof crypto === "undefined" || !crypto.subtle) {
-    return undefined;
-  }
-  try {
-    const buf = await file.arrayBuffer();
-    const digest = await crypto.subtle.digest("SHA-256", buf);
-    return Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * Pull the `<Code>…</Code>` value out of an S3 error XML body so we can
- * surface a short, actionable message in the UI (e.g. `EntityTooLarge`,
- * `AccessDenied`, `MalformedPOSTRequest`) instead of an XML wall.
- *
- * Exported for tests.
+ * Re-exported from `uploadFinanceAsset` for backward compatibility with tests
+ * and call sites that imported it from this module.
  */
-export function extractS3ErrorCode(body: string): string | null {
-  if (!body) return null;
-  const m = /<Code>\s*([^<\s][^<]*?)\s*<\/Code>/i.exec(body);
-  return m ? m[1].trim() : null;
-}
-
-async function uploadToS3(presigned: PresignedUpload, file: File): Promise<void> {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(presigned.fields)) {
-    form.append(k, v);
-  }
-  // Per S3 presigned POST contract, the binary content must be the LAST
-  // field in the multipart body.
-  form.append("file", file);
-
-  const contentTypeField = presigned.fields["Content-Type"];
-  const keyField = presigned.fields.key;
-  console.info("[useParseStatement] uploading to S3", {
-    url: presigned.url,
-    key: keyField,
-    contentTypeField,
-    fileType: file.type,
-    fileSize: file.size,
-    fileName: file.name,
-  });
-
-  let res: Response;
-  try {
-    res = await fetch(presigned.url, { method: "POST", body: form });
-  } catch (err) {
-    // Network / CORS preflight failures land here as a TypeError with no
-    // status. Make the message say so explicitly so the bug report shows
-    // "TypeError: Failed to fetch" instead of a vague "Statement import
-    // failed".
-    console.error("[useParseStatement] S3 POST transport failure", err);
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `S3 upload network/CORS failure (no HTTP response): ${reason}`,
-    );
-  }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const code = extractS3ErrorCode(text);
-    const summary = code
-      ? `${code}`
-      : text.slice(0, 200) || "no body";
-    console.error("[useParseStatement] S3 POST rejected", {
-      status: res.status,
-      code,
-      bodyPreview: text.slice(0, 1000),
-      contentTypeField,
-      keyField,
-    });
-    throw new Error(`S3 upload failed (${res.status}): ${summary}`);
-  }
-  console.info("[useParseStatement] S3 upload OK", { status: res.status });
-}
+export { extractS3ErrorCode } from "../lib/uploadFinanceAsset";
 
 /**
  * Upload a PDF (or supported image) statement to S3 then call the admin API
@@ -190,35 +110,9 @@ export function useParseStatement(house: HouseKey) {
         fileSize: file.size,
       });
 
-      const upload = await adminFetchJson<UploadUrlResponse>(
-        "/assets/upload-url",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            filename: file.name,
-            contentType,
-          }),
-        },
-      );
-      console.info("[useParseStatement] /assets/upload-url ok", {
-        key: upload.key,
-        contentTypeFieldFromServer: upload.upload.fields["Content-Type"],
-      });
-
-      await uploadToS3(upload.upload, file);
-
-      const sha256 = await sha256Hex(file);
-      await adminFetchJson<ConfirmAssetResponse>("/assets/confirm", {
-        method: "POST",
-        body: JSON.stringify({
-          key: upload.key,
-          house,
-          size: file.size,
-          ...(sha256 ? { sha256 } : {}),
-        }),
-      });
-      console.info("[useParseStatement] /assets/confirm ok", {
-        key: upload.key,
+      const uploadKey = await uploadFinanceAsset(file, house, qc);
+      console.info("[useParseStatement] upload + confirm ok", {
+        key: uploadKey,
         size: file.size,
       });
 
@@ -228,7 +122,7 @@ export function useParseStatement(house: HouseKey) {
           `/finance/${house}/parse-statement`,
           {
             method: "POST",
-            body: JSON.stringify({ key: upload.key }),
+            body: JSON.stringify({ key: uploadKey }),
           },
         );
       } catch (err) {
@@ -237,7 +131,7 @@ export function useParseStatement(house: HouseKey) {
         throw err;
       }
       console.info("[useParseStatement] /parse-statement ok", {
-        key: upload.key,
+        key: uploadKey,
         addedLines: parsed.addedLines,
       });
 
@@ -246,11 +140,17 @@ export function useParseStatement(house: HouseKey) {
         ...(old ?? DEFAULT_FINANCE_STATE),
         [house]: normalized,
       }));
-      void qc.invalidateQueries({ queryKey: ["admin", "asset-records"] });
+
+      const keys =
+        Array.isArray(parsed.sourceAssetKeys) && parsed.sourceAssetKeys.length > 0
+          ? [...parsed.sourceAssetKeys]
+          : parsed.sourceAssetKey
+            ? [parsed.sourceAssetKey]
+            : [];
 
       return {
         addedLines: parsed.addedLines,
-        sourceAssetKey: parsed.sourceAssetKey,
+        sourceAssetKeys: keys,
       };
     },
   });

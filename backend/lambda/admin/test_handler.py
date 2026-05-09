@@ -31,11 +31,32 @@ from handler import (  # noqa: E402
     _is_allowed_upload_content_type,
     _normalize_finance_payload,
     _normalize_ledger_sheet_payload,
+    _normalize_public_asset_key,
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _statement_basename_already_imported,
     _utc_iso_z,
 )
+
+
+class TestNormalizePublicAssetKey(unittest.TestCase):
+    def test_accepts_uploads_prefix(self) -> None:
+        self.assertEqual(
+            _normalize_public_asset_key("uploads/sub/x/file.pdf"),
+            "uploads/sub/x/file.pdf",
+        )
+
+    def test_rejects_traversal(self) -> None:
+        self.assertIsNone(_normalize_public_asset_key("uploads/../etc/passwd"))
+        self.assertIsNone(_normalize_public_asset_key("../x"))
+
+    def test_rejects_other_prefix(self) -> None:
+        self.assertIsNone(_normalize_public_asset_key("other/key"))
+
+    def test_empty(self) -> None:
+        self.assertIsNone(_normalize_public_asset_key(None))
+        self.assertIsNone(_normalize_public_asset_key(""))
+        self.assertIsNone(_normalize_public_asset_key("   "))
 
 
 class TestGroups(unittest.TestCase):
@@ -146,7 +167,60 @@ class TestFinancePayload(unittest.TestCase):
         }
         out = _normalize_finance_payload(body)
         self.assertEqual(
-            out["lines"][0]["sourceAssetKey"], "uploads/abc/123/statement.pdf"
+            out["lines"][0]["sourceAssetKeys"], ["uploads/abc/123/statement.pdf"]
+        )
+        self.assertNotIn("sourceAssetKey", out["lines"][0])
+
+    def test_source_asset_keys_multiple(self) -> None:
+        body = {
+            "defaultCurrency": "GBP",
+            "float": {"amount": 0, "currency": "GBP"},
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "expenditure",
+                    "description": "Coffee",
+                    "netAmount": 2.5,
+                    "vat": 0.5,
+                    "grossAmount": 3.0,
+                    "currency": "GBP",
+                    "sourceAssetKeys": [
+                        "uploads/abc/1/a.pdf",
+                        "uploads/abc/2/b.pdf",
+                    ],
+                }
+            ],
+        }
+        out = _normalize_finance_payload(body)
+        self.assertEqual(
+            out["lines"][0]["sourceAssetKeys"],
+            ["uploads/abc/1/a.pdf", "uploads/abc/2/b.pdf"],
+        )
+
+    def test_source_asset_key_legacy_merges_with_keys(self) -> None:
+        body = {
+            "defaultCurrency": "GBP",
+            "float": {"amount": 0, "currency": "GBP"},
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "expenditure",
+                    "description": "Coffee",
+                    "netAmount": 2.5,
+                    "vat": 0.5,
+                    "grossAmount": 3.0,
+                    "currency": "GBP",
+                    "sourceAssetKey": "uploads/legacy/x.pdf",
+                    "sourceAssetKeys": ["uploads/new/y.pdf"],
+                }
+            ],
+        }
+        out = _normalize_finance_payload(body)
+        self.assertEqual(
+            out["lines"][0]["sourceAssetKeys"],
+            ["uploads/new/y.pdf", "uploads/legacy/x.pdf"],
         )
 
     def test_source_asset_key_optional(self) -> None:
@@ -168,6 +242,7 @@ class TestFinancePayload(unittest.TestCase):
         }
         out = _normalize_finance_payload(body)
         self.assertNotIn("sourceAssetKey", out["lines"][0])
+        self.assertNotIn("sourceAssetKeys", out["lines"][0])
 
 
 class TestLedgerSheetPayload(unittest.TestCase):
@@ -293,6 +368,22 @@ class TestStatementBasenameDuplicate(unittest.TestCase):
             _statement_basename_already_imported(house, "BankStmt.pdf")
         )
         self.assertFalse(
+            _statement_basename_already_imported(house, "Other.pdf")
+        )
+
+    def test_basename_in_source_asset_keys_array(self) -> None:
+        house = {
+            "lines": [
+                {
+                    "id": "a",
+                    "sourceAssetKeys": [
+                        "uploads/u1/x/BankStmt.pdf",
+                        "uploads/u2/y/Other.pdf",
+                    ],
+                }
+            ]
+        }
+        self.assertTrue(
             _statement_basename_already_imported(house, "Other.pdf")
         )
 

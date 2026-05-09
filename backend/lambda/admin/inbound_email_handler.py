@@ -2,9 +2,10 @@
 
 SES receipt rules deliver mail for configured addresses into
 ``{INBOUND_RAW_MAIL_PREFIX}/{house_key}/…`` in the inbound bucket. S3 invokes
-this Lambda on those prefixes. The first PDF attachment is copied into the
-admin assets bucket and parsed with the same OpenRouter path as
-``POST /finance/{house}/parse-statement``.
+this Lambda on those prefixes. Every ``application/pdf`` part is copied into
+the admin assets bucket; lines are parsed once with **all** of those object
+keys attached to each new line (``sourceAssetKeys``), matching multi-PDF
+imports in the admin UI.
 
 ``house_key`` values are the stable finance identifiers in the repo
 (``FINANCE_HOUSE_KEYS``), e.g. ``hillmarton`` for the house labelled
@@ -29,7 +30,12 @@ from typing import Any
 
 import boto3
 
-from handler import FINANCE_HOUSE_KEYS, _ParseStatementError, execute_parse_statement
+from handler import (
+    MAX_SOURCE_ASSET_KEYS_PER_LINE,
+    FINANCE_HOUSE_KEYS,
+    _ParseStatementError,
+    execute_parse_statement,
+)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -64,9 +70,10 @@ def _sanitize_filename(name: str) -> str:
     return safe or "statement.pdf"
 
 
-def extract_first_pdf_attachment(raw: bytes) -> tuple[bytes, str] | None:
-    """Return ``(pdf_bytes, safe_filename)`` for the first PDF part, if any."""
+def extract_pdf_attachments(raw: bytes) -> list[tuple[bytes, str]]:
+    """Return ``(pdf_bytes, safe_filename)`` for every PDF part, in walk order."""
     msg = BytesParser(policy=policy.default).parsebytes(raw)
+    out: list[tuple[bytes, str]] = []
     for part in msg.walk():
         if part.get_content_maintype() == "multipart":
             continue
@@ -76,8 +83,14 @@ def extract_first_pdf_attachment(raw: bytes) -> tuple[bytes, str] | None:
         if not isinstance(payload, (bytes, bytearray)) or len(payload) == 0:
             continue
         fn = part.get_filename() or "statement.pdf"
-        return bytes(payload), _sanitize_filename(fn)
-    return None
+        out.append((bytes(payload), _sanitize_filename(fn)))
+    return out
+
+
+def extract_first_pdf_attachment(raw: bytes) -> tuple[bytes, str] | None:
+    """Return ``(pdf_bytes, safe_filename)`` for the first PDF part, if any."""
+    parts = extract_pdf_attachments(raw)
+    return parts[0] if parts else None
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -134,8 +147,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             )
             continue
 
-        extracted = extract_first_pdf_attachment(body)
-        if extracted is None:
+        pdf_parts = extract_pdf_attachments(body)
+        if not pdf_parts:
             logger.warning(
                 json.dumps(
                     {
@@ -147,38 +160,63 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             )
             continue
 
-        pdf_bytes, safe_name = extracted
-        if len(pdf_bytes) > max_pdf:
+        if len(pdf_parts) > MAX_SOURCE_ASSET_KEYS_PER_LINE:
+            logger.warning(
+                json.dumps(
+                    {
+                        "tag": "inbound_mail_pdf_count_capped",
+                        "key": raw_key[:512],
+                        "count": len(pdf_parts),
+                        "max": MAX_SOURCE_ASSET_KEYS_PER_LINE,
+                    }
+                )
+            )
+            pdf_parts = pdf_parts[:MAX_SOURCE_ASSET_KEYS_PER_LINE]
+
+        oversize_idx = next(
+            (i for i, (blob, _) in enumerate(pdf_parts) if len(blob) > max_pdf),
+            None,
+        )
+        if oversize_idx is not None:
             logger.warning(
                 json.dumps(
                     {
                         "tag": "inbound_mail_pdf_too_large",
                         "key": raw_key[:512],
-                        "bytes": len(pdf_bytes),
+                        "index": oversize_idx,
+                        "bytes": len(pdf_parts[oversize_idx][0]),
                         "max": max_pdf,
                     }
                 )
             )
             continue
 
-        dest_key = f"inbound/{house_key}/{uuid.uuid4().hex}/{safe_name}"
-        try:
-            _s3.put_object(
-                Bucket=assets_bucket,
-                Key=dest_key,
-                Body=pdf_bytes,
-                ContentType="application/pdf",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                json.dumps(
-                    {
-                        "tag": "inbound_mail_put_asset_failed",
-                        "dest": dest_key[:512],
-                        "error": str(exc)[:500],
-                    }
+        batch_id = uuid.uuid4().hex
+        dest_keys: list[str] = []
+        for idx, (pdf_bytes, safe_name) in enumerate(pdf_parts):
+            dest_key = f"inbound/{house_key}/{batch_id}/{idx:02d}_{safe_name}"
+            try:
+                _s3.put_object(
+                    Bucket=assets_bucket,
+                    Key=dest_key,
+                    Body=pdf_bytes,
+                    ContentType="application/pdf",
                 )
-            )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    json.dumps(
+                        {
+                            "tag": "inbound_mail_put_asset_failed",
+                            "dest": dest_key[:512],
+                            "error": str(exc)[:500],
+                        }
+                    )
+                )
+                dest_keys = []
+                break
+            dest_keys.append(dest_key)
+
+        if not dest_keys:
             continue
 
         stub_event: dict[str, Any] = {
@@ -187,12 +225,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 "rawKey": raw_key,
                 "sourceBucket": inbound_bucket,
                 "houseKey": house_key,
+                "assetCount": len(dest_keys),
             },
         }
         try:
             result = execute_parse_statement(
                 house=house_key,
-                s3_key=dest_key,
+                s3_keys=dest_keys,
                 user_sub=user_sub,
                 request_id=request_id,
                 event=stub_event,
@@ -203,7 +242,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     {
                         "tag": "inbound_mail_parse_failed",
                         "houseKey": house_key,
-                        "dest": dest_key[:512],
+                        "destKeys": [k[:256] for k in dest_keys],
                         "status": exc.status,
                         "message": exc.message[:500],
                     }
@@ -229,7 +268,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 {
                     "tag": "inbound_mail_parsed",
                     "houseKey": house_key,
-                    "dest": dest_key[:512],
+                    "pdfCount": len(dest_keys),
                     "addedLines": result.get("addedLines"),
                 }
             )

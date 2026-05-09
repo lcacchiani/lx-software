@@ -99,7 +99,7 @@ function fakeParsedLines(sourceKey) {
       vat: 16.83,
       grossAmount: 100.99,
       currency: "GBP",
-      sourceAssetKey: sourceKey,
+      sourceAssetKeys: [sourceKey],
     },
     {
       id: `parsed-${Date.now()}-2`,
@@ -110,7 +110,7 @@ function fakeParsedLines(sourceKey) {
       vat: 0,
       grossAmount: 32.5,
       currency: "GBP",
-      sourceAssetKey: sourceKey,
+      sourceAssetKeys: [sourceKey],
     },
     {
       id: `parsed-${Date.now()}-3`,
@@ -121,7 +121,7 @@ function fakeParsedLines(sourceKey) {
       vat: 0,
       grossAmount: 45,
       currency: "GBP",
-      sourceAssetKey: sourceKey,
+      sourceAssetKeys: [sourceKey],
     },
   ];
 }
@@ -194,6 +194,18 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  if (req.method === "POST" && req.url === "/assets/download-url") {
+    const body = await readJson(req);
+    const key = body?.key;
+    if (!key) {
+      return send(res, 400, { message: "key is required" });
+    }
+    return send(res, 200, {
+      url: `https://example.com/mock-asset-download?key=${encodeURIComponent(String(key))}`,
+      expiresIn: 300,
+    });
+  }
+
   if (req.method === "GET") {
     let pathname = "";
     try {
@@ -241,6 +253,7 @@ const server = createServer(async (req, res) => {
     return send(res, 200, {
       data: next,
       addedLines: fakeLines.length,
+      sourceAssetKeys: [body.key],
       sourceAssetKey: body.key,
     });
   }

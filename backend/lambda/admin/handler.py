@@ -32,6 +32,8 @@ SUPPORTED_FINANCE_CURRENCIES = frozenset(
 DEFAULT_FINANCE_CURRENCY = "HKD"
 MAX_FINANCE_LINES = 5000
 MAX_FINANCE_DESCRIPTION = 8000
+MAX_SOURCE_ASSET_KEYS_PER_LINE = 20
+MAX_SOURCE_ASSET_KEY_LEN = 1024
 INCOME_RECORD_CATEGORIES = frozenset({"Salary", "Rent"})
 EXPENSE_RECORD_CATEGORIES = frozenset(
     {"Utility", "Saving", "Investment", "Rent", "Insurance", "Retirement"}
@@ -58,6 +60,80 @@ def _is_allowed_upload_content_type(content_type: str) -> bool:
     if ct.startswith("image/"):
         return True
     return ct in ALLOWED_UPLOAD_CONTENT_TYPES
+
+
+def _normalize_public_asset_key(raw: Any) -> str | None:
+    """Return an uploads/* S3 object key, or None if invalid (path traversal, etc.)."""
+    if raw is None:
+        return None
+    key = str(raw).strip()
+    if not key or ".." in key or not key.startswith("uploads/"):
+        return None
+    return key
+
+
+def _asset_download_presigned_response(
+    event: dict[str, Any],
+    user_sub: str | None,
+    raw_key: Any,
+) -> dict[str, Any]:
+    """Issue a presigned GET for a confirmed asset (GET ?key=… or POST JSON body).
+
+    Any admin may download any confirmed uploads/* object so statement lines and
+    the Assets page work across uploaders.
+    """
+    norm = _normalize_public_asset_key(raw_key)
+    if norm is None:
+        return _json_response(400, {"message": "key is required"})
+    table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    meta = table.get_item(Key={"pk": f"ASSET#{norm}", "sk": "META"})
+    if "Item" not in meta:
+        _log_event(
+            "warning",
+            tag="asset_download_url_rejected",
+            reason="not_confirmed",
+            sub=user_sub,
+            key=norm[:512],
+            request_id=_request_id(event),
+        )
+        return _json_response(404, {"message": "Asset not found"})
+    bucket = os.environ["ASSETS_BUCKET_NAME"]
+    try:
+        head_dl = _s3.head_object(Bucket=bucket, Key=norm)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            _log_event(
+                "warning",
+                tag="asset_download_url_missing_object",
+                sub=user_sub,
+                key=norm[:512],
+                s3_error_code=code,
+                request_id=_request_id(event),
+            )
+            return _json_response(
+                404, {"message": "Object not found in bucket"}
+            )
+        raise
+    params: dict[str, Any] = {"Bucket": bucket, "Key": norm}
+    ct_dl = head_dl.get("ContentType")
+    if isinstance(ct_dl, str) and ct_dl.strip():
+        params["ResponseContentType"] = ct_dl.strip()
+    url = _s3.generate_presigned_url(
+        "get_object",
+        Params=params,
+        ExpiresIn=300,
+    )
+    _log_event(
+        "info",
+        tag="asset_download_url_issued",
+        sub=user_sub,
+        key=norm[:512],
+        expires_in_seconds=300,
+        request_id=_request_id(event),
+    )
+    _audit(user_sub, "ASSET_DOWNLOAD_URL", norm, event)
+    return _json_response(200, {"url": url, "expiresIn": 300})
 
 
 def _json_response(
@@ -220,6 +296,47 @@ def _default_finance_house() -> dict[str, Any]:
     }
 
 
+def _line_source_asset_keys_raw(line: dict[str, Any]) -> list[str]:
+    """Collect source S3 keys from ``sourceAssetKeys`` and legacy ``sourceAssetKey``."""
+    keys: list[str] = []
+    raw_arr = line.get("sourceAssetKeys")
+    if isinstance(raw_arr, list):
+        for x in raw_arr:
+            if isinstance(x, str) and x.strip():
+                keys.append(x.strip())
+    legacy = line.get("sourceAssetKey")
+    if isinstance(legacy, str) and legacy.strip():
+        keys.append(legacy.strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _validated_line_source_asset_keys(raw: dict[str, Any], i: int) -> list[str]:
+    """Strict validation for finance writes; merges legacy ``sourceAssetKey``."""
+    if "sourceAssetKeys" in raw:
+        sa = raw["sourceAssetKeys"]
+        if sa is not None:
+            if not isinstance(sa, list):
+                raise ValueError(f"lines[{i}].sourceAssetKeys must be an array")
+            for j, x in enumerate(sa):
+                if not isinstance(x, str) or not x.strip():
+                    raise ValueError(
+                        f"lines[{i}].sourceAssetKeys[{j}] must be a non-empty string"
+                    )
+    if "sourceAssetKey" in raw:
+        sk = raw["sourceAssetKey"]
+        if sk is not None and (not isinstance(sk, str) or not sk.strip()):
+            raise ValueError(
+                f"lines[{i}].sourceAssetKey must be a non-empty string when provided"
+            )
+    return _line_source_asset_keys_raw(raw)
+
+
 def _coerce_finance_currency_value(raw: Any, fallback: str) -> str:
     if not isinstance(raw, str) or not raw.strip():
         return fallback
@@ -253,11 +370,11 @@ def _sanitize_finance_house(stored: dict[str, Any]) -> dict[str, Any]:
             cur_line = _coerce_finance_currency_value(raw.get("currency"), dc)
             row = dict(raw)
             row["currency"] = cur_line
-            src = row.get("sourceAssetKey")
-            if isinstance(src, str) and src.strip():
-                row["sourceAssetKey"] = src.strip()
-            elif "sourceAssetKey" in row:
-                del row["sourceAssetKey"]
+            merged = _line_source_asset_keys_raw(row)
+            row.pop("sourceAssetKey", None)
+            row.pop("sourceAssetKeys", None)
+            if merged:
+                row["sourceAssetKeys"] = merged[:MAX_SOURCE_ASSET_KEYS_PER_LINE]
             lines_out.append(row)
 
     return {"defaultCurrency": dc, "float": float_out, "lines": lines_out}
@@ -353,12 +470,17 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
             "currency": c,
         }
 
-        # Optional reference to the asset (e.g. uploaded statement PDF) the
-        # line originated from. Stored as the S3 object key so the UI can
-        # later resolve it back to the asset record.
-        source_key = raw.get("sourceAssetKey")
-        if isinstance(source_key, str) and source_key.strip():
-            line_out["sourceAssetKey"] = source_key.strip()[:1024]
+        merged_keys = _validated_line_source_asset_keys(raw, i)
+        if len(merged_keys) > MAX_SOURCE_ASSET_KEYS_PER_LINE:
+            raise ValueError(
+                f"lines[{i}] must have at most {MAX_SOURCE_ASSET_KEYS_PER_LINE} "
+                "source asset keys"
+            )
+        for k in merged_keys:
+            if len(k) > MAX_SOURCE_ASSET_KEY_LEN:
+                raise ValueError(f"lines[{i}] source asset key is too long")
+        if merged_keys:
+            line_out["sourceAssetKeys"] = merged_keys
 
         lines_out.append(line_out)
 
@@ -486,6 +608,118 @@ def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
     if not isinstance(nested, dict):
         return _default_finance_house()
     return _sanitize_finance_house(nested)
+
+
+def _source_key_to_house_map(table: Any) -> dict[str, str]:
+    """Map S3 object keys to finance house keys using imported statement lines."""
+    out: dict[str, str] = {}
+    for house in FINANCE_HOUSE_KEYS:
+        data = _load_finance_house(table, house)
+        for ln in data.get("lines") or []:
+            if not isinstance(ln, dict):
+                continue
+            for raw_key in _line_source_asset_keys_raw(ln):
+                out.setdefault(raw_key, house)
+    return out
+
+
+def _enrich_scan_items_asset_meta(
+    items: list[dict[str, Any]],
+    *,
+    table: Any,
+    bucket: str,
+) -> list[dict[str, Any]]:
+    """Augment ASSET# / META rows for admin list views.
+
+    Older items may omit ``uploadedAt`` / ``house``; we recover ``house`` from
+    finance statement lines and timestamps from S3 ``LastModified`` when needed.
+    """
+    asset_spans: list[tuple[int, str]] = []
+    for idx, it in enumerate(items):
+        pk = it.get("pk")
+        sk = it.get("sk")
+        if not isinstance(pk, str) or not pk.startswith("ASSET#"):
+            continue
+        if sk != "META":
+            continue
+        s3_key = pk.removeprefix("ASSET#")
+        if not s3_key.startswith("uploads/"):
+            continue
+        asset_spans.append((idx, s3_key))
+
+    if not asset_spans:
+        return items
+
+    key_to_house: dict[str, str] = {}
+    if any(
+        not str(items[i].get("house") or "").strip() for i, _ in asset_spans
+    ):
+        key_to_house = _source_key_to_house_map(table)
+
+    out = list(items)
+    for idx, s3_key in asset_spans:
+        merged = dict(out[idx])
+        if not str(merged.get("house") or "").strip():
+            inferred = key_to_house.get(s3_key)
+            if inferred:
+                merged["house"] = inferred
+        if not str(merged.get("uploadedAt") or "").strip() and bucket:
+            try:
+                head = _s3.head_object(Bucket=bucket, Key=s3_key)
+            except ClientError:
+                head = {}
+            lm = head.get("LastModified")
+            if isinstance(lm, datetime):
+                merged["uploadedAt"] = _utc_iso_z(lm)
+        if not str(merged.get("fileName") or "").strip():
+            merged["fileName"] = os.path.basename(s3_key)
+        out[idx] = merged
+    return out
+
+
+def _persist_asset_meta_after_parse(
+    *,
+    table: Any,
+    s3_key: str,
+    house: str,
+    head: dict[str, Any],
+    file_name: str,
+    request_id: str,
+) -> None:
+    """Ensure ASSET META reflects the house and timestamps after a successful import."""
+    asset_pk = f"ASSET#{s3_key}"
+    last_mod = head.get("LastModified")
+    if isinstance(last_mod, datetime):
+        uploaded_at = _utc_iso_z(last_mod)
+    else:
+        uploaded_at = _utc_iso_z(datetime.now(timezone.utc))
+    try:
+        table.update_item(
+            Key={"pk": asset_pk, "sk": "META"},
+            UpdateExpression=(
+                "SET house = :house, "
+                "uploadedAt = if_not_exists(uploadedAt, :ua), "
+                "fileName = if_not_exists(fileName, :fn)"
+            ),
+            ExpressionAttributeValues={
+                ":house": house,
+                ":ua": uploaded_at,
+                ":fn": file_name,
+            },
+            ConditionExpression="attribute_exists(pk)",
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code == "ConditionalCheckFailedException":
+            _log_event(
+                "warning",
+                tag="asset_meta_parse_merge_skipped",
+                reason="no_meta_row",
+                key=s3_key[:512],
+                request_id=request_id,
+            )
+            return
+        raise
 
 
 def _finance_sheet_ddb_key(sheet_slug: str) -> dict[str, str]:
@@ -810,40 +1044,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if method == "GET" and path == "/assets/download-url":
         qs = event.get("rawQueryString") or ""
         key_param = parse_qs(qs).get("key", [""])[0]
-        if not key_param:
-            return _json_response(400, {"message": "key query parameter is required"})
-        if not user_sub:
-            return _json_response(400, {"message": "Missing sub claim"})
-        prefix = f"uploads/{user_sub}/"
-        if not str(key_param).startswith(prefix):
-            _log_event(
-                "warning",
-                tag="asset_download_url_rejected",
-                reason="prefix_mismatch",
-                sub=user_sub,
-                key=str(key_param)[:512],
-                request_id=_request_id(event),
-            )
-            return _json_response(403, {"message": "Invalid key for this user"})
-        bucket = os.environ["ASSETS_BUCKET_NAME"]
-        try:
-            head_dl = _s3.head_object(Bucket=bucket, Key=str(key_param))
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "")
-            if code in ("404", "NoSuchKey", "NotFound"):
-                return _json_response(400, {"message": "Object not found in bucket"})
-            raise
-        params: dict[str, Any] = {"Bucket": bucket, "Key": str(key_param)}
-        ct_dl = head_dl.get("ContentType")
-        if isinstance(ct_dl, str) and ct_dl.strip():
-            params["ResponseContentType"] = ct_dl.strip()
-        url = _s3.generate_presigned_url(
-            "get_object",
-            Params=params,
-            ExpiresIn=300,
-        )
-        _audit(user_sub, "ASSET_DOWNLOAD_URL", str(key_param), event)
-        return _json_response(200, {"url": url})
+        return _asset_download_presigned_response(event, user_sub, key_param)
+
+    if method == "POST" and path == "/assets/download-url":
+        body = _parse_json_body(event)
+        return _asset_download_presigned_response(event, user_sub, body.get("key"))
 
     if method == "GET" and path == "/records":
         qs = event.get("rawQueryString") or ""
@@ -855,6 +1060,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             kwargs["ExclusiveStartKey"] = start_key
         result = table.scan(**kwargs)
         items = [_from_ddb(i) for i in result.get("Items", [])]
+        bucket = os.environ.get("ASSETS_BUCKET_NAME") or ""
+        items = _enrich_scan_items_asset_meta(items, table=table, bucket=bucket)
         last = result.get("LastEvaluatedKey")
         next_cursor = _encode_cursor(last) if last else None
         return _json_response(
@@ -1010,7 +1217,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         try:
             result = execute_parse_statement(
                 house=house,
-                s3_key=key,
+                s3_keys=[key],
                 user_sub=user_sub,
                 request_id=_request_id(event),
                 event=event,
@@ -1046,130 +1253,161 @@ def _path_finance_house_for_parse(event: dict[str, Any], path: str) -> str | Non
 def _statement_basename_already_imported(
     house_data: dict[str, Any], basename: str
 ) -> bool:
-    """True if any finance line was extracted from an asset with this exact filename."""
+    """True if any finance line references an asset with this exact filename."""
     for ln in house_data.get("lines") or []:
         if not isinstance(ln, dict):
             continue
-        key = ln.get("sourceAssetKey")
-        if not isinstance(key, str) or not key.strip():
-            continue
-        if os.path.basename(key.strip()) == basename:
-            return True
+        for key in _line_source_asset_keys_raw(ln):
+            if os.path.basename(key) == basename:
+                return True
     return False
 
 
 def execute_parse_statement(
     *,
     house: str,
-    s3_key: str,
+    s3_keys: list[str],
     user_sub: str | None,
     request_id: str,
     event: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run OpenRouter on an asset in the assets bucket and append parsed lines.
+    """Run OpenRouter on one or more assets and append parsed lines.
 
-    Used by the HTTP API and by the inbound-email Lambda. Raises
-    ``_ParseStatementError`` on user-facing failures.
+    Each new line gets ``sourceAssetKeys`` set to the full ordered list of
+    ``s3_keys`` (same idea as attaching every PDF from one import to every
+    extracted line in the admin UI). Used by the HTTP API and inbound-email.
 
-    Returns a dict suitable for JSON (``data``, ``addedLines``, ``sourceAssetKey``).
+    Raises ``_ParseStatementError`` on user-facing failures.
+
+    Returns a dict with ``data``, ``addedLines``, ``sourceAssetKeys``, and
+    legacy ``sourceAssetKey`` (first key).
     """
+    keys_ordered: list[str] = []
+    seen: set[str] = set()
+    for k in s3_keys:
+        if not isinstance(k, str) or not k.strip():
+            continue
+        kk = k.strip()
+        if kk not in seen:
+            seen.add(kk)
+            keys_ordered.append(kk)
+    if not keys_ordered:
+        raise _ParseStatementError(400, "At least one S3 key is required")
+    if len(keys_ordered) > MAX_SOURCE_ASSET_KEYS_PER_LINE:
+        raise _ParseStatementError(
+            400,
+            f"At most {MAX_SOURCE_ASSET_KEYS_PER_LINE} statement files per import",
+        )
+
     bucket = os.environ["ASSETS_BUCKET_NAME"]
     _log_event(
         "info",
         tag="parse_statement_start",
         sub=user_sub,
         house=house,
-        key=s3_key[:512],
+        key=",".join(keys_ordered)[:512],
         request_id=request_id,
     )
-    try:
-        head = _s3.head_object(Bucket=bucket, Key=s3_key)
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in ("404", "NoSuchKey", "NotFound"):
-            _log_event(
-                "warning",
-                tag="parse_statement_not_in_bucket",
-                sub=user_sub,
-                house=house,
-                key=s3_key[:512],
-                s3_error_code=code,
-                request_id=request_id,
-            )
-            raise _ParseStatementError(400, "Object not found in bucket") from exc
-        raise
-
-    content_type = head.get("ContentType") or ""
-    file_name = os.path.basename(s3_key)
-    object_size = int(head.get("ContentLength") or 0)
 
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
     house_data = _load_finance_house(table, house)
-    if _statement_basename_already_imported(house_data, file_name):
-        _log_event(
-            "info",
-            tag="parse_statement_duplicate_basename",
-            sub=user_sub,
-            house=house,
-            basename=file_name[:256],
-            request_id=request_id,
-        )
-        raise _ParseStatementError(
-            409,
-            f"A statement file named {file_name!r} was already imported for this house. "
-            "Remove its imported lines or rename the file, then try again.",
-        )
+
+    file_meta: list[tuple[str, str, dict[str, Any]]] = []
+    for s3_key in keys_ordered:
+        try:
+            head = _s3.head_object(Bucket=bucket, Key=s3_key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                _log_event(
+                    "warning",
+                    tag="parse_statement_not_in_bucket",
+                    sub=user_sub,
+                    house=house,
+                    key=s3_key[:512],
+                    s3_error_code=code,
+                    request_id=request_id,
+                )
+                raise _ParseStatementError(400, "Object not found in bucket") from exc
+            raise
+        file_name = os.path.basename(s3_key)
+        if _statement_basename_already_imported(house_data, file_name):
+            _log_event(
+                "info",
+                tag="parse_statement_duplicate_basename",
+                sub=user_sub,
+                house=house,
+                basename=file_name[:256],
+                request_id=request_id,
+            )
+            raise _ParseStatementError(
+                409,
+                f"A statement file named {file_name!r} was already imported for this house. "
+                "Remove its imported lines or rename the file, then try again.",
+            )
+        file_meta.append((s3_key, file_name, head))
+
     default_currency = house_data.get("defaultCurrency", DEFAULT_FINANCE_CURRENCY)
-    _log_event(
-        "info",
-        tag="parse_statement_object_loaded",
-        sub=user_sub,
-        house=house,
-        key=s3_key[:512],
-        object_content_type=content_type[:128],
-        object_size_bytes=object_size,
-        default_currency=default_currency,
-        request_id=request_id,
-    )
 
     # Lazy-import the parser so unit tests can stub urllib without paying
     # the import cost on unrelated routes.
     from openrouter_statement_parser import parse_statement_from_asset
 
-    try:
-        parsed = parse_statement_from_asset(
-            s3_client=_s3,
-            secrets_client=_get_secretsmanager_client(),
-            bucket=bucket,
-            s3_key=s3_key,
-            file_name=file_name,
-            content_type=content_type,
-            default_currency=default_currency,
-        )
-    except RuntimeError as exc:
+    all_parsed_raw_lines: list[dict[str, Any]] = []
+    for s3_key, file_name, head in file_meta:
+        content_type = head.get("ContentType") or ""
+        object_size = int(head.get("ContentLength") or 0)
         _log_event(
-            "warning",
-            tag="parse_statement_failed",
+            "info",
+            tag="parse_statement_object_loaded",
             sub=user_sub,
             house=house,
             key=s3_key[:512],
-            error=str(exc)[:500],
+            object_content_type=content_type[:128],
+            object_size_bytes=object_size,
+            default_currency=default_currency,
             request_id=request_id,
         )
-        raise _ParseStatementError(502, f"Statement parser failed: {exc}") from exc
+        try:
+            parsed = parse_statement_from_asset(
+                s3_client=_s3,
+                secrets_client=_get_secretsmanager_client(),
+                bucket=bucket,
+                s3_key=s3_key,
+                file_name=file_name,
+                content_type=content_type,
+                default_currency=default_currency,
+            )
+        except RuntimeError as exc:
+            _log_event(
+                "warning",
+                tag="parse_statement_failed",
+                sub=user_sub,
+                house=house,
+                key=s3_key[:512],
+                error=str(exc)[:500],
+                request_id=request_id,
+            )
+            raise _ParseStatementError(502, f"Statement parser failed: {exc}") from exc
+        for raw_line in parsed.get("lines") or []:
+            if isinstance(raw_line, dict):
+                all_parsed_raw_lines.append(raw_line)
 
-    parsed_lines = parsed.get("lines") or []
     new_lines: list[dict[str, Any]] = []
-    for raw_line in parsed_lines:
-        if not isinstance(raw_line, dict):
-            continue
-        new_lines.append({**raw_line, "id": uuid.uuid4().hex, "sourceAssetKey": s3_key})
+    for raw_line in all_parsed_raw_lines:
+        nl = {
+            **raw_line,
+            "id": uuid.uuid4().hex,
+            "sourceAssetKeys": list(keys_ordered),
+        }
+        nl.pop("sourceAssetKey", None)
+        new_lines.append(nl)
     _log_event(
         "info",
         tag="parse_statement_extracted",
         sub=user_sub,
         house=house,
-        key=s3_key[:512],
+        key=",".join(keys_ordered)[:512],
         added_lines=len(new_lines),
         existing_lines=len(house_data.get("lines", []) or []),
         request_id=request_id,
@@ -1193,6 +1431,15 @@ def execute_parse_statement(
 
     ddb_item = {**_finance_ddb_key(house), **_to_ddb_nested(normalized)}
     table.put_item(Item=ddb_item)
+    for s3_key, file_name, head in file_meta:
+        _persist_asset_meta_after_parse(
+            table=table,
+            s3_key=s3_key,
+            house=house,
+            head=head,
+            file_name=file_name,
+            request_id=request_id,
+        )
     audit_event = {
         **event,
         "requestContext": {
@@ -1204,12 +1451,14 @@ def execute_parse_statement(
             },
         },
     }
-    _audit(user_sub, "FINANCE_PARSE_STATEMENT", f"{house}|{s3_key}", audit_event)
+    audit_target = f"{house}|{','.join(keys_ordered)}"[:1024]
+    _audit(user_sub, "FINANCE_PARSE_STATEMENT", audit_target, audit_event)
 
     return {
         "data": normalized,
         "addedLines": len(new_lines),
-        "sourceAssetKey": s3_key,
+        "sourceAssetKeys": list(keys_ordered),
+        "sourceAssetKey": keys_ordered[0],
     }
 
 
