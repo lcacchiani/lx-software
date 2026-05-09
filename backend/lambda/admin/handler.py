@@ -562,6 +562,119 @@ def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
     return _sanitize_finance_house(nested)
 
 
+def _source_key_to_house_map(table: Any) -> dict[str, str]:
+    """Map S3 object keys to finance house keys using imported statement lines."""
+    out: dict[str, str] = {}
+    for house in FINANCE_HOUSE_KEYS:
+        data = _load_finance_house(table, house)
+        for ln in data.get("lines") or []:
+            if not isinstance(ln, dict):
+                continue
+            raw_key = ln.get("sourceAssetKey")
+            if isinstance(raw_key, str) and raw_key.strip():
+                out.setdefault(raw_key.strip(), house)
+    return out
+
+
+def _enrich_scan_items_asset_meta(
+    items: list[dict[str, Any]],
+    *,
+    table: Any,
+    bucket: str,
+) -> list[dict[str, Any]]:
+    """Augment ASSET# / META rows for admin list views.
+
+    Older items may omit ``uploadedAt`` / ``house``; we recover ``house`` from
+    finance statement lines and timestamps from S3 ``LastModified`` when needed.
+    """
+    asset_spans: list[tuple[int, str]] = []
+    for idx, it in enumerate(items):
+        pk = it.get("pk")
+        sk = it.get("sk")
+        if not isinstance(pk, str) or not pk.startswith("ASSET#"):
+            continue
+        if sk != "META":
+            continue
+        s3_key = pk.removeprefix("ASSET#")
+        if not s3_key.startswith("uploads/"):
+            continue
+        asset_spans.append((idx, s3_key))
+
+    if not asset_spans:
+        return items
+
+    key_to_house: dict[str, str] = {}
+    if any(
+        not str(items[i].get("house") or "").strip() for i, _ in asset_spans
+    ):
+        key_to_house = _source_key_to_house_map(table)
+
+    out = list(items)
+    for idx, s3_key in asset_spans:
+        merged = dict(out[idx])
+        if not str(merged.get("house") or "").strip():
+            inferred = key_to_house.get(s3_key)
+            if inferred:
+                merged["house"] = inferred
+        if not str(merged.get("uploadedAt") or "").strip() and bucket:
+            try:
+                head = _s3.head_object(Bucket=bucket, Key=s3_key)
+            except ClientError:
+                head = {}
+            lm = head.get("LastModified")
+            if isinstance(lm, datetime):
+                merged["uploadedAt"] = _utc_iso_z(lm)
+        if not str(merged.get("fileName") or "").strip():
+            merged["fileName"] = os.path.basename(s3_key)
+        out[idx] = merged
+    return out
+
+
+def _persist_asset_meta_after_parse(
+    *,
+    table: Any,
+    s3_key: str,
+    house: str,
+    head: dict[str, Any],
+    file_name: str,
+    request_id: str,
+) -> None:
+    """Ensure ASSET META reflects the house and timestamps after a successful import."""
+    asset_pk = f"ASSET#{s3_key}"
+    last_mod = head.get("LastModified")
+    if isinstance(last_mod, datetime):
+        uploaded_at = _utc_iso_z(last_mod)
+    else:
+        uploaded_at = _utc_iso_z(datetime.now(timezone.utc))
+    try:
+        table.update_item(
+            Key={"pk": asset_pk, "sk": "META"},
+            UpdateExpression=(
+                "SET house = :house, "
+                "uploadedAt = if_not_exists(uploadedAt, :ua), "
+                "fileName = if_not_exists(fileName, :fn)"
+            ),
+            ExpressionAttributeValues={
+                ":house": house,
+                ":ua": uploaded_at,
+                ":fn": file_name,
+            },
+            ConditionExpression="attribute_exists(pk)",
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code == "ConditionalCheckFailedException":
+            _log_event(
+                "warning",
+                tag="asset_meta_parse_merge_skipped",
+                reason="no_meta_row",
+                key=s3_key[:512],
+                request_id=request_id,
+            )
+            return
+        raise
+
+
 def _finance_sheet_ddb_key(sheet_slug: str) -> dict[str, str]:
     return {"pk": f"FINANCE#sheet#{sheet_slug}", "sk": "STATE"}
 
@@ -900,6 +1013,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             kwargs["ExclusiveStartKey"] = start_key
         result = table.scan(**kwargs)
         items = [_from_ddb(i) for i in result.get("Items", [])]
+        bucket = os.environ.get("ASSETS_BUCKET_NAME") or ""
+        items = _enrich_scan_items_asset_meta(items, table=table, bucket=bucket)
         last = result.get("LastEvaluatedKey")
         next_cursor = _encode_cursor(last) if last else None
         return _json_response(
@@ -1233,6 +1348,14 @@ def _handle_parse_statement(
 
     ddb_item = {**_finance_ddb_key(house), **_to_ddb_nested(normalized)}
     table.put_item(Item=ddb_item)
+    _persist_asset_meta_after_parse(
+        table=table,
+        s3_key=s3_key,
+        house=house,
+        head=head,
+        file_name=file_name,
+        request_id=_request_id(event),
+    )
     _audit(user_sub, "FINANCE_PARSE_STATEMENT", f"{house}|{s3_key}", event)
 
     return _json_response(
