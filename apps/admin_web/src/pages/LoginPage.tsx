@@ -48,24 +48,25 @@ export function LoginPage() {
 
   return (
     <div className="min-vh-100 d-flex align-items-center justify-content-center p-3 bg-light">
-      <div className="card shadow-sm" style={{ maxWidth: "420px", width: "100%" }}>
-        <div className="card-body p-4">
-          {deniedMessage ? (
-            <div className="alert alert-danger small" role="alert">
-              {deniedMessage}
-            </div>
-          ) : null}
-          <div className="d-grid gap-2">
-            <button
-              type="button"
-              className="btn btn-primary btn-lg d-inline-flex align-items-center justify-content-center gap-2"
-              onClick={() => void loginWithGoogle()}
-              aria-label="Sign in with Google"
-            >
-              <span>Sign in with</span>
-              <GoogleGLogo />
-            </button>
+      <div
+        className="d-flex flex-column gap-3 align-items-stretch w-100"
+        style={{ maxWidth: "420px" }}
+      >
+        {deniedMessage ? (
+          <div className="alert alert-danger small mb-0" role="alert">
+            {deniedMessage}
           </div>
+        ) : null}
+        <div className="d-grid">
+          <button
+            type="button"
+            className="btn btn-primary btn-lg d-inline-flex align-items-center justify-content-center gap-2"
+            onClick={() => void loginWithGoogle()}
+            aria-label="Sign in with Google"
+          >
+            <span>Sign in with</span>
+            <GoogleGLogo />
+          </button>
         </div>
       </div>
     </div>
