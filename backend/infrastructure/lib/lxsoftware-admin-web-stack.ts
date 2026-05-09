@@ -9,6 +9,19 @@ import type { Construct } from "constructs";
 export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
   /** Admin HTTP API origin (https://{api-id}.execute-api.{region}.amazonaws.com) for CSP connect-src */
   readonly cspApiConnectOrigin: string;
+  /**
+   * Space-delimited origins for the private assets bucket the admin SPA
+   * uploads PDFs / images to via presigned POST. Must include **both**:
+   *
+   *   * `https://<bucket>.s3.amazonaws.com`          (legacy global virtual-hosted)
+   *   * `https://<bucket>.s3.<region>.amazonaws.com` (regional virtual-hosted)
+   *
+   * boto3 in the admin Lambda (default config) currently signs the legacy
+   * global form; a future SDK / endpoint upgrade may switch to the regional
+   * form without notice. Allow-listing both prevents the browser CSP from
+   * blocking the upload `fetch()` either way.
+   */
+  readonly cspAssetsConnectOrigins: string;
 }
 
 /**
@@ -124,6 +137,8 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
       cspCognitoConnectOrigin.valueAsString,
       " ",
       props.cspApiConnectOrigin,
+      " ",
+      props.cspAssetsConnectOrigins,
       "; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
     ]);
 

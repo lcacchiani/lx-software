@@ -56,12 +56,23 @@ not wire it today.
 ## Content Security Policy
 
 CloudFront attaches a response headers policy including a strict **CSP** whose
-`connect-src` includes the SPA origin, the Cognito OAuth origin, and the
-execute-api origin. The Cognito origin is the stack parameter
-`CspCognitoConnectOrigin` on `lxsoftware-admin-web` (set via
-`lxsoftware-admin-web:CspCognitoConnectOrigin` in `CDK_PARAM_FILE`, e.g.
-`https://auth.example.com`). The API URL still comes from a cross-stack
-reference to `lxsoftware`. When either URL changes, redeploy `lxsoftware-admin-web`.
+`connect-src` includes the SPA origin, the Cognito OAuth origin, the
+execute-api origin, **and both endpoint forms of the private assets bucket**
+(`https://<bucket>.s3.amazonaws.com` and
+`https://<bucket>.s3.<region>.amazonaws.com`). The two assets-bucket origins
+are required because the admin SPA uploads PDF statements directly to S3 via
+presigned POST: boto3 in the admin Lambda (default config) currently signs
+the legacy global virtual-hosted form, but a future SDK upgrade may switch to
+the regional one — allow-listing both prevents browsers from blocking the
+upload `fetch()` either way (Safari surfaces this as `Load failed`, Chrome as
+`Failed to fetch`).
+
+The Cognito origin is the stack parameter `CspCognitoConnectOrigin` on
+`lxsoftware-admin-web` (set via `lxsoftware-admin-web:CspCognitoConnectOrigin`
+in `CDK_PARAM_FILE`, e.g. `https://auth.example.com`). The API and the two
+assets-bucket origins come from cross-stack references to `lxsoftware`. When
+any of those URLs changes, redeploy `lxsoftware-admin-web` and invalidate
+the CloudFront distribution so browsers pick up the refreshed CSP header.
 
 ## IAM
 
