@@ -102,4 +102,36 @@ describe("existingImportedStatementBasenames", () => {
     expect(names.has("Other.PDF")).toBe(true);
     expect(names.has("uploads")).toBe(false);
   });
+
+  it("excludes a line when excludeLineId matches", () => {
+    const data = minimalHouse({
+      lines: [
+        {
+          id: "keep",
+          dateUtc: "2026-01-01T00:00:00.000Z",
+          type: "expenditure",
+          description: "A",
+          netAmount: 1,
+          vat: 0,
+          grossAmount: 1,
+          currency: "HKD",
+          sourceAssetKey: "uploads/sub/abc/Dup.pdf",
+        },
+        {
+          id: "exclude-me",
+          dateUtc: "2026-01-02T00:00:00.000Z",
+          type: "expenditure",
+          description: "B",
+          netAmount: 2,
+          vat: 0,
+          grossAmount: 2,
+          currency: "HKD",
+          sourceAssetKey: "uploads/sub/xyz/Other.pdf",
+        },
+      ],
+    });
+    expect([...existingImportedStatementBasenames(data, "exclude-me")]).toEqual([
+      "Dup.pdf",
+    ]);
+  });
 });
