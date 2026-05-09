@@ -66,7 +66,7 @@ function dedupeAssetKeys(keys: readonly string[]): string[] {
   return out;
 }
 
-/** Opens stored statement files via the shared download-url helper. */
+/** Opens stored statement files in a new tab via a presigned URL (same pattern as Assets). */
 function StatementAssetLaunchButton({
   assetKey,
   openingPdfKey,
@@ -398,20 +398,13 @@ export function HouseStatementPanel({
   }
 
   function openStatementPdf(assetKey: string) {
-    const tab = window.open("", "_blank", "noopener,noreferrer");
-    if (!tab) {
-      window.alert(
-        "Your browser blocked the new tab. Allow popups for this site to open attachments.",
-      );
-      return;
-    }
     setOpeningPdfKey(assetKey);
     void fetchAssetDownloadUrl(assetKey)
       .then((url) => {
-        tab.location.href = url;
+        // Same as Assets: open URL directly; blank+noopener tabs often get a null handle.
+        window.open(url, "_blank", "noopener,noreferrer");
       })
       .catch((err) => {
-        tab.close();
         const msg =
           err instanceof AdminApiError
             ? err.responseBody || err.message
