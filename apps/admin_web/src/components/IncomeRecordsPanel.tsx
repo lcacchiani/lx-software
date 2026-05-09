@@ -81,20 +81,16 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
   const [lineForm, setLineForm] = useState<LineFormState>(() => emptyForm());
   const [tableFilter, setTableFilter] = useState("");
 
-  const sorted = useMemo(() => {
-    return [...records].sort((a, b) => a.description.localeCompare(b.description));
-  }, [records]);
-
   const filtered = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
-    if (!q) return sorted;
-    return sorted.filter((r) => {
+    if (!q) return [...records];
+    return records.filter((r) => {
       const hay = [r.category, r.description, r.currency, String(r.amount)]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [sorted, tableFilter]);
+  }, [records, tableFilter]);
 
   function resetForm() {
     setEditingId(null);
@@ -276,7 +272,7 @@ export function IncomeRecordsPanel({ records, onPatch }: IncomeRecordsPanelProps
             <AdminDataTableEmptyRow
               colSpan={COL_SPAN}
               message={
-                sorted.length ? "No records match the filter." : "No income records yet."
+                records.length ? "No records match the filter." : "No income records yet."
               }
             />
           )}
