@@ -144,24 +144,20 @@ jobs:
             "${PUBLIC_PARAM_ARGS[@]}" \
             "$PUBLIC_STACK"
 
-          # Drop the legacy Cognito UserPoolDomain cross-stack export before updating
-          # `lxsoftware` (custom domain / L1 domain resources change exports).
+          # Backend + admin SPA: Cognito/Dynamo/API + CloudFront. The two stacks
+          # are listed in dependency order; CDK additionally honours the
+          # cross-stack import graph automatically, so `lxsoftware` is always
+          # updated *first* (publishing any new Outputs / cross-stack exports it
+          # introduces) before `lxsoftware-admin-web` consumes them.
           #
-          # `--exclusively` is required: without it, CDK pulls `lxsoftware` into the
-          # deploy as a dependency (because admin-web imports HttpApi from it), which
-          # would build a `lxsoftware` changeset using the *new* template but with the
-          # `lxsoftware:*` parameters defaulted to empty (we only forward
-          # `lxsoftware-admin-web:*` here). That causes Cognito conditional resources
-          # to flip to the prefix-domain branch and clash with the existing
-          # `lxsoftware-admin-auth` Cognito domain. The cross-stack import resolves
-          # against the *already-deployed* lxsoftware exports, so it is safe to skip.
-          npx cdk deploy --require-approval never --exclusively \
-            "${ADMIN_WEB_PARAM_ARGS[@]}" \
-            --parameters lxsoftware-admin-web:AdminWebDomainName=admin.lx-software.com \
-            --parameters "lxsoftware-admin-web:AdminWebCertificateArn=${P_ACM_CERT_ARN}" \
-            lxsoftware-admin-web
-
-          # Backend + admin SPA: Cognito/Dynamo/API + CloudFront (CSP still imports HTTP API URL).
+          # We deliberately do NOT use `--exclusively` here: that flag would skip
+          # `lxsoftware` and CloudFormation would then fail to resolve any new
+          # `Fn::ImportValue` references admin-web added in the same PR (e.g. the
+          # AssetsBucket DomainName / RegionalDomainName exports added for the
+          # CSP connect-src allow-list). All `lxsoftware:*` AND
+          # `lxsoftware-admin-web:*` parameters are forwarded together, so the
+          # earlier two-phase split (originally added to drop a stale
+          # UserPoolDomain export, since cleaned up) is no longer needed.
           npx cdk deploy --require-approval never \
             "${ADMIN_LX_PARAM_ARGS[@]}" \
             "${ADMIN_WEB_PARAM_ARGS[@]}" \
