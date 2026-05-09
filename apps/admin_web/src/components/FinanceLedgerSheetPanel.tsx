@@ -119,8 +119,13 @@ export function FinanceLedgerSheetPanel({
 
   const convertedTotal = useMemo(() => {
     if (records.length === 0) return null;
-    if (needsFx && !ratesQuery.isSuccess) return null;
-    const map = needsFx ? ratesQuery.data.rateByQuote : new Map<string, number>();
+    let map: ReadonlyMap<string, number> = new Map();
+    if (needsFx) {
+      if (!ratesQuery.isSuccess) return null;
+      const ratePayload = ratesQuery.data;
+      if (!ratePayload) return null;
+      map = ratePayload.rateByQuote;
+    }
     try {
       return records.reduce(
         (sum, r) => sum + convertAmountToBase(r.amount, r.currency, totalDisplayCurrency, map),
