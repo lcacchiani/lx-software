@@ -11,7 +11,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs, quote
@@ -68,6 +68,70 @@ def _normalize_public_asset_key(raw: Any) -> str | None:
     if not key or ".." in key or not key.startswith("uploads/"):
         return None
     return key
+
+
+def _asset_download_presigned_response(
+    event: dict[str, Any],
+    user_sub: str | None,
+    raw_key: Any,
+) -> dict[str, Any]:
+    """Issue a presigned GET for a confirmed asset (GET ?key=… or POST JSON body).
+
+    Any admin may download any confirmed uploads/* object so statement lines and
+    the Assets page work across uploaders.
+    """
+    norm = _normalize_public_asset_key(raw_key)
+    if norm is None:
+        return _json_response(400, {"message": "key is required"})
+    table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    meta = table.get_item(Key={"pk": f"ASSET#{norm}", "sk": "META"})
+    if "Item" not in meta:
+        _log_event(
+            "warning",
+            tag="asset_download_url_rejected",
+            reason="not_confirmed",
+            sub=user_sub,
+            key=norm[:512],
+            request_id=_request_id(event),
+        )
+        return _json_response(404, {"message": "Asset not found"})
+    bucket = os.environ["ASSETS_BUCKET_NAME"]
+    try:
+        head_dl = _s3.head_object(Bucket=bucket, Key=norm)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            _log_event(
+                "warning",
+                tag="asset_download_url_missing_object",
+                sub=user_sub,
+                key=norm[:512],
+                s3_error_code=code,
+                request_id=_request_id(event),
+            )
+            return _json_response(
+                404, {"message": "Object not found in bucket"}
+            )
+        raise
+    params: dict[str, Any] = {"Bucket": bucket, "Key": norm}
+    ct_dl = head_dl.get("ContentType")
+    if isinstance(ct_dl, str) and ct_dl.strip():
+        params["ResponseContentType"] = ct_dl.strip()
+    url = _s3.generate_presigned_url(
+        "get_object",
+        Params=params,
+        ExpiresIn=300,
+    )
+    _log_event(
+        "info",
+        tag="asset_download_url_issued",
+        sub=user_sub,
+        key=norm[:512],
+        expires_in_seconds=300,
+        request_id=_request_id(event),
+    )
+    _audit(user_sub, "ASSET_DOWNLOAD_URL", norm, event)
+    return _json_response(200, {"url": url, "expiresIn": 300})
 
 
 def _json_response(
@@ -183,6 +247,14 @@ def _decode_cursor(raw: str) -> dict[str, Any] | None:
         return json.loads(blob.decode("utf-8"))
     except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _utc_iso_z(dt: datetime) -> str:
+    """Format an aware or naive datetime as UTC with millisecond precision."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    utc = dt.astimezone(timezone.utc)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def _encode_cursor(key: dict[str, Any]) -> str:
@@ -736,6 +808,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _json_response(400, {"message": "key is required"})
         if not user_sub:
             return _json_response(400, {"message": "Missing sub claim"})
+        house_raw = body.get("house")
+        house_val: str | None = None
+        if house_raw is not None:
+            if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
+                return _json_response(
+                    400,
+                    {"message": "house must be hillmarton or morrison when provided"},
+                )
+            house_val = house_raw
         prefix = f"uploads/{user_sub}/"
         if not str(key).startswith(prefix):
             _log_event(
@@ -765,9 +846,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             raise
         size = int(head["ContentLength"])
         etag = head.get("ETag", "").strip('"')
+        last_mod = head.get("LastModified")
+        if isinstance(last_mod, datetime):
+            uploaded_at = _utc_iso_z(last_mod)
+        else:
+            uploaded_at = _utc_iso_z(datetime.now(timezone.utc))
+        file_name = os.path.basename(str(key))
         table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
         ddb_key = {"pk": f"ASSET#{key}", "sk": "META"}
-        item = {
+        item: dict[str, Any] = {
             **ddb_key,
             "size": size,
             "s3Etag": etag,
@@ -775,7 +862,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "clientSha256": body.get("sha256"),
             "clientReportedSize": body.get("size"),
             "note": "size and s3Etag are from S3 head_object; client fields are informational only",
+            "uploadedAt": uploaded_at,
+            "fileName": file_name,
         }
+        if house_val is not None:
+            item["house"] = house_val
         table.put_item(Item=_to_ddb(item))
         _log_event(
             "info",
@@ -790,56 +881,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         _audit(user_sub, "ASSET_CONFIRM", str(key), event)
         return _json_response(201, {"item": _from_ddb(item)})
 
+    if method == "GET" and path == "/assets/download-url":
+        qs = event.get("rawQueryString") or ""
+        key_param = parse_qs(qs).get("key", [""])[0]
+        return _asset_download_presigned_response(event, user_sub, key_param)
+
     if method == "POST" and path == "/assets/download-url":
         body = _parse_json_body(event)
-        key = _normalize_public_asset_key(body.get("key"))
-        if key is None:
-            return _json_response(400, {"message": "key is required"})
-        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        meta = table.get_item(Key={"pk": f"ASSET#{key}", "sk": "META"})
-        if "Item" not in meta:
-            _log_event(
-                "warning",
-                tag="asset_download_url_rejected",
-                reason="not_confirmed",
-                sub=user_sub,
-                key=key[:512],
-                request_id=_request_id(event),
-            )
-            return _json_response(404, {"message": "Asset not found"})
-        bucket = os.environ["ASSETS_BUCKET_NAME"]
-        try:
-            _s3.head_object(Bucket=bucket, Key=key)
-        except ClientError as exc:
-            code = exc.response.get("Error", {}).get("Code", "")
-            if code in ("404", "NoSuchKey", "NotFound"):
-                _log_event(
-                    "warning",
-                    tag="asset_download_url_missing_object",
-                    sub=user_sub,
-                    key=key[:512],
-                    s3_error_code=code,
-                    request_id=_request_id(event),
-                )
-                return _json_response(
-                    404, {"message": "Object not found in bucket"}
-                )
-            raise
-        url = _s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=300,
-        )
-        _log_event(
-            "info",
-            tag="asset_download_url_issued",
-            sub=user_sub,
-            key=key[:512],
-            expires_in_seconds=300,
-            request_id=_request_id(event),
-        )
-        _audit(user_sub, "ASSET_DOWNLOAD_URL", key, event)
-        return _json_response(200, {"url": url, "expiresIn": 300})
+        return _asset_download_presigned_response(event, user_sub, body.get("key"))
 
     if method == "GET" and path == "/records":
         qs = event.get("rawQueryString") or ""

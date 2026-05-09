@@ -8,6 +8,11 @@ export interface AdminAssetMeta {
   readonly clientSha256?: string;
   readonly size?: number;
   readonly ownerSub?: string;
+  /** ISO 8601 UTC instant from S3 LastModified when the asset was confirmed. */
+  readonly uploadedAt?: string;
+  readonly fileName?: string;
+  /** Finance house key when the upload was tied to a house statement import. */
+  readonly house?: string;
 }
 
 export function useAdminAssets() {
