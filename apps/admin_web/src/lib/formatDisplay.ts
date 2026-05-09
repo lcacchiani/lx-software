@@ -73,3 +73,17 @@ export function formatDateTimeHKT(iso: string): string {
 
   return `${month} ${day}, ${year} at ${hour}:${minute}${dayPeriod} HKT`;
 }
+
+/** Calendar date in UTC (no time), e.g. `May 26, 2026`. */
+export function formatDateUtc(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return "—";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
+}

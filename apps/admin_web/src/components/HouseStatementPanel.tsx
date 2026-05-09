@@ -10,7 +10,7 @@ import {
   type HouseKey,
   type HouseStatementLine,
 } from "../lib/financeModel";
-import { formatDateTimeHKT } from "../lib/formatDisplay";
+import { formatDateUtc } from "../lib/formatDisplay";
 import { useParseStatement } from "../hooks/useParseStatement";
 import {
   AdminDataTable,
@@ -18,7 +18,6 @@ import {
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
-  DateTimeDisplay,
   MoneyAmount,
   TableIconButton,
 } from "./ui";
@@ -94,7 +93,7 @@ export type HouseStatementPanelProps = {
 };
 
 const TABLE_COLUMNS: AdminDataTableColumn[] = [
-  { key: "when", header: "Date & time (HKT)", className: "small" },
+  { key: "when", header: "Date (UTC)", className: "small" },
   { key: "type", header: "Type", className: "small" },
   { key: "desc", header: "Description", className: "small" },
   {
@@ -186,7 +185,8 @@ export function HouseStatementPanel({
         String(line.netAmount),
         String(line.vat),
         String(line.grossAmount),
-        formatDateTimeHKT(line.dateUtc),
+        line.dateUtc.slice(0, 10),
+        formatDateUtc(line.dateUtc),
       ]
         .join(" ")
         .toLowerCase();
@@ -573,8 +573,8 @@ export function HouseStatementPanel({
           {filteredLines.length ? (
             filteredLines.map((line) => (
               <tr key={line.id}>
-                <td className="small">
-                  <DateTimeDisplay iso={line.dateUtc} />
+                <td className="small text-nowrap">
+                  {formatDateUtc(line.dateUtc)}
                 </td>
                 <td className="small">
                   <span
