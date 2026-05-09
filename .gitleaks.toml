@@ -1,0 +1,16 @@
+# Gitleaks overrides for this repository.
+#
+# The default ``generic-api-key`` rule matches unittest keyword arguments like
+# ``object_key="..."`` in ``backend/lambda/admin/test_inbound_email_handler.py``
+# (S3 path fixtures). That is a false positive; do not put real secrets in this
+# file—the allowlist exists only to silence that pattern in history/PR scans.
+title = "lx-software"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "False positive: generic-api-key vs unittest kwargs in inbound mail S3 path tests"
+paths = [
+  '''backend/lambda/admin/test_inbound_email_handler\.py''',
+]
