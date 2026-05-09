@@ -212,6 +212,7 @@ export function useParseStatement(house: HouseKey) {
         method: "POST",
         body: JSON.stringify({
           key: upload.key,
+          house,
           size: file.size,
           ...(sha256 ? { sha256 } : {}),
         }),

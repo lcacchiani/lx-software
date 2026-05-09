@@ -3,6 +3,7 @@
 import sys
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 
@@ -33,6 +34,7 @@ from handler import (  # noqa: E402
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _statement_basename_already_imported,
+    _utc_iso_z,
 )
 
 
@@ -249,6 +251,27 @@ class TestUploadContentTypeAllowList(unittest.TestCase):
         self.assertFalse(_is_allowed_upload_content_type("text/plain"))
         self.assertFalse(_is_allowed_upload_content_type(""))
         self.assertFalse(_is_allowed_upload_content_type(None))  # type: ignore[arg-type]
+
+
+class TestUtcIsoZ(unittest.TestCase):
+    def test_naive_treated_as_utc(self) -> None:
+        self.assertEqual(
+            _utc_iso_z(datetime(2026, 5, 9, 12, 0, 0, 123000)),
+            "2026-05-09T12:00:00.123Z",
+        )
+
+    def test_offset_converts_to_utc(self) -> None:
+        dt = datetime(
+            2026,
+            5,
+            9,
+            14,
+            30,
+            0,
+            0,
+            tzinfo=timezone(timedelta(hours=2)),
+        )
+        self.assertEqual(_utc_iso_z(dt), "2026-05-09T12:30:00.000Z")
 
 
 class TestStatementBasenameDuplicate(unittest.TestCase):

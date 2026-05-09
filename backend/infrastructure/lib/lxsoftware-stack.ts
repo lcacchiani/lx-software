@@ -417,6 +417,13 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     this.httpApi.addRoutes({
+      path: "/assets/download-url",
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
       path: "/records",
       methods: [
         apigwv2.HttpMethod.GET,

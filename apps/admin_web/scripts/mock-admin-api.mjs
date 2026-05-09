@@ -1,5 +1,6 @@
 // Mock admin API for local UI demos. Run with: node scripts/mock-admin-api.mjs
 import { createServer } from "node:http";
+import { URL } from "node:url";
 
 const PORT = 3001;
 
@@ -178,14 +179,40 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && req.url === "/assets/confirm") {
     const body = await readJson(req);
+    const segments = String(body.key ?? "").split("/");
+    const baseName = segments[segments.length - 1] || "file";
     return send(res, 201, {
       item: {
         pk: `ASSET#${body.key}`,
         sk: "META",
         size: body.size ?? 0,
         clientSha256: body.sha256 ?? null,
+        uploadedAt: new Date().toISOString(),
+        fileName: baseName,
+        ...(body.house ? { house: body.house } : {}),
       },
     });
+  }
+
+  if (req.method === "GET") {
+    let pathname = "";
+    try {
+      pathname = new URL(req.url ?? "", `http://127.0.0.1:${PORT}`).pathname;
+    } catch {
+      pathname = "";
+    }
+    if (pathname === "/assets/download-url") {
+      const u = new URL(req.url ?? "", `http://127.0.0.1:${PORT}`);
+      const key = u.searchParams.get("key");
+      if (!key) {
+        return send(res, 400, {
+          message: "key query parameter is required",
+        });
+      }
+      return send(res, 200, {
+        url: `https://example.com/mock-asset-download?key=${encodeURIComponent(key)}`,
+      });
+    }
   }
 
   let parseHouse = null;
