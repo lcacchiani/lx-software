@@ -104,6 +104,14 @@ CloudFront.
    under `ASSET#...` / `META`.
 7. Sign out, reload, and confirm you return to the login screen.
 
+## Operating
+
+For investigating production issues from CloudWatch, S3 access logs, and the
+admin DynamoDB tables using the `cursor-cloud-agent` IAM identity, see
+[`docs/deployment/cloud-agent-iam.md`](./cloud-agent-iam.md). That document
+lists the exact inline IAM policy needed and the AWS CLI / Console commands
+to attach it.
+
 ## Scripts
 
 Local or CI deploy of static files after a build:

@@ -139,6 +139,24 @@ def _audit(user_sub: str | None, action: str, target: str, event: dict[str, Any]
         pass
 
 
+def _log_event(level: str, **fields: Any) -> None:
+    """Emit a single-line JSON log row.
+
+    All non-`tag` fields are PII-safe scalars (sub, content type, S3 key,
+    sizes, error codes, request id). Used by the asset upload + statement
+    parse endpoints so a future "the upload silently failed" report can be
+    diagnosed from CloudWatch alone, without needing the user's browser.
+    """
+    payload = {k: v for k, v in fields.items() if v is not None}
+    line = json.dumps(payload, default=str)
+    if level == "warning":
+        logger.warning(line)
+    elif level == "error":
+        logger.error(line)
+    else:
+        logger.info(line)
+
+
 def _decode_cursor(raw: str) -> dict[str, Any] | None:
     if not raw:
         return None
@@ -429,6 +447,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 400, {"message": "filename and contentType are required"}
             )
         if not _is_allowed_upload_content_type(str(content_type)):
+            _log_event(
+                "warning",
+                tag="asset_upload_url_rejected",
+                reason="unsupported_content_type",
+                sub=user_sub,
+                content_type_raw=str(content_type)[:128],
+                request_id=_request_id(event),
+            )
             return _json_response(
                 400,
                 {
@@ -453,6 +479,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             content_type_condition,
             ["eq", "$key", object_key],
         ]
+        # NOTE: the form field carries the *raw* client-supplied casing while
+        # the explicit `eq` condition is hardcoded lowercase. S3 evaluates
+        # `eq` case-sensitively, so a non-canonical client casing (e.g.
+        # "Application/PDF") will result in the browser POST being rejected
+        # with HTTP 403 / `<Code>AccessDenied</Code>` even though
+        # /assets/upload-url returned 200. Logged below so CloudWatch can
+        # show the gap without having to reproduce in a browser.
         fields = {"Content-Type": str(content_type), "key": object_key}
         post = _s3.generate_presigned_post(
             Bucket=bucket,
@@ -460,6 +493,23 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             Fields=fields,
             Conditions=conditions,
             ExpiresIn=300,
+        )
+        _log_event(
+            "info",
+            tag="asset_upload_url_issued",
+            sub=user_sub,
+            key=object_key,
+            content_type_raw=str(content_type)[:128],
+            content_type_normalized=normalized_ct[:128],
+            content_type_matches_policy=(
+                str(content_type) == normalized_ct
+                if normalized_ct == "application/pdf"
+                else str(content_type).lower().startswith("image/")
+            ),
+            policy_content_type_rule=" ".join(str(part) for part in content_type_condition),
+            max_bytes=max_bytes,
+            expires_in_seconds=300,
+            request_id=_request_id(event),
         )
         _audit(user_sub, "ASSET_UPLOAD_URL", object_key, event)
         return _json_response(200, {"upload": post, "key": object_key})
@@ -473,6 +523,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _json_response(400, {"message": "Missing sub claim"})
         prefix = f"uploads/{user_sub}/"
         if not str(key).startswith(prefix):
+            _log_event(
+                "warning",
+                tag="asset_confirm_rejected",
+                reason="prefix_mismatch",
+                sub=user_sub,
+                key=str(key)[:512],
+                request_id=_request_id(event),
+            )
             return _json_response(400, {"message": "Invalid key for this user"})
         bucket = os.environ["ASSETS_BUCKET_NAME"]
         try:
@@ -480,6 +538,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "")
             if code in ("404", "NoSuchKey", "NotFound"):
+                _log_event(
+                    "warning",
+                    tag="asset_confirm_not_in_bucket",
+                    sub=user_sub,
+                    key=str(key)[:512],
+                    s3_error_code=code,
+                    request_id=_request_id(event),
+                )
                 return _json_response(400, {"message": "Object not found in bucket"})
             raise
         size = int(head["ContentLength"])
@@ -496,6 +562,16 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "note": "size and s3Etag are from S3 head_object; client fields are informational only",
         }
         table.put_item(Item=_to_ddb(item))
+        _log_event(
+            "info",
+            tag="asset_confirm_ok",
+            sub=user_sub,
+            key=str(key)[:512],
+            size_bytes=size,
+            client_reported_size=body.get("size"),
+            has_client_sha256=bool(body.get("sha256")),
+            request_id=_request_id(event),
+        )
         _audit(user_sub, "ASSET_CONFIRM", str(key), event)
         return _json_response(201, {"item": _from_ddb(item)})
 
@@ -678,20 +754,49 @@ def _handle_parse_statement(
     reuse the response to refresh local state without an extra GET.
     """
     bucket = os.environ["ASSETS_BUCKET_NAME"]
+    _log_event(
+        "info",
+        tag="parse_statement_start",
+        sub=user_sub,
+        house=house,
+        key=s3_key[:512],
+        request_id=_request_id(event),
+    )
     try:
         head = _s3.head_object(Bucket=bucket, Key=s3_key)
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in ("404", "NoSuchKey", "NotFound"):
+            _log_event(
+                "warning",
+                tag="parse_statement_not_in_bucket",
+                sub=user_sub,
+                house=house,
+                key=s3_key[:512],
+                s3_error_code=code,
+                request_id=_request_id(event),
+            )
             raise _ParseStatementError(400, "Object not found in bucket") from exc
         raise
 
     content_type = head.get("ContentType") or ""
     file_name = os.path.basename(s3_key)
+    object_size = int(head.get("ContentLength") or 0)
 
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
     house_data = _load_finance_house(table, house)
     default_currency = house_data.get("defaultCurrency", DEFAULT_FINANCE_CURRENCY)
+    _log_event(
+        "info",
+        tag="parse_statement_object_loaded",
+        sub=user_sub,
+        house=house,
+        key=s3_key[:512],
+        object_content_type=content_type[:128],
+        object_size_bytes=object_size,
+        default_currency=default_currency,
+        request_id=_request_id(event),
+    )
 
     # Lazy-import the parser so unit tests can stub urllib without paying
     # the import cost on unrelated routes.
@@ -708,16 +813,14 @@ def _handle_parse_statement(
             default_currency=default_currency,
         )
     except RuntimeError as exc:
-        logger.warning(
-            json.dumps(
-                {
-                    "tag": "parse_statement_failed",
-                    "house": house,
-                    "key": s3_key,
-                    "error": str(exc),
-                    "request_id": _request_id(event),
-                }
-            )
+        _log_event(
+            "warning",
+            tag="parse_statement_failed",
+            sub=user_sub,
+            house=house,
+            key=s3_key[:512],
+            error=str(exc)[:500],
+            request_id=_request_id(event),
         )
         raise _ParseStatementError(502, f"Statement parser failed: {exc}") from exc
 
@@ -727,6 +830,16 @@ def _handle_parse_statement(
         if not isinstance(raw_line, dict):
             continue
         new_lines.append({**raw_line, "id": uuid.uuid4().hex, "sourceAssetKey": s3_key})
+    _log_event(
+        "info",
+        tag="parse_statement_extracted",
+        sub=user_sub,
+        house=house,
+        key=s3_key[:512],
+        added_lines=len(new_lines),
+        existing_lines=len(house_data.get("lines", []) or []),
+        request_id=_request_id(event),
+    )
 
     merged_payload = {
         "defaultCurrency": house_data.get("defaultCurrency", DEFAULT_FINANCE_CURRENCY),
