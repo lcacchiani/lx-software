@@ -30,6 +30,7 @@ from handler import (  # noqa: E402
     _is_allowed_upload_content_type,
     _normalize_finance_payload,
     _normalize_ledger_sheet_payload,
+    _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _statement_basename_already_imported,
 )
@@ -324,6 +325,29 @@ class TestParseStatementHousePath(unittest.TestCase):
             _path_finance_house_for_parse({}, "/finance/morrison")
         )
         self.assertIsNone(_path_finance_house_for_parse({}, "/something"))
+
+
+class TestFxV2RatesQuery(unittest.TestCase):
+    def test_requires_base(self) -> None:
+        self.assertEqual(_parse_fx_v2_rates_query(None), "base is required")
+        self.assertEqual(_parse_fx_v2_rates_query({}), "base is required")
+        self.assertEqual(
+            _parse_fx_v2_rates_query({"quotes": "USD"}), "base is required"
+        )
+
+    def test_supported_and_sorted(self) -> None:
+        base, need = _parse_fx_v2_rates_query({"base": "hkd", "quotes": "USD,EUR"})
+        self.assertEqual(base, "HKD")
+        self.assertEqual(need, ["EUR", "USD"])
+
+    def test_drops_base_from_quotes(self) -> None:
+        base, need = _parse_fx_v2_rates_query({"base": "HKD", "quotes": "HKD,USD"})
+        self.assertEqual(base, "HKD")
+        self.assertEqual(need, ["USD"])
+
+    def test_rejects_unsupported(self) -> None:
+        err = _parse_fx_v2_rates_query({"base": "HKD", "quotes": "JPY"})
+        self.assertIsInstance(err, str)
 
 
 if __name__ == "__main__":
