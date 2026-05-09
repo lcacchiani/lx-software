@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { adminFetchJson } from "../lib/apiAdminClient";
+import { AdminApiError, adminFetchJson } from "../lib/apiAdminClient";
 import {
   DEFAULT_FINANCE_STATE,
   normalizeHouseFinanceData,
@@ -7,6 +7,37 @@ import {
   type HouseFinanceData,
   type HouseKey,
 } from "../lib/financeModel";
+
+const DUPLICATE_STATEMENT_BASE_MSG =
+  "Remove its imported lines or rename the file, then try again.";
+
+/** Collects exact filenames (S3 key basenames) already used by imported lines. */
+export function existingImportedStatementBasenames(
+  data: HouseFinanceData,
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const line of data.lines) {
+    const key = line.sourceAssetKey?.trim();
+    if (!key) continue;
+    const parts = key.split("/");
+    const base = parts[parts.length - 1];
+    if (base) out.add(base);
+  }
+  return out;
+}
+
+function adminErrorJsonMessage(err: unknown): string | null {
+  if (!(err instanceof AdminApiError)) return null;
+  try {
+    const parsed = JSON.parse(err.responseBody) as { message?: unknown };
+    if (typeof parsed.message === "string" && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    /* ignore malformed JSON */
+  }
+  return null;
+}
 
 type PresignedUpload = {
   readonly url: string;
@@ -141,6 +172,16 @@ export function useParseStatement(house: HouseKey) {
         throw new Error("Only PDF or image statements are supported.");
       }
 
+      const financeState = qc.getQueryData<FinancePersistedState>(["finance"]);
+      if (financeState) {
+        const basenames = existingImportedStatementBasenames(financeState[house]);
+        if (basenames.has(file.name)) {
+          throw new Error(
+            `A statement file named "${file.name}" was already imported for this house. ${DUPLICATE_STATEMENT_BASE_MSG}`,
+          );
+        }
+      }
+
       console.info("[useParseStatement] start", {
         house,
         fileName: file.name,
@@ -180,13 +221,20 @@ export function useParseStatement(house: HouseKey) {
         size: file.size,
       });
 
-      const parsed = await adminFetchJson<ParseStatementResponse>(
-        `/finance/${house}/parse-statement`,
-        {
-          method: "POST",
-          body: JSON.stringify({ key: upload.key }),
-        },
-      );
+      let parsed: ParseStatementResponse;
+      try {
+        parsed = await adminFetchJson<ParseStatementResponse>(
+          `/finance/${house}/parse-statement`,
+          {
+            method: "POST",
+            body: JSON.stringify({ key: upload.key }),
+          },
+        );
+      } catch (err) {
+        const apiMsg = adminErrorJsonMessage(err);
+        if (apiMsg) throw new Error(apiMsg);
+        throw err;
+      }
       console.info("[useParseStatement] /parse-statement ok", {
         key: upload.key,
         addedLines: parsed.addedLines,

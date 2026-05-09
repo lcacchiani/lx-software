@@ -897,6 +897,21 @@ def _path_finance_house_for_parse(event: dict[str, Any], path: str) -> str | Non
     return None
 
 
+def _statement_basename_already_imported(
+    house_data: dict[str, Any], basename: str
+) -> bool:
+    """True if any finance line was extracted from an asset with this exact filename."""
+    for ln in house_data.get("lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        key = ln.get("sourceAssetKey")
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if os.path.basename(key.strip()) == basename:
+            return True
+    return False
+
+
 def _handle_parse_statement(
     *,
     event: dict[str, Any],
@@ -941,6 +956,20 @@ def _handle_parse_statement(
 
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
     house_data = _load_finance_house(table, house)
+    if _statement_basename_already_imported(house_data, file_name):
+        _log_event(
+            "info",
+            tag="parse_statement_duplicate_basename",
+            sub=user_sub,
+            house=house,
+            basename=file_name[:256],
+            request_id=_request_id(event),
+        )
+        raise _ParseStatementError(
+            409,
+            f"A statement file named {file_name!r} was already imported for this house. "
+            "Remove its imported lines or rename the file, then try again.",
+        )
     default_currency = house_data.get("defaultCurrency", DEFAULT_FINANCE_CURRENCY)
     _log_event(
         "info",

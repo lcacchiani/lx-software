@@ -31,6 +31,7 @@ from handler import (  # noqa: E402
     _normalize_finance_payload,
     _normalize_ledger_sheet_payload,
     _path_finance_house_for_parse,
+    _statement_basename_already_imported,
 )
 
 
@@ -247,6 +248,59 @@ class TestUploadContentTypeAllowList(unittest.TestCase):
         self.assertFalse(_is_allowed_upload_content_type("text/plain"))
         self.assertFalse(_is_allowed_upload_content_type(""))
         self.assertFalse(_is_allowed_upload_content_type(None))  # type: ignore[arg-type]
+
+
+class TestStatementBasenameDuplicate(unittest.TestCase):
+    def test_empty_lines(self) -> None:
+        self.assertFalse(
+            _statement_basename_already_imported({"lines": []}, "jan.pdf")
+        )
+
+    def test_matches_basename_only(self) -> None:
+        house = {
+            "lines": [
+                {
+                    "id": "a",
+                    "sourceAssetKey": "uploads/u1/x/BankStmt.pdf",
+                }
+            ]
+        }
+        self.assertTrue(
+            _statement_basename_already_imported(house, "BankStmt.pdf")
+        )
+        self.assertFalse(
+            _statement_basename_already_imported(house, "Other.pdf")
+        )
+
+    def test_case_sensitive(self) -> None:
+        house = {
+            "lines": [{"id": "a", "sourceAssetKey": "uploads/u/x/report.PDF"}]
+        }
+        self.assertTrue(
+            _statement_basename_already_imported(house, "report.PDF")
+        )
+        self.assertFalse(
+            _statement_basename_already_imported(house, "report.pdf")
+        )
+
+    def test_ignores_manual_lines(self) -> None:
+        house = {
+            "lines": [
+                {
+                    "id": "a",
+                    "dateUtc": "2026-05-08T12:00:00.000Z",
+                    "type": "income",
+                    "description": "Rent",
+                    "netAmount": 1,
+                    "vat": 0,
+                    "grossAmount": 1,
+                    "currency": "GBP",
+                }
+            ]
+        }
+        self.assertFalse(
+            _statement_basename_already_imported(house, "Rent.pdf")
+        )
 
 
 class TestParseStatementHousePath(unittest.TestCase):
