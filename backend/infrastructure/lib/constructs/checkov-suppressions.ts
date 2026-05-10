@@ -73,6 +73,11 @@ export class CheckovSuppressionAspect implements cdk.IAspect {
         node.addMetadata("checkov", {
           skip: [
             {
+              id: "CKV_AWS_115",
+              comment:
+                "AWS account regional concurrency limit is at the 100-unit floor (UnreservedConcurrentExecution minimum). Any positive ReservedConcurrentExecutions on these Lambdas would push the unreserved pool below the floor and CloudFormation rejects the update. Account-level concurrency monitoring + per-Lambda alarms cover this control until the regional limit is raised, at which point reservations can be re-enabled per-function.",
+            },
+            {
               id: "CKV_AWS_117",
               comment:
                 "Admin Lambdas call public HTTPS APIs (Frankfurter, OpenRouter) and AWS APIs over the public Lambda interface. VPC + NAT/VPC-endpoints adds material cost ($30+/mo) with no security benefit since AWS traffic is already TLS-internal and presigned URLs are scoped per-request.",
