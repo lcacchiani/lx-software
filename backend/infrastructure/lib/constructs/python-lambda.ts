@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
 import * as cdk from "aws-cdk-lib";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 
 export interface PythonLambdaFactoryProps {
@@ -16,6 +17,41 @@ export interface PythonLambdaFactoryProps {
   readonly memorySize?: number;
   readonly timeout?: cdk.Duration;
   readonly environment?: Record<string, string>;
+  /**
+   * KMS key used for environment variable encryption (Checkov CKV_AWS_173).
+   * When omitted, AWS-managed encryption applies and Checkov flags it.
+   */
+  readonly environmentEncryptionKey?: kms.IKey;
+  /**
+   * KMS key used for the explicit CloudWatch log group encryption
+   * (Checkov CKV_AWS_158). When omitted, the log group is unencrypted at
+   * the application layer (CloudWatch still encrypts at rest with an
+   * AWS-managed key, but Checkov flags it).
+   *
+   * The caller is responsible for granting the CloudWatch Logs service
+   * principal `kms:Encrypt*`/`Decrypt*`/`GenerateDataKey*` on the key. See
+   * `LxsoftwareStack` for the standard service-principal grant.
+   */
+  readonly logEncryptionKey?: kms.IKey;
+  /**
+   * SQS queue used for failed async invocations (Checkov CKV_AWS_116).
+   * Sharing a single DLQ across multiple low-traffic Lambdas avoids
+   * incurring an extra KMS-managed SQS queue per function.
+   */
+  readonly deadLetterQueue?: sqs.IQueue;
+  /**
+   * Reserved concurrency limit (Checkov CKV_AWS_115). Bounds blast radius
+   * if a hot loop or upstream incident triggers a runaway invocation rate.
+   * Defaults to 25 — enough headroom for the admin-only workload, low
+   * enough to leave the unreserved account pool untouched.
+   */
+  readonly reservedConcurrentExecutions?: number;
+  /**
+   * Override the log group's removal policy. Defaults to DESTROY so dev/
+   * preview stack teardowns don't leave orphan log groups; production
+   * callers can pass RETAIN for compliance retention.
+   */
+  readonly logRemovalPolicy?: cdk.RemovalPolicy;
 }
 
 function requirementsNeedPip(reqPath: string): boolean {
@@ -59,8 +95,18 @@ function tryLocalPythonBundle(entry: string, outputDir: string): boolean {
  * Creates a Python 3.12 Lambda with Docker-based bundling (recursive copy of
  * sources + pip when requirements.txt has packages). Local bundling only runs
  * when there are no pip dependencies so macOS wheels are never copied into a
- * Linux ARM runtime bundle. Uses an explicit CloudWatch LogGroup (30-day
- * retention) instead of the deprecated logRetention property.
+ * Linux ARM runtime bundle.
+ *
+ * Wires up the standard hardening expected by Checkov on every application
+ * Lambda:
+ * - Customer-managed KMS encryption for environment variables (CKV_AWS_173)
+ * - Customer-managed KMS encryption on the CloudWatch log group (CKV_AWS_158)
+ * - Reserved concurrency (CKV_AWS_115)
+ * - Async-invocation dead-letter queue (CKV_AWS_116)
+ *
+ * VPC configuration (CKV_AWS_117) is intentionally omitted — see
+ * `CheckovSuppressionAspect` in `lib/constructs/checkov-suppressions.ts`
+ * for the cost/benefit rationale.
  */
 export function createPythonLambda(
   scope: Construct,
@@ -72,7 +118,8 @@ export function createPythonLambda(
 
   const logGroup = new logs.LogGroup(scope, `${id}LogGroup`, {
     retention: logs.RetentionDays.ONE_MONTH,
-    removalPolicy: cdk.RemovalPolicy.DESTROY,
+    removalPolicy: props.logRemovalPolicy ?? cdk.RemovalPolicy.DESTROY,
+    encryptionKey: props.logEncryptionKey,
   });
 
   return new lambda.Function(scope, id, {
@@ -110,6 +157,10 @@ export function createPythonLambda(
     memorySize: props.memorySize ?? 512,
     timeout: props.timeout ?? cdk.Duration.seconds(10),
     environment: props.environment,
+    environmentEncryption: props.environmentEncryptionKey,
     logGroup,
+    deadLetterQueue: props.deadLetterQueue,
+    deadLetterQueueEnabled: props.deadLetterQueue ? true : undefined,
+    reservedConcurrentExecutions: props.reservedConcurrentExecutions ?? 25,
   });
 }

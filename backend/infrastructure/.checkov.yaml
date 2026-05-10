@@ -1,16 +1,50 @@
-# Checkov configuration for LX Software infrastructure
+# Checkov configuration for LX Software CDK infrastructure
 # https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+#
+# Two suppression mechanisms are in play:
+#
+#   1. Global `skip-check` (this file) — for checks that have no path-
+#      specific exceptions in this stack. Skipped checks never appear in
+#      the Checkov SARIF.
+#
+#   2. Per-resource in-source skips — added via CDK metadata in
+#      `lib/constructs/checkov-suppressions.ts`. The Security Scanning
+#      workflow filters these out of SARIF (`kind == "inSource"`) before
+#      upload, so they don't reach GitHub Code Scanning either.
+#
+# Prefer (2) when only specific resources should be exempt; prefer (1)
+# when the entire stack has no realistic path to comply.
+
+framework:
+  - cloudformation
+
+# Soft fail keeps the workflow green and surfaces findings via SARIF only,
+# rather than failing CI. The SARIF surface is the source of truth.
+soft-fail: true
+
+# Compact output reduces noise in the workflow log; the full per-finding
+# detail is preserved in SARIF.
+compact: true
+
+# Don't reach out to fetch external modules.
+download-external-modules: false
 
 skip-check:
-  # CKV_AWS_18: Ensure the S3 bucket has access logging enabled
-  # Justification: The CloudFrontAccessLogsBucket is the designated destination
-  # for CloudFront access logs. Enabling access logging on the logs bucket itself
-  # would create circular/infinite logging, which is an anti-pattern.
+  # CKV_AWS_18: S3 bucket access logging
+  # The CloudFront and S3 access-log destination buckets
+  # (`*AccessLogsBucket*`) are themselves the target of access logs.
+  # Enabling access logging on a logging-destination bucket creates a
+  # circular log loop. Standard AWS practice; this is a global skip
+  # because the only buckets in this repo without access logs are
+  # logging buckets.
   - CKV_AWS_18
 
-  # CKV_AWS_68: CloudFront Distribution should have WAF enabled
-  # Justification: This is a read-only static website served from S3 with no
-  # dynamic content, APIs, user input, or server-side processing. WAF provides
-  # minimal security benefit for static content while adding unnecessary cost.
-  # CloudFront includes AWS Shield Standard for DDoS protection.
+  # CKV_AWS_68: CloudFront WAF
+  # The public marketing site is a static, read-only S3+CloudFront
+  # delivery with no dynamic content, APIs, user input, or server-side
+  # processing. AWS Shield Standard (free) covers L3/L4 DDoS. WAF would
+  # add ~$5/mo + per-request charges with no measurable benefit. The
+  # admin SPA stack accepts an optional `WafWebAclArn` parameter that,
+  # when set, attaches a Web ACL to its CloudFront distribution; that's
+  # the right place to enforce WAF for the admin surface.
   - CKV_AWS_68
