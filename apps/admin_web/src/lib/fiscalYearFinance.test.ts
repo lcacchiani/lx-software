@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultFiscalYearIdForNowUtc,
   fiscalYearIdToStartCalendarYear,
   fiscalYearUtcBounds,
   sumHouseStatementLinesForFiscalYear,
@@ -18,6 +19,29 @@ describe("fiscalYearIdToStartCalendarYear", () => {
   it("parses the leading year from an id", () => {
     expect(fiscalYearIdToStartCalendarYear("2025-2026")).toBe(2025);
     expect(fiscalYearIdToStartCalendarYear("2026-2027")).toBe(2026);
+  });
+});
+
+describe("defaultFiscalYearIdForNowUtc", () => {
+  it("selects the FY that contains May (after April) in UTC", () => {
+    expect(defaultFiscalYearIdForNowUtc(new Date("2026-05-26T12:00:00.000Z"))).toBe(
+      "2026-2027",
+    );
+  });
+
+  it("selects the FY that contains March (before April) in UTC", () => {
+    expect(defaultFiscalYearIdForNowUtc(new Date("2026-03-26T12:00:00.000Z"))).toBe(
+      "2025-2026",
+    );
+  });
+
+  it("uses April 1 UTC as the start of the new FY", () => {
+    expect(defaultFiscalYearIdForNowUtc(new Date("2026-03-31T23:59:59.999Z"))).toBe(
+      "2025-2026",
+    );
+    expect(defaultFiscalYearIdForNowUtc(new Date("2026-04-01T00:00:00.000Z"))).toBe(
+      "2026-2027",
+    );
   });
 });
 

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import { useFinance } from "../hooks/useFinance";
 import {
+  defaultFiscalYearIdForNowUtc,
   FISCAL_YEAR_OPTIONS,
   type FiscalYearId,
   fiscalYearIdToStartCalendarYear,
@@ -61,6 +62,9 @@ function HouseFiscalSummaryCard({
     [house.lines, fiscalYear],
   );
 
+  const fyStartYear = fiscalYearIdToStartCalendarYear(fiscalYear);
+  const fyEndYear = fyStartYear + 1;
+
   const selectId = `fiscal-year-${houseKey}`;
 
   return (
@@ -69,7 +73,7 @@ function HouseFiscalSummaryCard({
         <h2 className="h6 mb-3">{title}</h2>
         <div className="mb-3">
           <label className="form-label small text-muted mb-1" htmlFor={selectId}>
-            Fiscal year (1 Apr – 31 Mar)
+            Fiscal year (1 Apr {fyStartYear} – 31 Mar {fyEndYear})
           </label>
           <select
             id={selectId}
@@ -116,9 +120,12 @@ export function DashboardPage() {
       adminFetchJson<{ sub?: string; email?: string }>("/me"),
   });
 
-  const defaultFy = FISCAL_YEAR_OPTIONS[0].id;
-  const [hillmartonFy, setHillmartonFy] = useState<FiscalYearId>(defaultFy);
-  const [morrisonFy, setMorrisonFy] = useState<FiscalYearId>(defaultFy);
+  const [hillmartonFy, setHillmartonFy] = useState<FiscalYearId>(() =>
+    defaultFiscalYearIdForNowUtc(),
+  );
+  const [morrisonFy, setMorrisonFy] = useState<FiscalYearId>(() =>
+    defaultFiscalYearIdForNowUtc(),
+  );
 
   const financeQuery = useFinance();
 
