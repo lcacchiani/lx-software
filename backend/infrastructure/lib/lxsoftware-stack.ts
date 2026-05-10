@@ -12,7 +12,7 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import * as sqs from "aws-cdk-lib/aws-sqs";
-import type { Construct, IConstruct } from "constructs";
+import type { Construct } from "constructs";
 import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
 
@@ -364,9 +364,9 @@ export class LxsoftwareStack extends cdk.Stack {
 
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
-      // PDF statement parsing routes synchronously call OpenRouter, which
-      // can exceed a minute for some PDFs. The default 10s timeout is not
-      // enough for that path.
+      // PDF statement parsing calls OpenRouter synchronously; allow long runs (e.g.
+      // inbound-mail trigger). HTTP API routes still use an integration timeout
+      // capped at 30s unless AWS quota says otherwise—see integration comment below.
       timeout: cdk.Duration.seconds(120),
       memorySize: 1024,
       environmentEncryptionKey: this.sharedEncryptionKey,
@@ -528,6 +528,8 @@ export class LxsoftwareStack extends cdk.Stack {
       });
     }
 
+    // AWS::ApiGatewayV2::Integration TimeoutInMillis must be 50–30000 ms in this
+    // account/region; CDK defaults (~29s). Do not raise via L1 overrides.
     const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
 
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
@@ -673,19 +675,6 @@ export class LxsoftwareStack extends cdk.Stack {
       integration,
       authorizer: jwtAuthorizer,
     });
-
-    // HttpLambdaIntegration only allows passing timeout ≤29s; override L1 so
-    // API Gateway can wait as long as the admin Lambda (statement parsing).
-    const adminIntegrationTimeoutMs = 120_000;
-    const setAdminApiIntegrationTimeouts = (node: IConstruct): void => {
-      if (node instanceof apigwv2.CfnIntegration) {
-        node.timeoutInMillis = adminIntegrationTimeoutMs;
-      }
-      for (const child of node.node.children) {
-        setAdminApiIntegrationTimeouts(child);
-      }
-    };
-    setAdminApiIntegrationTimeouts(this.httpApi);
 
     // ------------------------------------------------------------------
     // CloudFormation outputs (export names kept stable for compatibility
