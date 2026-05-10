@@ -211,6 +211,7 @@ export function HouseStatementPanel({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const linePdfInputRef = useRef<HTMLInputElement | null>(null);
+  const lineDescriptionRef = useRef<HTMLInputElement | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [parseSuccess, setParseSuccess] = useState<string | null>(null);
   const [openingPdfKey, setOpeningPdfKey] = useState<string | null>(null);
@@ -237,6 +238,13 @@ export function HouseStatementPanel({
       setLineForm((f) => ({ ...f, currency: data.defaultCurrency }));
     });
   }, [data.defaultCurrency, editingId]);
+
+  useEffect(() => {
+    if (editingId === null) return;
+    queueMicrotask(() => {
+      lineDescriptionRef.current?.focus({ preventScroll: false });
+    });
+  }, [editingId]);
 
   const sortedLines = useMemo(() => {
     return [...data.lines].sort((a, b) => {
@@ -648,6 +656,7 @@ export function HouseStatementPanel({
               </label>
               <input
                 id={`${houseKey}-fin-desc`}
+                ref={lineDescriptionRef}
                 type="text"
                 className="form-control form-control-sm"
                 required
