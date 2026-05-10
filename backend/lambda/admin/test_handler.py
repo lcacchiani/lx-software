@@ -53,6 +53,23 @@ class TestNormalizePublicAssetKey(unittest.TestCase):
     def test_rejects_other_prefix(self) -> None:
         self.assertIsNone(_normalize_public_asset_key("other/key"))
 
+    def test_accepts_inbound_email_asset_key(self) -> None:
+        batch = "a" * 32
+        key = f"inbound/hillmarton/{batch}/00_stmt.pdf"
+        self.assertEqual(_normalize_public_asset_key(key), key)
+
+    def test_rejects_inbound_bad_house_or_batch(self) -> None:
+        batch = "a" * 32
+        self.assertIsNone(
+            _normalize_public_asset_key(f"inbound/unknown/{batch}/00_x.pdf")
+        )
+        self.assertIsNone(
+            _normalize_public_asset_key(f"inbound/hillmarton/short/00_x.pdf")
+        )
+        self.assertIsNone(
+            _normalize_public_asset_key(f"inbound/hillmarton/{'g' * 32}/x.pdf")
+        )
+
     def test_empty(self) -> None:
         self.assertIsNone(_normalize_public_asset_key(None))
         self.assertIsNone(_normalize_public_asset_key(""))
