@@ -28,6 +28,32 @@ export function fiscalYearIdToStartCalendarYear(id: FiscalYearId): number {
   return Number.parseInt(m[1], 10);
 }
 
+/**
+ * Fiscal year (1 Apr – 31 Mar, UTC) that contains `now`, limited to entries in
+ * {@link FISCAL_YEAR_OPTIONS} (clamps to the earliest or latest option if outside range).
+ */
+export function defaultFiscalYearIdForNowUtc(now = new Date()): FiscalYearId {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const startCalendarYear = m < 3 ? y - 1 : y;
+
+  const sorted = [...FISCAL_YEAR_OPTIONS].sort(
+    (a, b) =>
+      fiscalYearIdToStartCalendarYear(a.id) - fiscalYearIdToStartCalendarYear(b.id),
+  );
+
+  for (const opt of sorted) {
+    if (fiscalYearIdToStartCalendarYear(opt.id) === startCalendarYear) {
+      return opt.id;
+    }
+  }
+
+  if (startCalendarYear < fiscalYearIdToStartCalendarYear(sorted[0].id)) {
+    return sorted[0].id;
+  }
+  return sorted[sorted.length - 1].id;
+}
+
 export type FiscalYearAmountBuckets = {
   readonly incomeByCurrency: Readonly<Record<string, number>>;
   readonly expensesByCurrency: Readonly<Record<string, number>>;
