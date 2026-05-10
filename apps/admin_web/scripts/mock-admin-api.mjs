@@ -42,7 +42,7 @@ let financeState = {
 /** @type {Map<string, Record<string, unknown>>} */
 const parseJobs = new Map();
 
-function scheduleMockParseJob(parseHouse, key) {
+function scheduleMockParseJob(parseHouse, key, delayMs = 1600) {
   const jobId = randomUUID();
   parseJobs.set(jobId, { status: "pending" });
   setTimeout(() => {
@@ -59,7 +59,7 @@ function scheduleMockParseJob(parseHouse, key) {
       sourceAssetKeys: [key],
       sourceAssetKey: key,
     });
-  }, 1600);
+  }, delayMs);
   return jobId;
 }
 
@@ -286,6 +286,21 @@ const server = createServer(async (req, res) => {
   }
   if (parseHouse) {
     const body = await readJson(req);
+    if (body.simulate === "fail") {
+      const jobId = randomUUID();
+      parseJobs.set(jobId, { status: "pending" });
+      setTimeout(() => {
+        parseJobs.set(jobId, {
+          status: "failed",
+          message: "Simulated parse failure (mock API)",
+        });
+      }, 400);
+      return send(res, 202, { jobId, status: "pending" });
+    }
+    if (body.simulate === "slow") {
+      const jobId = scheduleMockParseJob(parseHouse, body.key, 35_000);
+      return send(res, 202, { jobId, status: "pending" });
+    }
     const jobId = scheduleMockParseJob(parseHouse, body.key);
     return send(res, 202, { jobId, status: "pending" });
   }

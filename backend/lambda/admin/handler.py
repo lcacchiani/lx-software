@@ -11,7 +11,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs, quote
@@ -884,6 +884,107 @@ def _parse_job_key(job_id: str) -> dict[str, str]:
     return {"pk": f"{PARSE_JOB_PK_PREFIX}{job_id}", "sk": "META"}
 
 
+def _job_expires_at_epoch() -> int:
+    ttl = int(os.environ.get("PARSE_JOB_TTL_SECONDS", str(7 * 24 * 3600)))
+    return int(time.time()) + ttl
+
+
+def _parse_job_stale_cutoff_iso() -> str:
+    sec = int(os.environ.get("PARSE_JOB_STALE_SECONDS", "150"))
+    dt = datetime.now(timezone.utc) - timedelta(seconds=sec)
+    return _utc_iso_z(dt)
+
+
+def _parse_job_stuck_seconds() -> float:
+    return float(os.environ.get("PARSE_JOB_STUCK_SECONDS", "240"))
+
+
+def _iso_to_utc_time(s: Any) -> datetime | None:
+    if not isinstance(s, str) or not s.strip():
+        return None
+    try:
+        t = s.strip()
+        if t.endswith("Z"):
+            t = t[:-1] + "+00:00"
+        return datetime.fromisoformat(t).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _finalize_stuck_processing_job(
+    table: Any, key: dict[str, str], doc: dict[str, Any]
+) -> dict[str, Any]:
+    """If processing exceeded the stuck threshold, mark failed (terminal for pollers)."""
+    if doc.get("status") != "processing":
+        return doc
+    updated_at = _iso_to_utc_time(doc.get("updatedAt"))
+    if updated_at is None:
+        return doc
+    age_sec = (datetime.now(timezone.utc) - updated_at).total_seconds()
+    if age_sec <= _parse_job_stuck_seconds():
+        return doc
+    fail_doc = {
+        **doc,
+        "status": "failed",
+        "errorMessage": (
+            "Statement parse did not complete in time. Reload the finance page "
+            "and check whether lines were added, or try uploading again."
+        ),
+        "errorStatus": 504,
+        "updatedAt": _utc_iso_z(datetime.now(timezone.utc)),
+    }
+    try:
+        table.put_item(Item=_to_ddb_nested(fail_doc))
+    except ClientError:
+        pass
+    return fail_doc
+
+
+def enqueue_parse_statement_async_job(
+    *,
+    house: str,
+    s3_keys: list[str],
+    owner_sub: str,
+    api_request_id: str | None,
+    source: str = "api",
+) -> str:
+    """Persist a pending PARSE_JOB and invoke the worker Lambda (async)."""
+    table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    job_id = uuid.uuid4().hex
+    created = _utc_iso_z(datetime.now(timezone.utc))
+    job_item: dict[str, Any] = {
+        **_parse_job_key(job_id),
+        "jobId": job_id,
+        "status": "pending",
+        "house": house,
+        "ownerSub": owner_sub,
+        "s3Keys": s3_keys,
+        "createdAt": created,
+        "updatedAt": created,
+        "expiresAt": _job_expires_at_epoch(),
+        "apiRequestId": (api_request_id or "")[:256],
+        "source": source[:64],
+    }
+    table.put_item(Item=_to_ddb_nested(job_item))
+    payload = {
+        "internal": "parse_statement_async",
+        "jobId": job_id,
+        "house": house,
+        "s3Keys": s3_keys,
+        "ownerSub": owner_sub,
+        "apiRequestId": api_request_id or "",
+    }
+    try:
+        _invoke_parse_statement_worker(payload)
+    except Exception:
+        try:
+            table.delete_item(Key=_parse_job_key(job_id))
+        except ClientError:
+            pass
+        raise
+    return job_id
+
+
 def _path_finance_parse_job(
     event: dict[str, Any], path: str
 ) -> tuple[str | None, str | None]:
@@ -910,8 +1011,11 @@ def _path_finance_parse_job(
 
 
 def _invoke_parse_statement_worker(payload: dict[str, Any]) -> None:
-    """Fire-and-forget async invocation; same-process fallback when env unset."""
-    fn_name = os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    """Fire-and-forget async invocation to PARSE_WORKER_FUNCTION_NAME (AdminApiFn)."""
+    fn_name = (
+        (os.environ.get("PARSE_WORKER_FUNCTION_NAME") or "").strip()
+        or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+    )
     if not fn_name:
         _handle_parse_statement_async_worker(payload)
         return
@@ -950,14 +1054,21 @@ def _parse_job_public_doc(doc: dict[str, Any]) -> dict[str, Any]:
 def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
     job_id = payload.get("jobId")
     house = payload.get("house")
-    s3_key = payload.get("s3Key")
     owner_sub = payload.get("ownerSub")
+    raw_keys = payload.get("s3Keys")
+    s3_keys: list[str] = []
+    if isinstance(raw_keys, list):
+        s3_keys = [str(x).strip() for x in raw_keys if isinstance(x, str) and str(x).strip()]
+    if not s3_keys:
+        sk = payload.get("s3Key")
+        if isinstance(sk, str) and sk.strip():
+            s3_keys = [sk.strip()]
     if (
         not isinstance(job_id, str)
         or not job_id.strip()
         or not isinstance(house, str)
-        or not isinstance(s3_key, str)
         or not isinstance(owner_sub, str)
+        or not s3_keys
     ):
         _log_event("warning", tag="parse_job_worker_bad_payload")
         return
@@ -965,16 +1076,20 @@ def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
     key = _parse_job_key(job_id.strip())
     now = _utc_iso_z(datetime.now(timezone.utc))
+    stale_cutoff = _parse_job_stale_cutoff_iso()
     try:
         table.update_item(
             Key=key,
             UpdateExpression="SET #st = :proc, updatedAt = :u",
-            ConditionExpression="#st = :pend",
+            ConditionExpression=(
+                "#st = :pend OR (#st = :proc AND updatedAt < :stale)"
+            ),
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":proc": "processing",
                 ":pend": "pending",
                 ":u": now,
+                ":stale": stale_cutoff,
             },
         )
     except ClientError as exc:
@@ -987,19 +1102,20 @@ def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
             return
         raise
 
-    request_id = f"async-parse-{job_id}"
+    api_rid = str(payload.get("apiRequestId") or "").strip()
+    req_token = api_rid if api_rid else f"async-parse-{job_id}"
     synthetic_event: dict[str, Any] = {
         "requestContext": {
-            "requestId": request_id,
-            "http": {"requestId": request_id},
+            "requestId": req_token,
+            "http": {"requestId": req_token},
         }
     }
     try:
         result = execute_parse_statement(
             house=house,
-            s3_keys=[s3_key],
+            s3_keys=s3_keys,
             user_sub=owner_sub,
-            request_id=request_id,
+            request_id=req_token,
             event=synthetic_event,
         )
     except _ParseStatementError as exc:
@@ -1449,6 +1565,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _json_response(403, {"message": "Forbidden"})
         if doc.get("house") != house_j:
             return _json_response(400, {"message": "House does not match job"})
+        doc = _finalize_stuck_processing_job(table, _parse_job_key(job_id), doc)
         return _json_response(200, _parse_job_public_doc(doc))
 
     if (
@@ -1485,34 +1602,19 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     )
                 },
             )
-        job_id = uuid.uuid4().hex
-        created = _utc_iso_z(datetime.now(timezone.utc))
-        job_item = {
-            **_parse_job_key(job_id),
-            "jobId": job_id,
-            "status": "pending",
-            "house": house,
-            "ownerSub": user_sub,
-            "s3Key": key,
-            "createdAt": created,
-            "updatedAt": created,
-        }
-        table.put_item(Item=_to_ddb_nested(job_item))
-        payload = {
-            "internal": "parse_statement_async",
-            "jobId": job_id,
-            "house": house,
-            "s3Key": key,
-            "ownerSub": user_sub,
-        }
         try:
-            _invoke_parse_statement_worker(payload)
-        except ClientError as exc:
-            table.delete_item(Key=_parse_job_key(job_id))
+            job_id = enqueue_parse_statement_async_job(
+                house=house,
+                s3_keys=[key],
+                owner_sub=user_sub,
+                api_request_id=_request_id(event),
+                source="api",
+            )
+        except Exception as exc:
             _log_event(
                 "error",
-                tag="parse_job_invoke_failed",
-                err=str(exc)[:256],
+                tag="parse_job_enqueue_failed",
+                err=str(exc)[:400],
                 request_id=_request_id(event),
             )
             return _json_response(

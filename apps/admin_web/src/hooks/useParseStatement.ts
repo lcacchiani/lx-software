@@ -11,8 +11,10 @@ import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 const DUPLICATE_STATEMENT_BASE_MSG =
   "Remove its imported lines or rename the file, then try again.";
 
-const PARSE_POLL_INTERVAL_MS = 1500;
-const PARSE_POLL_MAX_WAIT_MS = 180_000;
+const PARSE_POLL_INITIAL_WAIT_MS = 1000;
+const PARSE_POLL_BACKOFF_CAP_MS = 5000;
+/** Lambda timeout (120s) + margin for worker completion before client gives up. */
+const PARSE_POLL_DEADLINE_MS = 210_000;
 
 /**
  * Collects exact filenames (S3 key basenames) already used by lines with
@@ -78,7 +80,8 @@ async function pollParseJob(
   house: HouseKey,
   jobId: string,
 ): Promise<ParseStatementResult> {
-  const deadline = Date.now() + PARSE_POLL_MAX_WAIT_MS;
+  const deadline = Date.now() + PARSE_POLL_DEADLINE_MS;
+  let nextWaitMs = PARSE_POLL_INITIAL_WAIT_MS;
   while (Date.now() < deadline) {
     const j = await adminFetchJson<ParseJobPollResponse>(
       `/finance/${house}/parse-statement/jobs/${encodeURIComponent(jobId)}`,
@@ -98,7 +101,8 @@ async function pollParseJob(
     if (j.status === "failed") {
       throw new Error(j.message?.trim() || "Statement import failed.");
     }
-    await new Promise((r) => setTimeout(r, PARSE_POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, nextWaitMs));
+    nextWaitMs = Math.min(PARSE_POLL_BACKOFF_CAP_MS, nextWaitMs * 2);
   }
   throw new Error(
     "Statement parse is taking longer than expected. Reload the finance page and check whether new lines appeared.",

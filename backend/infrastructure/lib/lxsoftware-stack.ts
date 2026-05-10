@@ -7,6 +7,7 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
@@ -249,6 +250,12 @@ export class LxsoftwareStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    const recordsTableCfn = this.recordsTable.node.defaultChild as dynamodb.CfnTable;
+    recordsTableCfn.timeToLiveSpecification = {
+      attributeName: "expiresAt",
+      enabled: true,
+    };
+
     this.auditLogTable = new dynamodb.Table(this, "AuditLogTable", {
       tableName: "lxsoftware-admin-audit-log",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -380,24 +387,26 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
         OPENROUTER_MODEL: openRouterModel.valueAsString,
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
+        PARSE_JOB_STALE_SECONDS: "150",
+        PARSE_JOB_STUCK_SECONDS: "240",
+        PARSE_JOB_TTL_SECONDS: "604800",
       },
     });
+
+    adminFn.addEnvironment("PARSE_WORKER_FUNCTION_NAME", adminFn.functionName);
+
+    new lambda.EventInvokeConfig(this, "AdminApiAsyncInvoke", {
+      function: adminFn,
+      retryAttempts: 0,
+      maxEventAge: cdk.Duration.minutes(6),
+    });
+
+    adminFn.grantInvoke(adminFn);
 
     // Allow async-invocation DLQ writes from this function.
     this.lambdaDeadLetterQueue.grantSendMessages(adminFn);
 
-    // Statement parsing runs asynchronously (self-invoke) to stay under the
-    // HTTP API ~30s integration limit while OpenRouter can take longer.
-    adminFn.role!.addToPrincipalPolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ["lambda:InvokeFunction"],
-        resources: [adminFn.functionArn],
-      }),
-    );
-
     this.recordsTable.grantReadWriteData(adminFn);
-    this.auditLogTable.grantReadWriteData(adminFn);
     this.assetsBucket.grantReadWrite(adminFn);
 
     // Grant SecretsManager:GetSecretValue only when an ARN is provided.
@@ -499,6 +508,10 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
         OPENROUTER_MODEL: openRouterModel.valueAsString,
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
+        PARSE_WORKER_FUNCTION_NAME: adminFn.functionName,
+        PARSE_JOB_STALE_SECONDS: "150",
+        PARSE_JOB_STUCK_SECONDS: "240",
+        PARSE_JOB_TTL_SECONDS: "604800",
       },
     });
 
@@ -509,6 +522,13 @@ export class LxsoftwareStack extends cdk.Stack {
     inboundMailBucket.grantDelete(inboundStatementFn);
     openRouterSecretPolicy.attachToRole(inboundStatementFn.role!);
     this.lambdaDeadLetterQueue.grantSendMessages(inboundStatementFn);
+
+    adminFn.grantInvoke(inboundStatementFn);
+
+    // AdminApiFn is invoked asynchronously for OpenRouter work (self-invoke from
+    // the HTTP API + invoke from InboundStatementMailFn). A future split to
+    // SQS + a dedicated parser Lambda would separate concurrency from API routes;
+    // this stack keeps a single code bundle for low admin traffic.
 
     const inboundReceiptRuleSet = new ses.ReceiptRuleSet(this, "InboundMailReceiptRuleSet", {
       receiptRuleSetName: "lxsoftware-inbound-mail",

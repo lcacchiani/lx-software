@@ -33,8 +33,7 @@ import boto3
 from handler import (
     MAX_SOURCE_ASSET_KEYS_PER_LINE,
     FINANCE_HOUSE_KEYS,
-    _ParseStatementError,
-    execute_parse_statement,
+    enqueue_parse_statement_async_job,
 )
 
 logger = logging.getLogger()
@@ -219,32 +218,22 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         if not dest_keys:
             continue
 
-        stub_event: dict[str, Any] = {
-            "requestContext": {"requestId": request_id},
-            "inboundMail": {
-                "rawKey": raw_key,
-                "sourceBucket": inbound_bucket,
-                "houseKey": house_key,
-                "assetCount": len(dest_keys),
-            },
-        }
         try:
-            result = execute_parse_statement(
+            job_id = enqueue_parse_statement_async_job(
                 house=house_key,
                 s3_keys=dest_keys,
-                user_sub=user_sub,
-                request_id=request_id,
-                event=stub_event,
+                owner_sub=user_sub,
+                api_request_id=request_id,
+                source="inbound_mail",
             )
-        except _ParseStatementError as exc:
+        except Exception as exc:
             logger.warning(
                 json.dumps(
                     {
-                        "tag": "inbound_mail_parse_failed",
+                        "tag": "inbound_mail_enqueue_parse_failed",
                         "houseKey": house_key,
                         "destKeys": [k[:256] for k in dest_keys],
-                        "status": exc.status,
-                        "message": exc.message[:500],
+                        "error": str(exc)[:500],
                     }
                 )
             )
@@ -266,12 +255,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.info(
             json.dumps(
                 {
-                    "tag": "inbound_mail_parsed",
+                    "tag": "inbound_mail_parse_enqueued",
                     "houseKey": house_key,
                     "pdfCount": len(dest_keys),
-                    "addedLines": result.get("addedLines"),
+                    "jobId": job_id,
                 }
             )
         )
+        continue
 
     return {"ok": True}

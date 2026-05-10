@@ -4,7 +4,7 @@ import sys
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def _install_stubs() -> None:
@@ -481,6 +481,53 @@ class TestParseJobPath(unittest.TestCase):
 
     def test_invalid(self) -> None:
         self.assertEqual(_path_finance_parse_job({}, "/finance/morrison"), (None, None))
+
+
+class TestParseJobPublicDoc(unittest.TestCase):
+    def test_pending_and_failed_message(self) -> None:
+        from handler import _parse_job_public_doc
+
+        self.assertEqual(_parse_job_public_doc({"status": "pending"}), {"status": "pending"})
+        self.assertEqual(
+            _parse_job_public_doc({"status": "failed", "errorMessage": "bad"})[
+                "message"
+            ],
+            "bad",
+        )
+
+
+class TestFinalizeStuckProcessing(unittest.TestCase):
+    def test_skips_finalize_when_processing_recent(self) -> None:
+        from handler import _finalize_stuck_processing_job
+
+        table = MagicMock()
+        doc = {"status": "processing", "updatedAt": "2099-01-01T00:00:00.000Z"}
+        out = _finalize_stuck_processing_job(
+            table, {"pk": "PARSE_JOB#x", "sk": "META"}, doc
+        )
+        self.assertEqual(out["status"], "processing")
+        table.put_item.assert_not_called()
+
+
+class TestLambdaInternalAsyncDispatch(unittest.TestCase):
+    def test_dispatches_internal_worker(self) -> None:
+        import handler as handler_mod
+
+        captured: list[dict] = []
+
+        def capture(payload: dict) -> None:
+            captured.append(payload)
+
+        with patch.object(
+            handler_mod, "_handle_parse_statement_async_worker", side_effect=capture
+        ):
+            out = handler_mod.lambda_handler(
+                {"internal": "parse_statement_async", "jobId": "jid"},
+                None,
+            )
+        self.assertEqual(out, {})
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0].get("jobId"), "jid")
 
 
 class TestFxV2RatesQuery(unittest.TestCase):
