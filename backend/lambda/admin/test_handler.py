@@ -34,6 +34,7 @@ from handler import (  # noqa: E402
     _normalize_public_asset_key,
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
+    _path_finance_parse_job,
     _statement_basename_already_imported,
     _utc_iso_z,
 )
@@ -456,6 +457,30 @@ class TestParseStatementHousePath(unittest.TestCase):
             _path_finance_house_for_parse({}, "/finance/morrison")
         )
         self.assertIsNone(_path_finance_house_for_parse({}, "/something"))
+
+
+class TestParseJobPath(unittest.TestCase):
+    def test_path_params(self) -> None:
+        ev = {
+            "pathParameters": {
+                "house": "Morrison",
+                "jobId": "abc123",
+            }
+        }
+        h, j = _path_finance_parse_job(
+            ev, "/finance/morrison/parse-statement/jobs/abc123"
+        )
+        self.assertEqual((h, j), ("morrison", "abc123"))
+
+    def test_path_split(self) -> None:
+        h, j = _path_finance_parse_job(
+            {},
+            "/finance/hillmarton/parse-statement/jobs/j1",
+        )
+        self.assertEqual((h, j), ("hillmarton", "j1"))
+
+    def test_invalid(self) -> None:
+        self.assertEqual(_path_finance_parse_job({}, "/finance/morrison"), (None, None))
 
 
 class TestFxV2RatesQuery(unittest.TestCase):

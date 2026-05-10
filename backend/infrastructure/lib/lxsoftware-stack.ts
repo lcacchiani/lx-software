@@ -386,6 +386,16 @@ export class LxsoftwareStack extends cdk.Stack {
     // Allow async-invocation DLQ writes from this function.
     this.lambdaDeadLetterQueue.grantSendMessages(adminFn);
 
+    // Statement parsing runs asynchronously (self-invoke) to stay under the
+    // HTTP API ~30s integration limit while OpenRouter can take longer.
+    adminFn.role!.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ["lambda:InvokeFunction"],
+        resources: [adminFn.functionArn],
+      }),
+    );
+
     this.recordsTable.grantReadWriteData(adminFn);
     this.auditLogTable.grantReadWriteData(adminFn);
     this.assetsBucket.grantReadWrite(adminFn);
@@ -672,6 +682,13 @@ export class LxsoftwareStack extends cdk.Stack {
     this.httpApi.addRoutes({
       path: "/finance/{house}/parse-statement",
       methods: [apigwv2.HttpMethod.POST],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/finance/{house}/parse-statement/jobs/{jobId}",
+      methods: [apigwv2.HttpMethod.GET],
       integration,
       authorizer: jwtAuthorizer,
     });
