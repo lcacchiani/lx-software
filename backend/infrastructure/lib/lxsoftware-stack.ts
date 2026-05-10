@@ -392,7 +392,12 @@ export class LxsoftwareStack extends cdk.Stack {
       },
     });
 
-    adminFn.addEnvironment("PARSE_WORKER_FUNCTION_NAME", adminFn.functionName);
+    // Self-invoke worker name: handler falls back to the Lambda runtime's
+    // built-in `AWS_LAMBDA_FUNCTION_NAME` env var when `PARSE_WORKER_FUNCTION_NAME`
+    // is unset, so we deliberately do NOT add a self-referencing env var here
+    // (`addEnvironment("PARSE_WORKER_FUNCTION_NAME", adminFn.functionName)` would
+    // make AdminApiFn depend on itself via `Ref`, which CloudFormation rejects
+    // as a circular dependency).
 
     new lambda.EventInvokeConfig(this, "AdminApiAsyncInvoke", {
       function: adminFn,
@@ -400,7 +405,29 @@ export class LxsoftwareStack extends cdk.Stack {
       maxEventAge: cdk.Duration.minutes(6),
     });
 
-    adminFn.grantInvoke(adminFn);
+    // Self-invoke permission for async parse worker. Using
+    // `adminFn.grantInvoke(adminFn)` would add a `Fn::GetAtt` of the function
+    // ARN into the function's own role default policy, while CDK adds a
+    // `DependsOn: AdminApiFnServiceRoleDefaultPolicy` on the function — that
+    // pair forms a circular dependency. Construct the resource ARN from the
+    // stack's pseudo-parameters (no Ref/GetAtt on the function itself) to
+    // break the cycle. The wildcard is acceptable because the role is
+    // attached only to this Lambda, whose code is the sole consumer.
+    const selfInvokeArn = cdk.Stack.of(this).formatArn({
+      service: "lambda",
+      resource: "function",
+      resourceName: "*",
+      arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+    });
+    new iam.Policy(this, "AdminApiFnSelfInvokePolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: ["lambda:InvokeFunction"],
+          resources: [selfInvokeArn],
+        }),
+      ],
+    }).attachToRole(adminFn.role!);
 
     // Allow async-invocation DLQ writes from this function.
     this.lambdaDeadLetterQueue.grantSendMessages(adminFn);
