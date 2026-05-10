@@ -151,6 +151,36 @@ class TestNormalizeResult(unittest.TestCase):
         self.assertEqual(line["netAmount"], 100.0)
         self.assertEqual(line["vat"], 20.0)
 
+    def test_drops_payment_to_landlord_lines(self) -> None:
+        parsed = {
+            "lines": [
+                {
+                    "dateUtc": "2026-04-01",
+                    "type": "expenditure",
+                    "description": "Payment to Landlord",
+                    "grossAmount": 500,
+                    "currency": "GBP",
+                },
+                {
+                    "dateUtc": "2026-04-02",
+                    "type": "expenditure",
+                    "description": "PAYMENT TO LANDLORD",
+                    "grossAmount": 100,
+                    "currency": "GBP",
+                },
+                {
+                    "dateUtc": "2026-04-03",
+                    "type": "expenditure",
+                    "description": "Utilities",
+                    "grossAmount": 40,
+                    "currency": "GBP",
+                },
+            ]
+        }
+        out = parser._normalize_result(parsed, default_currency="GBP")
+        self.assertEqual(len(out["lines"]), 1)
+        self.assertEqual(out["lines"][0]["description"], "Utilities")
+
 
 class TestParseStatementFromAsset(unittest.TestCase):
     def setUp(self) -> None:
