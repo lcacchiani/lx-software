@@ -63,13 +63,32 @@ def _is_allowed_upload_content_type(content_type: str) -> bool:
 
 
 def _normalize_public_asset_key(raw: Any) -> str | None:
-    """Return an uploads/* S3 object key, or None if invalid (path traversal, etc.)."""
+    """Return a downloadable assets-bucket key, or None if invalid.
+
+    Allows ``uploads/*`` (browser uploads) and ``inbound/{house}/{batch}/…``
+    (SES → inbound-email Lambda). Other prefixes are rejected.
+    """
     if raw is None:
         return None
     key = str(raw).strip()
-    if not key or ".." in key or not key.startswith("uploads/"):
+    if not key or ".." in key:
         return None
-    return key
+    if key.startswith("uploads/"):
+        return key
+    if key.startswith("inbound/"):
+        parts = key.split("/")
+        if len(parts) < 4:
+            return None
+        house_seg = parts[1].strip().lower()
+        if house_seg not in FINANCE_HOUSE_KEYS:
+            return None
+        batch = parts[2]
+        if len(batch) != 32 or any(
+            c not in "0123456789abcdef" for c in batch.lower()
+        ):
+            return None
+        return key
+    return None
 
 
 def _asset_download_presigned_response(
@@ -79,8 +98,9 @@ def _asset_download_presigned_response(
 ) -> dict[str, Any]:
     """Issue a presigned GET for a confirmed asset (GET ?key=… or POST JSON body).
 
-    Any admin may download any confirmed uploads/* object so statement lines and
-    the Assets page work across uploaders.
+    Any admin may download any confirmed ``uploads/*`` or ``inbound/*`` object
+    so statement lines and the Assets page work across uploaders and email
+    ingestion.
     """
     norm = _normalize_public_asset_key(raw_key)
     if norm is None:
@@ -643,7 +663,9 @@ def _enrich_scan_items_asset_meta(
         if sk != "META":
             continue
         s3_key = pk.removeprefix("ASSET#")
-        if not s3_key.startswith("uploads/"):
+        if not (
+            s3_key.startswith("uploads/") or s3_key.startswith("inbound/")
+        ):
             continue
         asset_spans.append((idx, s3_key))
 
@@ -685,14 +707,22 @@ def _persist_asset_meta_after_parse(
     head: dict[str, Any],
     file_name: str,
     request_id: str,
+    owner_sub: str | None = None,
 ) -> None:
-    """Ensure ASSET META reflects the house and timestamps after a successful import."""
+    """Ensure ASSET META reflects the house and timestamps after a successful import.
+
+    Browser uploads call ``/assets/confirm`` first, so META usually exists and
+    we merge. Inbound-email imports write PDFs directly under ``inbound/…``;
+    when no META row exists yet, we create one (same visibility as confirm).
+    """
     asset_pk = f"ASSET#{s3_key}"
     last_mod = head.get("LastModified")
     if isinstance(last_mod, datetime):
         uploaded_at = _utc_iso_z(last_mod)
     else:
         uploaded_at = _utc_iso_z(datetime.now(timezone.utc))
+    size = int(head.get("ContentLength") or 0)
+    etag = str(head.get("ETag") or "").strip().strip('"')
     try:
         table.update_item(
             Key={"pk": asset_pk, "sk": "META"},
@@ -711,11 +741,27 @@ def _persist_asset_meta_after_parse(
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "")
         if code == "ConditionalCheckFailedException":
+            item: dict[str, Any] = {
+                "pk": asset_pk,
+                "sk": "META",
+                "house": house,
+                "uploadedAt": uploaded_at,
+                "fileName": file_name,
+                "size": size,
+                "s3Etag": etag,
+                "note": (
+                    "metadata from statement import (no prior /assets/confirm; "
+                    "e.g. inbound email)"
+                ),
+            }
+            if owner_sub:
+                item["ownerSub"] = owner_sub
+            table.put_item(Item=_to_ddb(item))
             _log_event(
-                "warning",
-                tag="asset_meta_parse_merge_skipped",
-                reason="no_meta_row",
+                "info",
+                tag="asset_meta_parse_created",
                 key=s3_key[:512],
+                house=house,
                 request_id=request_id,
             )
             return
@@ -1439,6 +1485,7 @@ def execute_parse_statement(
             head=head,
             file_name=file_name,
             request_id=request_id,
+            owner_sub=user_sub,
         )
     audit_event = {
         **event,
