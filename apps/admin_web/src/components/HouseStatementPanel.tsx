@@ -844,11 +844,7 @@ export function HouseStatementPanel({
                           openingPdfKey={openingPdfKey}
                           onOpen={openStatementPdf}
                         />
-                        <span
-                          className="text-muted small text-truncate"
-                          style={{ maxWidth: "12rem" }}
-                          title={basenameFromAssetKey(assetKey)}
-                        >
+                        <span className="text-muted small text-break">
                           {basenameFromAssetKey(assetKey)}
                         </span>
                       </span>
