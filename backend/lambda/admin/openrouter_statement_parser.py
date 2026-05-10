@@ -31,6 +31,7 @@ _DEFAULT_TIMEOUT_SECONDS = 60
 
 _SUPPORTED_CURRENCIES = ("GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED")
 _FINANCE_LINE_TYPES = ("income", "expenditure")
+_DISCARD_DESCRIPTION_NORMALIZED = "payment to landlord"
 
 _api_key_cache: str | None = None
 
@@ -259,6 +260,8 @@ def _normalize_result(parsed: dict[str, Any], *, default_currency: str) -> dict[
             continue
         description = _optional_text(raw.get("description"), max_length=2000)
         if not description:
+            continue
+        if description.strip().casefold() == _DISCARD_DESCRIPTION_NORMALIZED:
             continue
         currency = _coerce_currency(raw.get("currency"), fallback=fallback_cur)
         gross = _coerce_money(raw.get("grossAmount") or raw.get("amount"))
