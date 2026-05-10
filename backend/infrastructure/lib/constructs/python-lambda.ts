@@ -40,10 +40,16 @@ export interface PythonLambdaFactoryProps {
    */
   readonly deadLetterQueue?: sqs.IQueue;
   /**
-   * Reserved concurrency limit (Checkov CKV_AWS_115). Bounds blast radius
-   * if a hot loop or upstream incident triggers a runaway invocation rate.
-   * Defaults to 25 — enough headroom for the admin-only workload, low
-   * enough to leave the unreserved account pool untouched.
+   * Reserved concurrency limit (Checkov CKV_AWS_115). When set, bounds
+   * the blast radius of a runaway invocation rate. Intentionally **not**
+   * defaulted: AWS enforces an `UnreservedConcurrentExecution` floor of
+   * 100, so on accounts whose regional concurrency limit is at that
+   * floor (small / new accounts), any positive reservation would push
+   * unreserved below the floor and CloudFormation would reject the
+   * update with `InvalidRequest`. Callers that have requested a higher
+   * regional concurrency limit can opt in by passing a value here; the
+   * suppression for `CKV_AWS_115` lives in `CheckovSuppressionAspect`
+   * with the same rationale.
    */
   readonly reservedConcurrentExecutions?: number;
   /**
@@ -101,12 +107,12 @@ function tryLocalPythonBundle(entry: string, outputDir: string): boolean {
  * Lambda:
  * - Customer-managed KMS encryption for environment variables (CKV_AWS_173)
  * - Customer-managed KMS encryption on the CloudWatch log group (CKV_AWS_158)
- * - Reserved concurrency (CKV_AWS_115)
  * - Async-invocation dead-letter queue (CKV_AWS_116)
  *
- * VPC configuration (CKV_AWS_117) is intentionally omitted — see
- * `CheckovSuppressionAspect` in `lib/constructs/checkov-suppressions.ts`
- * for the cost/benefit rationale.
+ * Reserved concurrency (CKV_AWS_115) and VPC configuration (CKV_AWS_117)
+ * are intentionally omitted — see `CheckovSuppressionAspect` in
+ * `lib/constructs/checkov-suppressions.ts` for the rationale (account-level
+ * concurrency floor and cost-vs-benefit, respectively).
  */
 export function createPythonLambda(
   scope: Construct,
@@ -161,6 +167,10 @@ export function createPythonLambda(
     logGroup,
     deadLetterQueue: props.deadLetterQueue,
     deadLetterQueueEnabled: props.deadLetterQueue ? true : undefined,
-    reservedConcurrentExecutions: props.reservedConcurrentExecutions ?? 25,
+    // Pass-through only when explicitly set; see prop docstring above for
+    // the AWS-account-level rationale for not defaulting this.
+    ...(props.reservedConcurrentExecutions !== undefined
+      ? { reservedConcurrentExecutions: props.reservedConcurrentExecutions }
+      : {}),
   });
 }

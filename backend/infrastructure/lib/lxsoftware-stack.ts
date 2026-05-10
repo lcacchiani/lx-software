@@ -371,9 +371,8 @@ export class LxsoftwareStack extends cdk.Stack {
 
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
-      // PDF statement parsing calls OpenRouter synchronously; allow long runs (e.g.
-      // inbound-mail trigger). HTTP API routes still use an integration timeout
-      // capped at 30s unless AWS quota says otherwise—see integration comment below.
+      // PDF parsing uses OpenRouter; worker runs can exceed a minute. HTTP API
+      // integrations stay within ~30s; async parse jobs cover longer work.
       timeout: cdk.Duration.seconds(120),
       memorySize: 1024,
       environmentEncryptionKey: this.sharedEncryptionKey,
