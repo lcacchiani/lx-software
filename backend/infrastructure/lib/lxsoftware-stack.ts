@@ -5,11 +5,13 @@ import { HttpJwtAuthorizer } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct, IConstruct } from "constructs";
 import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
@@ -29,6 +31,25 @@ export class LxsoftwareStack extends cdk.Stack {
   public readonly assetsBucket: s3.Bucket;
   public readonly assetsAccessLogsBucket: s3.Bucket;
   public readonly httpApi: apigwv2.HttpApi;
+  /**
+   * Shared customer-managed KMS key used to encrypt:
+   * - Lambda environment variables (Checkov CKV_AWS_173)
+   * - CloudWatch log groups (Checkov CKV_AWS_158)
+   * - DynamoDB tables (Checkov CKV_AWS_119)
+   *
+   * Cost: $1/month flat. KMS API calls for this workload (admin-only,
+   * low-traffic) stay well under the 20,000/month free tier. Key
+   * rotation is enabled (annual, AWS-managed).
+   */
+  public readonly sharedEncryptionKey: kms.Key;
+  /**
+   * Shared SQS dead-letter queue for failed async Lambda invocations
+   * (Checkov CKV_AWS_116). One queue is used for every application
+   * Lambda in the stack — sharing avoids per-function queue overhead and
+   * stays within the SQS free tier (1M requests/month) for our admin
+   * workload. Encrypted with the same shared CMK.
+   */
+  public readonly lambdaDeadLetterQueue: sqs.Queue;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -134,7 +155,60 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     // ------------------------------------------------------------------
-    // 1. Auth (Cognito user pool, Google IdP, hosted UI, bootstrap admin)
+    // 1. Shared KMS encryption key + Lambda DLQ
+    //
+    // One customer-managed key fans out to Lambda env vars, CloudWatch
+    // log groups, DynamoDB tables, and the shared SQS DLQ. This keeps
+    // the recurring KMS bill at $1/month total (vs. ~$7/month if every
+    // resource minted its own key) while still satisfying Checkov
+    // CKV_AWS_158 / 173 / 119.
+    //
+    // The key policy below grants the CloudWatch Logs service principal
+    // the Encrypt/Decrypt actions it needs to write encrypted log events,
+    // scoped via `kms:EncryptionContext:aws:logs:arn` to log groups in
+    // this account/region only.
+    // ------------------------------------------------------------------
+    this.sharedEncryptionKey = new kms.Key(this, "SharedEncryptionKey", {
+      alias: "lxsoftware-admin/shared",
+      description:
+        "Shared CMK for Lambda env vars, CloudWatch logs, DynamoDB, and SQS DLQ in the lxsoftware admin stack.",
+      enableKeyRotation: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    const region = cdk.Stack.of(this).region;
+    const accountId = cdk.Stack.of(this).account;
+    this.sharedEncryptionKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowCloudWatchLogsEncryption",
+        principals: [
+          new iam.ServicePrincipal(`logs.${region}.amazonaws.com`),
+        ],
+        actions: [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*",
+        ],
+        resources: ["*"],
+        conditions: {
+          ArnLike: {
+            "kms:EncryptionContext:aws:logs:arn": `arn:aws:logs:${region}:${accountId}:*`,
+          },
+        },
+      })
+    );
+
+    this.lambdaDeadLetterQueue = new sqs.Queue(this, "LambdaDeadLetterQueue", {
+      queueName: "lxsoftware-admin-lambda-dlq",
+      encryption: sqs.QueueEncryption.KMS,
+      encryptionMasterKey: this.sharedEncryptionKey,
+      retentionPeriod: cdk.Duration.days(14),
+    });
+
+    // ------------------------------------------------------------------
+    // 2. Auth (Cognito user pool, Google IdP, hosted UI, bootstrap admin)
     // ------------------------------------------------------------------
     this.auth = new AuthConstruct(this, "Auth", {
       adminWebDomainParameter: adminWebDomainName,
@@ -146,10 +220,16 @@ export class LxsoftwareStack extends cdk.Stack {
       adminBootstrapEmailParameter: adminBootstrapEmail,
       adminBootstrapTempPasswordParameter: adminBootstrapTempPassword,
       adminFederatedEmailAllowlistParameter: adminFederatedEmailAllowlist,
+      sharedEncryptionKey: this.sharedEncryptionKey,
+      sharedDeadLetterQueue: this.lambdaDeadLetterQueue,
     });
 
     // ------------------------------------------------------------------
-    // 2. Data (DynamoDB tables)
+    // 3. Data (DynamoDB tables)
+    //
+    // Both tables use the shared customer-managed KMS key (CKV_AWS_119).
+    // KMS API calls are charged per request beyond the free tier (20k/mo),
+    // but the admin-only workload stays well below that ceiling.
     // ------------------------------------------------------------------
     this.recordsTable = new dynamodb.Table(this, "RecordsTable", {
       tableName: "lxsoftware-admin-records",
@@ -157,7 +237,8 @@ export class LxsoftwareStack extends cdk.Stack {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
+      encryptionKey: this.sharedEncryptionKey,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
@@ -174,7 +255,8 @@ export class LxsoftwareStack extends cdk.Stack {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
-      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
+      encryptionKey: this.sharedEncryptionKey,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
@@ -267,7 +349,6 @@ export class LxsoftwareStack extends cdk.Stack {
     // ------------------------------------------------------------------
     // 4. HTTP API + admin Lambda
     // ------------------------------------------------------------------
-    const region = cdk.Stack.of(this).region;
     const issuer = `https://cognito-idp.${region}.amazonaws.com/${this.auth.userPool.userPoolId}`;
 
     /**
@@ -288,6 +369,9 @@ export class LxsoftwareStack extends cdk.Stack {
       // enough for that path.
       timeout: cdk.Duration.seconds(120),
       memorySize: 1024,
+      environmentEncryptionKey: this.sharedEncryptionKey,
+      logEncryptionKey: this.sharedEncryptionKey,
+      deadLetterQueue: this.lambdaDeadLetterQueue,
       environment: {
         RECORDS_TABLE_NAME: this.recordsTable.tableName,
         AUDIT_LOG_TABLE_NAME: this.auditLogTable.tableName,
@@ -298,6 +382,9 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
       },
     });
+
+    // Allow async-invocation DLQ writes from this function.
+    this.lambdaDeadLetterQueue.grantSendMessages(adminFn);
 
     this.recordsTable.grantReadWriteData(adminFn);
     this.auditLogTable.grantReadWriteData(adminFn);
@@ -388,6 +475,9 @@ export class LxsoftwareStack extends cdk.Stack {
       handler: "inbound_email_handler.lambda_handler",
       timeout: cdk.Duration.seconds(120),
       memorySize: 1024,
+      environmentEncryptionKey: this.sharedEncryptionKey,
+      logEncryptionKey: this.sharedEncryptionKey,
+      deadLetterQueue: this.lambdaDeadLetterQueue,
       environment: {
         RECORDS_TABLE_NAME: this.recordsTable.tableName,
         AUDIT_LOG_TABLE_NAME: this.auditLogTable.tableName,
@@ -408,6 +498,7 @@ export class LxsoftwareStack extends cdk.Stack {
     inboundMailBucket.grantRead(inboundStatementFn);
     inboundMailBucket.grantDelete(inboundStatementFn);
     openRouterSecretPolicy.attachToRole(inboundStatementFn.role!);
+    this.lambdaDeadLetterQueue.grantSendMessages(inboundStatementFn);
 
     const inboundReceiptRuleSet = new ses.ReceiptRuleSet(this, "InboundMailReceiptRuleSet", {
       receiptRuleSetName: "lxsoftware-inbound-mail",
@@ -460,6 +551,10 @@ export class LxsoftwareStack extends cdk.Stack {
     const accessLogGroup = new logs.LogGroup(this, "HttpApiAccessLogs", {
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+      // CKV_AWS_158: encrypt at rest with the stack's shared CMK. The
+      // CloudWatch Logs service principal is granted Encrypt*/Decrypt*
+      // on the key in the stack-level policy above.
+      encryptionKey: this.sharedEncryptionKey,
     });
 
     accessLogGroup.addToResourcePolicy(

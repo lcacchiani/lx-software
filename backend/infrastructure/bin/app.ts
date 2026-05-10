@@ -2,6 +2,7 @@ import * as cdk from "aws-cdk-lib";
 import { LxsoftwareAdminWebStack } from "../lib/lxsoftware-admin-web-stack";
 import { LxsoftwareStack } from "../lib/lxsoftware-stack";
 import { PublicWebsiteStack } from "../lib/public-website-stack";
+import { CheckovSuppressionAspect } from "../lib/constructs/checkov-suppressions";
 
 const app = new cdk.App();
 
@@ -84,3 +85,9 @@ const adminWeb = new LxsoftwareAdminWebStack(app, "lxsoftware-admin-web", {
   ]),
 });
 tagStack(adminWeb, "Admin Console", "spa");
+
+// Inject Checkov skip metadata onto CDK-internal resources (AwsCustomResource
+// and BucketNotifications Lambdas) plus VPC suppression for application
+// Lambdas. The Security Scanning workflow filters these inSource SARIF
+// suppressions out before uploading to GitHub Code Scanning.
+cdk.Aspects.of(app).add(new CheckovSuppressionAspect());

@@ -3,6 +3,8 @@ import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cr from "aws-cdk-lib/custom-resources";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as kms from "aws-cdk-lib/aws-kms";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as path from "node:path";
 import { Construct } from "constructs";
 import { createPythonLambda } from "./python-lambda";
@@ -25,6 +27,10 @@ export interface AuthConstructProps {
   readonly adminBootstrapTempPasswordParameter: cdk.CfnParameter;
   /** Comma-separated emails that receive the admin group via Pre Token Generation (federated users). */
   readonly adminFederatedEmailAllowlistParameter: cdk.CfnParameter;
+  /** Shared CMK for Lambda env vars + log group encryption (CKV_AWS_173/158). */
+  readonly sharedEncryptionKey: kms.IKey;
+  /** Shared SQS DLQ for failed async invocations (CKV_AWS_116). */
+  readonly sharedDeadLetterQueue: sqs.IQueue;
 }
 
 /**
@@ -90,11 +96,15 @@ export class AuthConstruct extends Construct {
         "lambda",
         "pre_token_generation"
       ),
+      environmentEncryptionKey: props.sharedEncryptionKey,
+      logEncryptionKey: props.sharedEncryptionKey,
+      deadLetterQueue: props.sharedDeadLetterQueue,
       environment: {
         ADMIN_EMAIL_ALLOWLIST:
           props.adminFederatedEmailAllowlistParameter.valueAsString,
       },
     });
+    props.sharedDeadLetterQueue.grantSendMessages(preTokenFn);
 
     this.userPool.addTrigger(
       cognito.UserPoolOperation.PRE_TOKEN_GENERATION,

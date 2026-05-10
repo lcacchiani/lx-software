@@ -29,6 +29,11 @@ jobs:
           cache: npm
           cache-dependency-path: backend/infrastructure/package-lock.json
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Install CDK dependencies
         working-directory: backend/infrastructure
         run: npm ci
@@ -43,23 +48,63 @@ jobs:
             --parameters PublicWebsiteCertificateArn=arn:aws:acm:us-east-1:123456789012:certificate/example
 
       - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: backend/infrastructure/cdk.out
+          config_file: backend/infrastructure/.checkov.yaml
+          framework: cloudformation
+          output_format: cli,sarif
+          output_file_path: console,backend/infrastructure/checkov-results.sarif
+
+      # Strip findings whose only suppression is in-source CDK metadata
+      # (kind == "inSource"). Mirrors the lcacchiani/evolvesprouts pattern.
+      - name: Filter in-source suppressed Checkov findings
+        id: filter_checkov_sarif
+        if: always()
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace/backend/infrastructure \
-            ghcr.io/bridgecrewio/checkov:3.2.513 \
-            -d cdk.out \
-            --config-file .checkov.yaml \
-            --framework cloudformation \
-            -o cli \
-            -o sarif \
-            --output-file-path console,checkov-results.sarif \
-            --soft-fail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          sarif_path = Path("backend/infrastructure/checkov-results.sarif")
+          if sarif_path.is_dir():
+              candidates = sorted(sarif_path.glob("*.sarif"))
+              sarif_path = candidates[0] if candidates else None
+
+          output_path = Path(os.environ["RUNNER_TEMP"]) / "checkov-results.filtered.sarif"
+          if not sarif_path or not sarif_path.exists():
+              print("checkov-results.sarif not found; emitting empty SARIF.")
+              output_path.write_text(
+                  json.dumps({"version": "2.1.0", "runs": []}), encoding="utf-8"
+              )
+          else:
+              payload = json.loads(sarif_path.read_text(encoding="utf-8"))
+              removed = 0
+              for run in payload.get("runs", []):
+                  kept = []
+                  for result in run.get("results", []):
+                      suppressions = result.get("suppressions", [])
+                      if any(item.get("kind") == "inSource" for item in suppressions):
+                          removed += 1
+                          continue
+                      kept.append(result)
+                  run["results"] = kept
+              output_path.write_text(json.dumps(payload), encoding="utf-8")
+              print(f"Removed {removed} in-source suppressed Checkov findings from SARIF.")
+
+          output_file = os.environ.get("GITHUB_OUTPUT")
+          if output_file:
+              with open(output_file, "a", encoding="utf-8") as fh:
+                  fh.write(f"filtered_sarif={output_path}\n")
+          PY
 
       - name: Upload SARIF results
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: backend/infrastructure/checkov-results.sarif
+          sarif_file: ${{ steps.filter_checkov_sarif.outputs.filtered_sarif }}
+          # Checkov SARIF can be large; do not fail on processing wait jitter.
+          wait-for-processing: false
 
   codeql:
     name: CodeQL Analysis
@@ -102,13 +147,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # Rule exclusions (centralized suppressions):
+      # - python.lang.security.audit.dynamic-urllib-use-detected: Suppressed
+      #   for backend/lambda/admin/handler.py and openrouter_statement_parser.py
+      #   where urllib.request.urlopen() is called with HTTPS-only, fixed-scheme
+      #   URLs (Frankfurter API base, OpenRouter API base). Both call sites
+      #   already carry an inline `# noqa: S310` comment with the same rationale.
       - name: Run Semgrep
-        run: semgrep ci --sarif --output=semgrep-results.sarif || true
+        run: |
+          semgrep ci \
+            --sarif \
+            --output=semgrep-results.sarif \
+            --exclude-rule python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected \
+            || true
         env:
           SEMGREP_RULES: >-
             p/javascript
             p/security-audit
             p/secrets
+
+      - name: Filter in-source suppressed Semgrep findings
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          sarif_path = Path("semgrep-results.sarif")
+          if not sarif_path.exists():
+              print("semgrep-results.sarif not found; skipping suppression filter.")
+              raise SystemExit(0)
+
+          payload = json.loads(sarif_path.read_text(encoding="utf-8"))
+          removed = 0
+          for run in payload.get("runs", []):
+              kept = []
+              for result in run.get("results", []):
+                  suppressions = result.get("suppressions", [])
+                  if any(item.get("kind") == "inSource" for item in suppressions):
+                      removed += 1
+                      continue
+                  kept.append(result)
+              run["results"] = kept
+
+          sarif_path.write_text(json.dumps(payload), encoding="utf-8")
+          print(f"Removed {removed} in-source suppressed Semgrep findings from SARIF.")
+          PY
 
       - name: Upload SARIF results
         uses: github/codeql-action/upload-sarif@v4
