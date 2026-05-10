@@ -1,5 +1,6 @@
 // Mock admin API for local UI demos. Run with: node scripts/mock-admin-api.mjs
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
 
 const PORT = 3001;
@@ -37,6 +38,30 @@ let financeState = {
     lines: [],
   },
 };
+
+/** @type {Map<string, Record<string, unknown>>} */
+const parseJobs = new Map();
+
+function scheduleMockParseJob(parseHouse, key, delayMs = 1600) {
+  const jobId = randomUUID();
+  parseJobs.set(jobId, { status: "pending" });
+  setTimeout(() => {
+    const fakeLines = fakeParsedLines(key);
+    const current = getHouseFinance(parseHouse);
+    const next = {
+      ...current,
+      lines: [...current.lines, ...fakeLines],
+    };
+    setHouseFinance(parseHouse, next);
+    parseJobs.set(jobId, {
+      status: "succeeded",
+      addedLines: fakeLines.length,
+      sourceAssetKeys: [key],
+      sourceAssetKey: key,
+    });
+  }, delayMs);
+  return jobId;
+}
 
 function send(res, status, body, extra = {}) {
   res.writeHead(status, {
@@ -130,6 +155,26 @@ const server = createServer(async (req, res) => {
   console.log(`${safeForLog(req.method)} ${safeForLog(req.url)}`);
   if (req.method === "OPTIONS") {
     return send(res, 204, "");
+  }
+
+  if (req.method === "GET") {
+    let pathname = "";
+    try {
+      pathname = new URL(req.url ?? "", `http://127.0.0.1:${PORT}`).pathname;
+    } catch {
+      pathname = "";
+    }
+    const jobMatch = pathname.match(
+      /^\/finance\/(hillmarton|morrison)\/parse-statement\/jobs\/([^/]+)$/,
+    );
+    if (jobMatch) {
+      const jobId = jobMatch[2];
+      const row = parseJobs.get(jobId);
+      if (!row) {
+        return send(res, 404, { message: "Job not found" });
+      }
+      return send(res, 200, row);
+    }
   }
 
   if (req.method === "GET" && req.url === "/finance") {
@@ -241,21 +286,23 @@ const server = createServer(async (req, res) => {
   }
   if (parseHouse) {
     const body = await readJson(req);
-    // Simulate OpenRouter latency briefly so the loading state is visible.
-    await new Promise((r) => setTimeout(r, 1500));
-    const fakeLines = fakeParsedLines(body.key);
-    const current = getHouseFinance(parseHouse);
-    const next = {
-      ...current,
-      lines: [...current.lines, ...fakeLines],
-    };
-    setHouseFinance(parseHouse, next);
-    return send(res, 200, {
-      data: next,
-      addedLines: fakeLines.length,
-      sourceAssetKeys: [body.key],
-      sourceAssetKey: body.key,
-    });
+    if (body.simulate === "fail") {
+      const jobId = randomUUID();
+      parseJobs.set(jobId, { status: "pending" });
+      setTimeout(() => {
+        parseJobs.set(jobId, {
+          status: "failed",
+          message: "Simulated parse failure (mock API)",
+        });
+      }, 400);
+      return send(res, 202, { jobId, status: "pending" });
+    }
+    if (body.simulate === "slow") {
+      const jobId = scheduleMockParseJob(parseHouse, body.key, 35_000);
+      return send(res, 202, { jobId, status: "pending" });
+    }
+    const jobId = scheduleMockParseJob(parseHouse, body.key);
+    return send(res, 202, { jobId, status: "pending" });
   }
 
   send(res, 404, { message: "not found" });

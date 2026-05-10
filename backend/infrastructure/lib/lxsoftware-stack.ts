@@ -7,12 +7,13 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import * as sqs from "aws-cdk-lib/aws-sqs";
-import type { Construct, IConstruct } from "constructs";
+import type { Construct } from "constructs";
 import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
 
@@ -249,6 +250,12 @@ export class LxsoftwareStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    const recordsTableCfn = this.recordsTable.node.defaultChild as dynamodb.CfnTable;
+    recordsTableCfn.timeToLiveSpecification = {
+      attributeName: "expiresAt",
+      enabled: true,
+    };
+
     this.auditLogTable = new dynamodb.Table(this, "AuditLogTable", {
       tableName: "lxsoftware-admin-audit-log",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -364,9 +371,8 @@ export class LxsoftwareStack extends cdk.Stack {
 
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
-      // PDF statement parsing routes synchronously call OpenRouter, which
-      // can exceed a minute for some PDFs. The default 10s timeout is not
-      // enough for that path.
+      // PDF parsing uses OpenRouter; worker runs can exceed a minute. HTTP API
+      // integrations stay within ~30s; async parse jobs cover longer work.
       timeout: cdk.Duration.seconds(120),
       memorySize: 1024,
       environmentEncryptionKey: this.sharedEncryptionKey,
@@ -380,14 +386,26 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
         OPENROUTER_MODEL: openRouterModel.valueAsString,
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
+        PARSE_JOB_STALE_SECONDS: "150",
+        PARSE_JOB_STUCK_SECONDS: "240",
+        PARSE_JOB_TTL_SECONDS: "604800",
       },
     });
+
+    adminFn.addEnvironment("PARSE_WORKER_FUNCTION_NAME", adminFn.functionName);
+
+    new lambda.EventInvokeConfig(this, "AdminApiAsyncInvoke", {
+      function: adminFn,
+      retryAttempts: 0,
+      maxEventAge: cdk.Duration.minutes(6),
+    });
+
+    adminFn.grantInvoke(adminFn);
 
     // Allow async-invocation DLQ writes from this function.
     this.lambdaDeadLetterQueue.grantSendMessages(adminFn);
 
     this.recordsTable.grantReadWriteData(adminFn);
-    this.auditLogTable.grantReadWriteData(adminFn);
     this.assetsBucket.grantReadWrite(adminFn);
 
     // Grant SecretsManager:GetSecretValue only when an ARN is provided.
@@ -489,6 +507,10 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
         OPENROUTER_MODEL: openRouterModel.valueAsString,
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
+        PARSE_WORKER_FUNCTION_NAME: adminFn.functionName,
+        PARSE_JOB_STALE_SECONDS: "150",
+        PARSE_JOB_STUCK_SECONDS: "240",
+        PARSE_JOB_TTL_SECONDS: "604800",
       },
     });
 
@@ -499,6 +521,13 @@ export class LxsoftwareStack extends cdk.Stack {
     inboundMailBucket.grantDelete(inboundStatementFn);
     openRouterSecretPolicy.attachToRole(inboundStatementFn.role!);
     this.lambdaDeadLetterQueue.grantSendMessages(inboundStatementFn);
+
+    adminFn.grantInvoke(inboundStatementFn);
+
+    // AdminApiFn is invoked asynchronously for OpenRouter work (self-invoke from
+    // the HTTP API + invoke from InboundStatementMailFn). A future split to
+    // SQS + a dedicated parser Lambda would separate concurrency from API routes;
+    // this stack keeps a single code bundle for low admin traffic.
 
     const inboundReceiptRuleSet = new ses.ReceiptRuleSet(this, "InboundMailReceiptRuleSet", {
       receiptRuleSetName: "lxsoftware-inbound-mail",
@@ -528,6 +557,8 @@ export class LxsoftwareStack extends cdk.Stack {
       });
     }
 
+    // AWS::ApiGatewayV2::Integration TimeoutInMillis must be 50–30000 ms in this
+    // account/region; CDK defaults (~29s). Do not raise via L1 overrides.
     const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
 
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
@@ -674,18 +705,12 @@ export class LxsoftwareStack extends cdk.Stack {
       authorizer: jwtAuthorizer,
     });
 
-    // HttpLambdaIntegration only allows passing timeout ≤29s; override L1 so
-    // API Gateway can wait as long as the admin Lambda (statement parsing).
-    const adminIntegrationTimeoutMs = 120_000;
-    const setAdminApiIntegrationTimeouts = (node: IConstruct): void => {
-      if (node instanceof apigwv2.CfnIntegration) {
-        node.timeoutInMillis = adminIntegrationTimeoutMs;
-      }
-      for (const child of node.node.children) {
-        setAdminApiIntegrationTimeouts(child);
-      }
-    };
-    setAdminApiIntegrationTimeouts(this.httpApi);
+    this.httpApi.addRoutes({
+      path: "/finance/{house}/parse-statement/jobs/{jobId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
 
     // ------------------------------------------------------------------
     // CloudFormation outputs (export names kept stable for compatibility
