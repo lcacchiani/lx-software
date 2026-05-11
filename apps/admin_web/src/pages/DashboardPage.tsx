@@ -9,9 +9,8 @@ import {
   type FiscalYearId,
   fiscalYearIdToStartCalendarYear,
   sumHouseStatementLinesForFiscalYear,
-  sumHouseStatementLinesForUtcMonth,
 } from "../lib/fiscalYearFinance";
-import type { HouseKey } from "../lib/financeModel";
+import { sumMonthlyFinanceLedgerAmountsByHouse, type HouseKey } from "../lib/financeModel";
 import { MoneyAmount } from "../components/ui";
 
 function sortedCurrencyEntries(record: Readonly<Record<string, number>>): [string, number][] {
@@ -65,8 +64,13 @@ function HouseSummaryCard({
   );
 
   const monthlySums = useMemo(
-    () => sumHouseStatementLinesForUtcMonth(house.lines, new Date()),
-    [house.lines],
+    () =>
+      sumMonthlyFinanceLedgerAmountsByHouse(
+        data.incomeRecords,
+        data.expenseRecords,
+        houseKey,
+      ),
+    [data.expenseRecords, data.incomeRecords, houseKey],
   );
 
   const fyLabel = formatFiscalYearIdLabel(fiscalYear);

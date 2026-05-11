@@ -104,6 +104,39 @@ export function ledgerMonthlyAmount(record: FinanceLedgerRecord): number {
   return record.amountPeriod === "year" ? record.amount / 12 : record.amount;
 }
 
+/** Buckets for dashboard-style income vs expense totals by currency. */
+export type FinanceLedgerAmountBuckets = {
+  readonly incomeByCurrency: Readonly<Record<string, number>>;
+  readonly expensesByCurrency: Readonly<Record<string, number>>;
+};
+
+/**
+ * Sums Finance Income / Expenses ledger rows with `amountPeriod` **month** and
+ * `relatedHouse` equal to `houseKey`. Yearly rows are excluded. All matching
+ * rows are included (no calendar-year filter).
+ */
+export function sumMonthlyFinanceLedgerAmountsByHouse(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  expenseRecords: readonly FinanceLedgerRecord[],
+  houseKey: HouseKey,
+): FinanceLedgerAmountBuckets {
+  const income: Record<string, number> = {};
+  const expenses: Record<string, number> = {};
+
+  for (const r of incomeRecords) {
+    if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) continue;
+    const c = r.currency;
+    income[c] = (income[c] ?? 0) + r.amount;
+  }
+  for (const r of expenseRecords) {
+    if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) continue;
+    const c = r.currency;
+    expenses[c] = (expenses[c] ?? 0) + r.amount;
+  }
+
+  return { incomeByCurrency: income, expensesByCurrency: expenses };
+}
+
 export type FinancePersistedState = {
   readonly hillmarton: HouseFinanceData;
   readonly morrison: HouseFinanceData;
