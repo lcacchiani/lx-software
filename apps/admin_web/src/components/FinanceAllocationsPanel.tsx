@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -7,6 +7,7 @@ import {
 import { formatDateUtc } from "../lib/formatDisplay";
 import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
+import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import {
   type FinanceAllocationRecord,
   newCustomAllocationExpenseId,
@@ -118,6 +119,8 @@ export function FinanceAllocationsPanel(props: {
   ) => void;
 }) {
   const { records, onPatch } = props;
+  const customAllocationEditorRef = useRef<HTMLDivElement | null>(null);
+  const linkedAllocationEditorRef = useRef<HTMLDivElement | null>(null);
   const [sortKey, setSortKey] = useState<AllocSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const onSort = useCallback((key: AllocSortKey) => {
@@ -351,12 +354,14 @@ export function FinanceAllocationsPanel(props: {
       setCustomIncomeMonthlyStr(
         row.allocationIncomeMonthly !== undefined ? String(row.allocationIncomeMonthly) : "",
       );
+      scheduleFocusRecordEditor(() => customAllocationEditorRef.current);
     } else {
       resetCustomForm();
       setEditingLinkedExpenseId(row.expenseId);
       setLinkedFormError(null);
       setLinkedAccumStr(String(row.accumulatedAmount));
       setLinkedIsIncome(row.isIncome === true);
+      scheduleFocusRecordEditor(() => linkedAllocationEditorRef.current);
     }
   }
 
@@ -494,6 +499,7 @@ export function FinanceAllocationsPanel(props: {
       </p>
 
       <AdminEditorSection
+        containerRef={customAllocationEditorRef}
         title="Custom allocation"
         footer={
           <>
@@ -595,6 +601,7 @@ export function FinanceAllocationsPanel(props: {
 
       {editingLinkedRow ? (
         <AdminEditorSection
+          containerRef={linkedAllocationEditorRef}
           title="Edit accumulated amount"
           footer={
             <>
