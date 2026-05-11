@@ -20,6 +20,7 @@ import {
   sumMonthlyFinanceLedgerAmountsByHouse,
   sumMonthlyFinanceLedgerAmountsGeneral,
   sumMonthlyGeneralExpenseAmountsByCategory,
+  syntheticIncomeLedgerRowsFromAllocations,
   type HouseKey,
 } from "./financeModel";
 
@@ -865,6 +866,43 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
     expect(r.expensesByCurrency.HKD).toBe(10);
   });
 
+  it("includes allocation rows tagged as income when relatedHouse matches", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "A",
+          amount: 100,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const expenses = normalizeLedgerRecords([], EXPENSE_CATEGORIES);
+    const allocations = normalizeAllocationRecords([
+      {
+        expenseId: "x1",
+        description: "Alloc in",
+        monthlyAmount: 25,
+        accumulatedAmount: 0,
+        currency: "HKD",
+        relatedHouse: "hillmarton",
+        isIncome: true,
+      },
+    ]);
+    const r = sumMonthlyFinanceLedgerAmountsByHouse(
+      income,
+      expenses,
+      "hillmarton",
+      undefined,
+      allocations,
+    );
+    expect(r.incomeByCurrency.HKD).toBe(125);
+  });
+
   it("adds derived expenses from tagged income and allocation percents", () => {
     const income = normalizeLedgerRecords(
       [
@@ -1050,6 +1088,43 @@ describe("sumMonthlyFinanceLedgerAmountsGeneral", () => {
     expect(r.incomeByCurrency.HKD).toBe(500);
     expect(r.expensesByCurrency.HKD).toBeCloseTo(50, 10);
   });
+
+  it("includes allocation income in general monthly totals when not linked to a property", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Pay",
+          amount: 100,
+          currency: "HKD",
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const allocations = normalizeAllocationRecords([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000099",
+        description: "Side",
+        monthlyAmount: 0,
+        accumulatedAmount: 1,
+        currency: "USD",
+        isCustomAllocation: true,
+        isIncome: true,
+        allocationIncomeMonthly: 40,
+      },
+    ]);
+    const r = sumMonthlyFinanceLedgerAmountsGeneral(
+      income,
+      [],
+      normalizeExpenseIncomeAllocationPercents({}),
+      LEDGER_HOUSE_OPTIONS,
+      allocations,
+    );
+    expect(r.incomeByCurrency.HKD).toBe(100);
+    expect(r.incomeByCurrency.USD).toBe(40);
+  });
 });
 
 describe("sumMonthlyGeneralExpenseAmountsByCategory", () => {
@@ -1189,6 +1264,27 @@ describe("buildDerivedExpenseLedgerRowsFromTaggedIncome", () => {
   });
 });
 
+describe("syntheticIncomeLedgerRowsFromAllocations", () => {
+  it("builds income ledger rows from tagged allocations with positive monthly amounts", () => {
+    const rows = syntheticIncomeLedgerRowsFromAllocations(
+      normalizeAllocationRecords([
+        {
+          expenseId: "e-alloc-1",
+          description: "Bonus pool",
+          monthlyAmount: 300,
+          accumulatedAmount: 0,
+          currency: "HKD",
+          isIncome: true,
+        },
+      ]),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("__alloc_income__e-alloc-1");
+    expect(rows[0].amount).toBe(300);
+    expect(rows[0].isDerivedFromAllocation).toBe(true);
+  });
+});
+
 describe("allocationRecordsToApiPayload", () => {
   it("sends description and currency only for custom allocations", () => {
     const body = allocationRecordsToApiPayload([
@@ -1219,6 +1315,45 @@ describe("allocationRecordsToApiPayload", () => {
     ]);
   });
 
+  it("includes isIncome and allocationIncomeMonthly on custom rows when set", () => {
+    const body = allocationRecordsToApiPayload([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000011",
+        description: "Side",
+        monthlyAmount: 0,
+        accumulatedAmount: 1,
+        currency: "HKD",
+        isCustomAllocation: true,
+        isIncome: true,
+        allocationIncomeMonthly: 55,
+      },
+    ]);
+    expect(body).toEqual([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000011",
+        description: "Side",
+        currency: "HKD",
+        accumulatedAmount: 1,
+        isIncome: true,
+        allocationIncomeMonthly: 55,
+      },
+    ]);
+  });
+
+  it("includes isIncome on linked rows when true", () => {
+    const body = allocationRecordsToApiPayload([
+      {
+        expenseId: "exp-1",
+        description: "X",
+        monthlyAmount: 10,
+        accumulatedAmount: 2,
+        currency: "HKD",
+        isIncome: true,
+      },
+    ]);
+    expect(body).toEqual([{ expenseId: "exp-1", accumulatedAmount: 2, isIncome: true }]);
+  });
+
   it("treats __custom__ id as custom even without flag", () => {
     const body = allocationRecordsToApiPayload([
       {
@@ -1239,7 +1374,7 @@ describe("allocationRecordsToApiPayload", () => {
     ]);
   });
 
-  it("normalizes custom allocation monthly to zero", () => {
+  it("normalizes custom allocation without income tag (monthly stays zero)", () => {
     const out = normalizeAllocationRecords([
       {
         expenseId: "__custom__00000000-0000-4000-8000-000000000002",
@@ -1252,6 +1387,25 @@ describe("allocationRecordsToApiPayload", () => {
     ]);
     expect(out).toHaveLength(1);
     expect(out[0].monthlyAmount).toBe(0);
+    expect(out[0].isIncome).toBeUndefined();
+  });
+
+  it("normalizes custom allocation with income tag and monthly", () => {
+    const out = normalizeAllocationRecords([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000003",
+        description: "Side",
+        monthlyAmount: 0,
+        accumulatedAmount: 1,
+        currency: "HKD",
+        isCustomAllocation: true,
+        isIncome: true,
+        allocationIncomeMonthly: 42,
+      },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].isIncome).toBe(true);
+    expect(out[0].allocationIncomeMonthly).toBe(42);
   });
 });
 

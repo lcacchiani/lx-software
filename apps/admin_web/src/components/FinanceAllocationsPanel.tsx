@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useState } from "react";
+import { type FormEvent, Fragment, useCallback, useMemo, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -81,6 +81,36 @@ function compareAllocations(
   return a.expenseId.localeCompare(b.expenseId);
 }
 
+/** Rebuild a row without income-tag fields (used when clearing the Income tag). */
+function allocationRowWithoutIncomeTag(row: FinanceAllocationRecord): FinanceAllocationRecord {
+  return {
+    expenseId: row.expenseId,
+    description: row.description,
+    monthlyAmount: row.monthlyAmount,
+    accumulatedAmount: row.accumulatedAmount,
+    currency: row.currency,
+    ...(row.lastUpdated !== undefined ? { lastUpdated: row.lastUpdated } : {}),
+    ...(row.isCustomAllocation === true ? { isCustomAllocation: true as const } : {}),
+    ...(row.relatedHouse !== undefined ? { relatedHouse: row.relatedHouse } : {}),
+  };
+}
+
+function allocationMonthlyColumnDisplay(
+  row: FinanceAllocationRecord,
+): { readonly kind: "dash" } | { readonly kind: "amount"; readonly value: number; readonly currency: string } {
+  if (row.isCustomAllocation === true) {
+    if (row.isIncome === true) {
+      return {
+        kind: "amount",
+        value: row.allocationIncomeMonthly ?? 0,
+        currency: row.currency,
+      };
+    }
+    return { kind: "dash" };
+  }
+  return { kind: "amount", value: row.monthlyAmount, currency: row.currency };
+}
+
 export function FinanceAllocationsPanel(props: {
   readonly records: readonly FinanceAllocationRecord[];
   readonly onPatch: (
@@ -126,6 +156,11 @@ export function FinanceAllocationsPanel(props: {
         ),
         className: "small",
         thAriaSort: thAria("desc"),
+      },
+      {
+        key: "tags",
+        header: <span className="fw-semibold text-nowrap">Tags</span>,
+        className: "small text-muted",
       },
       {
         key: "monthly",
@@ -199,10 +234,14 @@ export function FinanceAllocationsPanel(props: {
   const [accumStr, setAccumStr] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editCcy, setEditCcy] = useState(GLOBAL_DEFAULT_CURRENCY);
+  const [editIsIncome, setEditIsIncome] = useState(false);
+  const [editIncomeMonthlyStr, setEditIncomeMonthlyStr] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [customDesc, setCustomDesc] = useState("");
   const [customCcy, setCustomCcy] = useState<CurrencyCode>(GLOBAL_DEFAULT_CURRENCY);
   const [customAccumStr, setCustomAccumStr] = useState("");
+  const [customIsIncome, setCustomIsIncome] = useState(false);
+  const [customIncomeMonthlyStr, setCustomIncomeMonthlyStr] = useState("");
   const [customFormError, setCustomFormError] = useState<string | null>(null);
   const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
     GLOBAL_DEFAULT_CURRENCY,
@@ -216,7 +255,8 @@ export function FinanceAllocationsPanel(props: {
           const hay = [r.description, r.currency, String(r.monthlyAmount), String(r.accumulatedAmount)]
             .join(" ")
             .toLowerCase();
-          return hay.includes(q);
+          const tagHay = r.isIncome === true ? "income" : "";
+          return `${hay} ${tagHay}`.includes(q);
         });
     if (sortKey !== null) {
       list.sort((a, b) => compareAllocations(a, b, sortKey, sortDir));
@@ -276,6 +316,8 @@ export function FinanceAllocationsPanel(props: {
     setAccumStr("");
     setEditDesc("");
     setEditCcy(GLOBAL_DEFAULT_CURRENCY);
+    setEditIsIncome(false);
+    setEditIncomeMonthlyStr("");
     setFormError(null);
   }
 
@@ -283,6 +325,12 @@ export function FinanceAllocationsPanel(props: {
     setEditingExpenseId(row.expenseId);
     setAccumStr(String(row.accumulatedAmount));
     setFormError(null);
+    setEditIsIncome(row.isIncome === true);
+    setEditIncomeMonthlyStr(
+      row.isCustomAllocation === true && row.allocationIncomeMonthly !== undefined
+        ? String(row.allocationIncomeMonthly)
+        : "",
+    );
     if (row.isCustomAllocation === true) {
       setEditDesc(row.description);
       setEditCcy(coerceSupportedCurrency(row.currency, GLOBAL_DEFAULT_CURRENCY));
@@ -307,26 +355,66 @@ export function FinanceAllocationsPanel(props: {
         return;
       }
       const ccy = coerceSupportedCurrency(editCcy, GLOBAL_DEFAULT_CURRENCY);
-      onPatch((prev) =>
-        prev.map((r) =>
-          r.expenseId === editingExpenseId
-            ? {
-                ...r,
-                description: d,
-                currency: ccy,
-                accumulatedAmount: n,
-                monthlyAmount: 0,
-                isCustomAllocation: true as const,
-              }
-            : r,
-        ),
-      );
+      if (editIsIncome) {
+        const inc = parseAmount(editIncomeMonthlyStr);
+        if (inc === null) {
+          setFormError("Monthly income amount must be a valid number.");
+          return;
+        }
+        if (inc <= 0) {
+          setFormError("Monthly income amount must be positive when Income is checked.");
+          return;
+        }
+        onPatch((prev) =>
+          prev.map((r) =>
+            r.expenseId === editingExpenseId
+              ? {
+                  ...allocationRowWithoutIncomeTag(r),
+                  description: d,
+                  currency: ccy,
+                  accumulatedAmount: n,
+                  monthlyAmount: 0,
+                  isCustomAllocation: true as const,
+                  isIncome: true as const,
+                  allocationIncomeMonthly: inc,
+                }
+              : r,
+          ),
+        );
+      } else {
+        onPatch((prev) =>
+          prev.map((r) =>
+            r.expenseId === editingExpenseId
+              ? {
+                  ...allocationRowWithoutIncomeTag(r),
+                  description: d,
+                  currency: ccy,
+                  accumulatedAmount: n,
+                  monthlyAmount: 0,
+                  isCustomAllocation: true as const,
+                }
+              : r,
+          ),
+        );
+      }
     } else {
-      onPatch((prev) =>
-        prev.map((r) =>
-          r.expenseId === editingExpenseId ? { ...r, accumulatedAmount: n } : r,
-        ),
-      );
+      if (editIsIncome) {
+        onPatch((prev) =>
+          prev.map((r) =>
+            r.expenseId === editingExpenseId
+              ? { ...allocationRowWithoutIncomeTag(r), accumulatedAmount: n, isIncome: true as const }
+              : r,
+          ),
+        );
+      } else {
+        onPatch((prev) =>
+          prev.map((r) =>
+            r.expenseId === editingExpenseId
+              ? { ...allocationRowWithoutIncomeTag(r), accumulatedAmount: n }
+              : r,
+          ),
+        );
+      }
     }
     resetForm();
   }
@@ -344,20 +432,47 @@ export function FinanceAllocationsPanel(props: {
       return;
     }
     const ccy = coerceSupportedCurrency(customCcy, GLOBAL_DEFAULT_CURRENCY);
-    onPatch((prev) => [
-      ...prev,
-      {
-        expenseId: newCustomAllocationExpenseId(),
-        description: d,
-        monthlyAmount: 0,
-        accumulatedAmount: n,
-        currency: ccy,
-        isCustomAllocation: true as const,
-      },
-    ]);
+    if (customIsIncome) {
+      const inc = parseAmount(customIncomeMonthlyStr);
+      if (inc === null) {
+        setCustomFormError("Monthly income amount must be a valid number.");
+        return;
+      }
+      if (inc <= 0) {
+        setCustomFormError("Monthly income amount must be positive when Income is checked.");
+        return;
+      }
+      onPatch((prev) => [
+        ...prev,
+        {
+          expenseId: newCustomAllocationExpenseId(),
+          description: d,
+          monthlyAmount: 0,
+          accumulatedAmount: n,
+          currency: ccy,
+          isCustomAllocation: true as const,
+          isIncome: true as const,
+          allocationIncomeMonthly: inc,
+        },
+      ]);
+    } else {
+      onPatch((prev) => [
+        ...prev,
+        {
+          expenseId: newCustomAllocationExpenseId(),
+          description: d,
+          monthlyAmount: 0,
+          accumulatedAmount: n,
+          currency: ccy,
+          isCustomAllocation: true as const,
+        },
+      ]);
+    }
     setCustomDesc("");
     setCustomCcy(GLOBAL_DEFAULT_CURRENCY);
     setCustomAccumStr("");
+    setCustomIsIncome(false);
+    setCustomIncomeMonthlyStr("");
     setCustomFormError(null);
   }
 
@@ -374,9 +489,10 @@ export function FinanceAllocationsPanel(props: {
       <p className="text-muted small mb-3">
         Linked rows come from expenses tagged <strong>Allocate</strong> on the Expenses tab or from
         derived allocation lines (also labeled Allocate there); for those you only set accumulated
-        amounts here—the monthly column follows the expense ledger. <strong>Custom allocations</strong>{" "}
-        are lines you add below: you set description, currency, and accumulated amount; monthly is
-        not used (shown as —).
+        amounts here—the monthly column follows the expense ledger. Check <strong>Income</strong> to
+        mirror that monthly amount on the Income tab (for custom lines, enter the monthly income
+        when Income is checked). <strong>Custom allocations</strong> are lines you add below: set
+        description, currency, and accumulated amount; monthly is optional when tagged as income.
       </p>
 
       <AdminEditorSection
@@ -393,6 +509,8 @@ export function FinanceAllocationsPanel(props: {
                 setCustomDesc("");
                 setCustomCcy(GLOBAL_DEFAULT_CURRENCY);
                 setCustomAccumStr("");
+                setCustomIsIncome(false);
+                setCustomIncomeMonthlyStr("");
                 setCustomFormError(null);
               }}
             >
@@ -448,6 +566,38 @@ export function FinanceAllocationsPanel(props: {
               />
             </div>
           </div>
+          <div className="row g-3 mt-2 align-items-end">
+            <div className="col-12">
+              <div className="form-check mb-0">
+                <input
+                  id="alloc-add-income"
+                  type="checkbox"
+                  className="form-check-input"
+                  checked={customIsIncome}
+                  onChange={(ev) => setCustomIsIncome(ev.target.checked)}
+                />
+                <label className="form-check-label small" htmlFor="alloc-add-income">
+                  Income (show on Income tab with monthly amount below)
+                </label>
+              </div>
+            </div>
+            {customIsIncome ? (
+              <div className="col-md-2">
+                <label className="form-label small" htmlFor="alloc-add-income-monthly">
+                  Monthly income
+                </label>
+                <input
+                  id="alloc-add-income-monthly"
+                  type="number"
+                  step="0.01"
+                  className="form-control form-control-sm"
+                  required={customIsIncome}
+                  value={customIncomeMonthlyStr}
+                  onChange={(ev) => setCustomIncomeMonthlyStr(ev.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
         </form>
       </AdminEditorSection>
 
@@ -476,6 +626,7 @@ export function FinanceAllocationsPanel(props: {
               </div>
             ) : null}
             {editingRow.isCustomAllocation === true ? (
+              <Fragment>
               <div className="row g-3 align-items-end">
                 <div className="col-md-4">
                   <label className="form-label small" htmlFor="alloc-edit-desc">
@@ -503,8 +654,19 @@ export function FinanceAllocationsPanel(props: {
                   />
                 </div>
                 <div className="col-md-2">
-                  <span className="form-label small d-block text-muted">Monthly amount</span>
-                  <div className="small text-muted">—</div>
+                  <label className="form-label small" htmlFor="alloc-edit-income-monthly">
+                    Monthly income
+                  </label>
+                  <input
+                    id="alloc-edit-income-monthly"
+                    type="number"
+                    step="0.01"
+                    className="form-control form-control-sm"
+                    required={editIsIncome}
+                    disabled={!editIsIncome}
+                    value={editIncomeMonthlyStr}
+                    onChange={(ev) => setEditIncomeMonthlyStr(ev.target.value)}
+                  />
                 </div>
                 <div className="col-md-2">
                   <label className="form-label small" htmlFor="alloc-accum-input">
@@ -521,7 +683,30 @@ export function FinanceAllocationsPanel(props: {
                   />
                 </div>
               </div>
+              <div className="row g-3 mt-2">
+                <div className="col-12">
+                  <div className="form-check mb-0">
+                    <input
+                      id="alloc-edit-income"
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={editIsIncome}
+                      onChange={(ev) => {
+                        setEditIsIncome(ev.target.checked);
+                        if (!ev.target.checked) {
+                          setEditIncomeMonthlyStr("");
+                        }
+                      }}
+                    />
+                    <label className="form-check-label small" htmlFor="alloc-edit-income">
+                      Income (show on Income tab)
+                    </label>
+                  </div>
+                </div>
+              </div>
+              </Fragment>
             ) : (
+              <Fragment>
               <div className="row g-3 align-items-end">
                 <div className="col-md-4">
                   <span className="form-label small d-block text-muted">Description (from expense)</span>
@@ -556,6 +741,23 @@ export function FinanceAllocationsPanel(props: {
                   />
                 </div>
               </div>
+              <div className="row g-3 mt-2">
+                <div className="col-12">
+                  <div className="form-check mb-0">
+                    <input
+                      id="alloc-edit-linked-income"
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={editIsIncome}
+                      onChange={(ev) => setEditIsIncome(ev.target.checked)}
+                    />
+                    <label className="form-check-label small" htmlFor="alloc-edit-linked-income">
+                      Income (show monthly amount from the expense on the Income tab)
+                    </label>
+                  </div>
+                </div>
+              </div>
+              </Fragment>
             )}
           </form>
         </AdminEditorSection>
@@ -570,14 +772,21 @@ export function FinanceAllocationsPanel(props: {
           filterPlaceholder="Filter records…"
         >
           {filtered.length ? (
-            filtered.map((r) => (
+            filtered.map((r) => {
+              const monthlyCol = allocationMonthlyColumnDisplay(r);
+              return (
               <tr key={r.expenseId}>
                 <td className="small">{r.description}</td>
+                <td className="small text-muted">{r.isIncome === true ? "Income" : "—"}</td>
                 <td className="small text-end">
-                  {r.isCustomAllocation === true ? (
+                  {monthlyCol.kind === "dash" ? (
                     <span className="text-muted">—</span>
                   ) : (
-                    <MoneyAmount amount={r.monthlyAmount} currency={r.currency} amountOnly />
+                    <MoneyAmount
+                      amount={monthlyCol.value}
+                      currency={monthlyCol.currency}
+                      amountOnly
+                    />
                   )}
                 </td>
                 <td className="small text-end">
@@ -605,7 +814,8 @@ export function FinanceAllocationsPanel(props: {
                   ) : null}
                 </td>
               </tr>
-            ))
+            );
+            })
           ) : (
             <AdminDataTableEmptyRow
               colSpan={colSpan}
@@ -619,6 +829,7 @@ export function FinanceAllocationsPanel(props: {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total (accumulated)</td>
+              <td className="small" />
               <td className="small text-muted fw-normal">
                 <FrankfurterRatesFooterNote
                   needsFx={needsFx}

@@ -113,8 +113,10 @@ function HouseSummaryCard({
         data.expenseRecords,
         houseKey,
         data.expenseIncomeAllocationPercents,
+        data.allocationRecords,
       ),
     [
+      data.allocationRecords,
       data.expenseIncomeAllocationPercents,
       data.expenseRecords,
       data.incomeRecords,
@@ -192,8 +194,10 @@ function GeneralSummaryCard() {
         data.expenseRecords,
         data.expenseIncomeAllocationPercents,
         LEDGER_RELATED_HOUSE_OPTIONS,
+        data.allocationRecords,
       ),
     [
+      data.allocationRecords,
       data.expenseIncomeAllocationPercents,
       data.expenseRecords,
       data.incomeRecords,

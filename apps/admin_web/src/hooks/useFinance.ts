@@ -301,7 +301,11 @@ export function useFinance() {
           ? (state?.incomeRecords ?? DEFAULT_FINANCE_STATE.incomeRecords)
           : (state?.expenseRecords ?? DEFAULT_FINANCE_STATE.expenseRecords);
       const next = patch(prev);
-      saveLedgerSheet.mutate({ sheet, records: next });
+      const toSave =
+        sheet === "income"
+          ? next.filter((r) => r.isDerivedFromAllocation !== true)
+          : next;
+      saveLedgerSheet.mutate({ sheet, records: toSave });
     },
     [qc, saveLedgerSheet],
   );
