@@ -487,6 +487,7 @@ export function FinanceLedgerSheetPanel({
               : r.relatedHouse ?? "";
           const flagHay = incomeLedgerFlagLabels(r, incomeFlagFields).toLowerCase();
           const expenseFlagHay = expenseLedgerFlagLabels(r, expenseFlagFields).toLowerCase();
+          const derivedAllocHay = r.isDerivedFromTaggedIncome ? "allocate" : "";
           const hay = [
             r.category,
             r.description,
@@ -496,6 +497,7 @@ export function FinanceLedgerSheetPanel({
             houseHay ?? "",
             flagHay,
             expenseFlagHay,
+            derivedAllocHay,
           ]
             .join(" ")
             .toLowerCase();
@@ -872,9 +874,13 @@ export function FinanceLedgerSheetPanel({
                 <td className="small">{r.description}</td>
                 {showIncomeFlagsCol || showExpenseFlagsCol ? (
                   <td className="small text-muted">
-                    {showIncomeFlagsCol
-                      ? incomeLedgerFlagLabels(r, incomeFlagFields) || "—"
-                      : expenseLedgerFlagLabels(r, expenseFlagFields) || "—"}
+                    {showIncomeFlagsCol ? (
+                      incomeLedgerFlagLabels(r, incomeFlagFields) || "—"
+                    ) : r.isDerivedFromTaggedIncome ? (
+                      "Allocate"
+                    ) : (
+                      expenseLedgerFlagLabels(r, expenseFlagFields) || "—"
+                    )}
                   </td>
                 ) : null}
                 {showRelatedHouseCol ? (

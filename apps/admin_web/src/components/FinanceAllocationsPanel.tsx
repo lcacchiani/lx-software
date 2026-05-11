@@ -1,12 +1,21 @@
 import { type FormEvent, useCallback, useMemo, useState } from "react";
+import {
+  coerceSupportedCurrency,
+  GLOBAL_DEFAULT_CURRENCY,
+  type CurrencyCode,
+} from "../lib/currencies";
 import { formatDateUtc } from "../lib/formatDisplay";
 import { parseAmount } from "../lib/formParse";
+import { convertAmountToBase } from "../lib/frankfurterRates";
 import { type FinanceAllocationRecord } from "../lib/financeModel";
+import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
+  CurrencySelect,
+  FrankfurterRatesFooterNote,
   MoneyAmount,
   TableIconButton,
   TableSortHeaderButton,
@@ -186,6 +195,9 @@ export function FinanceAllocationsPanel(props: {
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [accumStr, setAccumStr] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
+    GLOBAL_DEFAULT_CURRENCY,
+  );
 
   const filtered = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
@@ -206,6 +218,41 @@ export function FinanceAllocationsPanel(props: {
     }
     return list;
   }, [records, tableFilter, sortKey, sortDir]);
+
+  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
+
+  const { needsFx, ratesQuery, fxLoading, fxError } = useFrankfurterRatesForTotals(
+    totalDisplayCurrency,
+    recordCurrencies,
+  );
+
+  const convertedAccumulatedTotal = useMemo(() => {
+    if (records.length === 0) {
+      return null;
+    }
+    let map: ReadonlyMap<string, number> = new Map();
+    if (needsFx) {
+      if (!ratesQuery.isSuccess) return null;
+      const ratePayload = ratesQuery.data;
+      if (!ratePayload) return null;
+      map = ratePayload.rateByQuote;
+    }
+    try {
+      return records.reduce(
+        (sum, r) =>
+          sum +
+          convertAmountToBase(
+            r.accumulatedAmount,
+            r.currency,
+            totalDisplayCurrency,
+            map,
+          ),
+        0,
+      );
+    } catch {
+      return null;
+    }
+  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, totalDisplayCurrency]);
 
   const editingRow = useMemo(
     () => (editingExpenseId ? records.find((r) => r.expenseId === editingExpenseId) : undefined),
@@ -245,8 +292,9 @@ export function FinanceAllocationsPanel(props: {
   return (
     <div>
       <p className="text-muted small mb-3">
-        Rows are expense ledger lines tagged <strong>Allocate</strong> on the Expenses tab. Tag or
-        untag there; here you can only edit each row&apos;s accumulated amount.
+        Rows include expense lines you tag <strong>Allocate</strong> on the Expenses tab, plus
+        derived lines from tagged income (also labeled Allocate there). Tag or untag manual
+        expenses on Expenses; here you can only edit each row&apos;s accumulated amount.
       </p>
 
       {editingRow ? (
@@ -342,10 +390,47 @@ export function FinanceAllocationsPanel(props: {
               message={
                 records.length
                   ? "No records match the filter."
-                  : "No expenses are tagged Allocate yet. Use the Expenses tab to tag rows."
+                  : "No allocation rows yet. Tag an expense with Allocate on the Expenses tab, or add derived lines via tagged income and allocation rates."
               }
             />
           )}
+          {records.length > 0 ? (
+            <tr className="table-group-divider table-secondary fw-semibold">
+              <td className="small">Total (accumulated)</td>
+              <td className="small text-muted fw-normal">
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
+              </td>
+              <td className="small text-end">
+                {convertedAccumulatedTotal !== null ? (
+                  <MoneyAmount
+                    amount={convertedAccumulatedTotal}
+                    currency={totalDisplayCurrency}
+                    amountOnly
+                  />
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </td>
+              <td className="small">
+                <CurrencySelect
+                  id="finance-allocations-total-ccy"
+                  className="form-select form-select-sm"
+                  value={totalDisplayCurrency}
+                  onChange={(code) =>
+                    setTotalDisplayCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                  }
+                  disabled={fxLoading}
+                />
+              </td>
+              <td className="small" />
+              <td className="small text-end" />
+            </tr>
+          ) : null}
         </AdminDataTable>
       </AdminEditorSection>
     </div>

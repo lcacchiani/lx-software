@@ -25,10 +25,13 @@ def _install_stubs() -> None:
 _install_stubs()
 
 from handler import (  # noqa: E402
+    DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
     EXPENSE_RECORD_CATEGORIES,
     INCOME_RECORD_CATEGORIES,
     _groups_include_admin,
     _is_allowed_upload_content_type,
+    _build_allocation_records_for_response,
+    _derived_expense_rows_from_tagged_income,
     _merge_allocation_accumulated_last_updated,
     _merge_investment_last_updated,
     _merge_pension_last_updated,
@@ -1072,6 +1075,59 @@ class TestLedgerSheetPayload(unittest.TestCase):
             raw, EXPENSE_RECORD_CATEGORIES, include_expense_flags=True
         )
         self.assertTrue(out[0]["isAllocate"])
+
+    def test_derived_expense_tax_on_income_row(self) -> None:
+        income = [
+            {
+                "id": "1",
+                "category": "Salary",
+                "description": "Pay",
+                "amount": 1000,
+                "currency": "HKD",
+                "amountPeriod": "month",
+                "relatedHouse": "hillmarton",
+                "isTax": True,
+                "isSaving": False,
+                "isInvestment": False,
+            }
+        ]
+        perc = {
+            **DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
+            "taxOnIncomePercent": 10.0,
+        }
+        rows = _derived_expense_rows_from_tagged_income(income, perc)
+        match = [r for r in rows if r["id"] == "__derived__tax-on-income__hillmarton__HKD"]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(match[0]["amount"], 100.0)
+
+    def test_build_allocation_response_includes_derived(self) -> None:
+        income = [
+            {
+                "id": "1",
+                "category": "Salary",
+                "description": "Pay",
+                "amount": 800,
+                "currency": "USD",
+                "amountPeriod": "month",
+                "relatedHouse": "morrison",
+                "isTax": False,
+                "isSaving": True,
+                "isInvestment": False,
+            }
+        ]
+        perc = {
+            **DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
+            "savingOnIncomePercent": 25.0,
+        }
+        out = _build_allocation_records_for_response([], [], income, perc)
+        match = [
+            r
+            for r in out
+            if r["expenseId"] == "__derived__saving-on-income__morrison__USD"
+        ]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(match[0]["monthlyAmount"], 200.0)
+        self.assertEqual(match[0]["accumulatedAmount"], 0.0)
 
     def test_expense_helper_category(self) -> None:
         body = {
