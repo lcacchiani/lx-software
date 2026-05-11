@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
+import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
 import { useFinance } from "../hooks/useFinance";
+import { GLOBAL_DEFAULT_CURRENCY } from "../lib/currencies";
+import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   defaultFiscalYearIdForNowUtc,
   FISCAL_YEAR_OPTIONS,
@@ -13,9 +16,18 @@ import {
 import {
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
+  sumMonthlyFinanceLedgerAmountsGeneral,
   type HouseKey,
 } from "../lib/financeModel";
 import { MoneyAmount } from "../components/ui";
+
+const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
+  readonly value: HouseKey;
+  readonly label: string;
+}> = [
+  { value: "hillmarton", label: "32 Hillmarton" },
+  { value: "morrison", label: "The Morrison" },
+];
 
 function sortedCurrencyEntries(record: Readonly<Record<string, number>>): [string, number][] {
   return Object.entries(record)
@@ -166,6 +178,154 @@ function HouseSummaryCard({
   );
 }
 
+function GeneralSummaryCard() {
+  const { data } = useFinance();
+  const generalBuckets = useMemo(
+    () =>
+      sumMonthlyFinanceLedgerAmountsGeneral(
+        data.incomeRecords,
+        data.expenseRecords,
+        data.expenseIncomeAllocationPercents,
+        LEDGER_RELATED_HOUSE_OPTIONS,
+      ),
+    [
+      data.expenseIncomeAllocationPercents,
+      data.expenseRecords,
+      data.incomeRecords,
+    ],
+  );
+
+  const hasActivity = useMemo(() => {
+    for (const v of Object.values(generalBuckets.incomeByCurrency)) {
+      if (v !== 0) return true;
+    }
+    for (const v of Object.values(generalBuckets.expensesByCurrency)) {
+      if (v !== 0) return true;
+    }
+    return false;
+  }, [generalBuckets]);
+
+  const quoteCurrencies = useMemo(() => {
+    const s = new Set<string>();
+    for (const [ccy, amt] of Object.entries(generalBuckets.incomeByCurrency)) {
+      if (amt !== 0) s.add(ccy);
+    }
+    for (const [ccy, amt] of Object.entries(generalBuckets.expensesByCurrency)) {
+      if (amt !== 0) s.add(ccy);
+    }
+    return [...s];
+  }, [generalBuckets]);
+
+  const needsFx = useMemo(
+    () =>
+      quoteCurrencies.some(
+        (c) => c.trim().toUpperCase() !== GLOBAL_DEFAULT_CURRENCY,
+      ),
+    [quoteCurrencies],
+  );
+
+  const ratesQuery = useFrankfurterRatesToBase(GLOBAL_DEFAULT_CURRENCY, quoteCurrencies);
+
+  const convertedHkd = useMemo(() => {
+    if (!hasActivity) {
+      return { status: "empty" as const };
+    }
+    let rateByQuote: ReadonlyMap<string, number> = new Map();
+    if (needsFx) {
+      if (ratesQuery.isPending) {
+        return { status: "loading" as const };
+      }
+      if (ratesQuery.isError) {
+        return { status: "error" as const };
+      }
+      if (!ratesQuery.isSuccess || !ratesQuery.data) {
+        return { status: "loading" as const };
+      }
+      rateByQuote = ratesQuery.data.rateByQuote;
+    }
+    try {
+      const sumBucket = (rec: Readonly<Record<string, number>>): number =>
+        Object.entries(rec).reduce(
+          (sum, [ccy, amt]) =>
+            amt === 0
+              ? sum
+              : sum +
+                convertAmountToBase(amt, ccy, GLOBAL_DEFAULT_CURRENCY, rateByQuote),
+          0,
+        );
+      const income = sumBucket(generalBuckets.incomeByCurrency);
+      const expenses = sumBucket(generalBuckets.expensesByCurrency);
+      return {
+        status: "ok" as const,
+        income,
+        expenses,
+        net: income - expenses,
+      };
+    } catch {
+      return { status: "fx-missing" as const };
+    }
+  }, [
+    generalBuckets.expensesByCurrency,
+    generalBuckets.incomeByCurrency,
+    hasActivity,
+    needsFx,
+    ratesQuery.data,
+    ratesQuery.isError,
+    ratesQuery.isPending,
+    ratesQuery.isSuccess,
+  ]);
+
+  function generalHkdValue(
+    c: typeof convertedHkd,
+    kind: "income" | "expenses" | "net",
+  ): ReactNode {
+    if (c.status === "empty") {
+      return <span className="text-muted">—</span>;
+    }
+    if (c.status === "loading") {
+      return <span className="text-muted">Loading rates…</span>;
+    }
+    if (c.status === "error") {
+      return <span className="text-danger">Could not load exchange rates.</span>;
+    }
+    if (c.status === "fx-missing") {
+      return <span className="text-danger">Missing FX rate for a currency.</span>;
+    }
+    const amt = kind === "income" ? c.income : kind === "expenses" ? c.expenses : c.net;
+    if (kind === "net") {
+      return (
+        <span className={amt >= 0 ? "text-success" : "text-danger"}>
+          <MoneyAmount amount={amt} currency={GLOBAL_DEFAULT_CURRENCY} />
+        </span>
+      );
+    }
+    return <MoneyAmount amount={amt} currency={GLOBAL_DEFAULT_CURRENCY} />;
+  }
+
+  return (
+    <div className="card h-100 shadow-sm">
+      <div className="card-body d-flex flex-column">
+        <h2 className="h6 mb-3">
+          <strong>General</strong>
+        </h2>
+        <p className="text-muted small mb-3">
+          Monthly income and expenses not linked to any property (including
+          derived tax, saving, and investment amounts from tagged income with no
+          related property), summed in {GLOBAL_DEFAULT_CURRENCY}.
+        </p>
+        <dl className="row small mb-0">
+          <dt className="col-sm-4 text-muted">Income</dt>
+          <dd className="col-sm-8">{generalHkdValue(convertedHkd, "income")}</dd>
+          <dt className="col-sm-4 text-muted pt-2">Expenses</dt>
+          <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "expenses")}</dd>
+          <dt className="col-sm-4 text-muted pt-2">Net</dt>
+          <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "net")}</dd>
+        </dl>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const healthQuery = useQuery({
     queryKey: ["admin", "health"],
@@ -196,7 +356,6 @@ export function DashboardPage() {
         and records.
       </p>
 
-      <h2 className="h6 text-uppercase text-muted mt-4 mb-3">House summaries</h2>
       {financeQuery.isLoading ? (
         <p className="text-muted small mb-3">Loading finance data…</p>
       ) : financeQuery.isError ? (
@@ -204,24 +363,31 @@ export function DashboardPage() {
           Could not load finance data for summaries. Check API configuration and sign-in.
         </div>
       ) : (
-        <div className="row g-3 mb-4">
-          <div className="col-md-6">
-            <HouseSummaryCard
-              houseName="32 Hillmarton"
-              houseKey="hillmarton"
-              fiscalYear={hillmartonFy}
-              onFiscalYearChange={setHillmartonFy}
-            />
+        <>
+          <div className="row g-3 mb-3">
+            <div className="col-md-6">
+              <HouseSummaryCard
+                houseName="32 Hillmarton"
+                houseKey="hillmarton"
+                fiscalYear={hillmartonFy}
+                onFiscalYearChange={setHillmartonFy}
+              />
+            </div>
+            <div className="col-md-6">
+              <HouseSummaryCard
+                houseName="The Morrison"
+                houseKey="morrison"
+                fiscalYear={morrisonFy}
+                onFiscalYearChange={setMorrisonFy}
+              />
+            </div>
           </div>
-          <div className="col-md-6">
-            <HouseSummaryCard
-              houseName="The Morrison"
-              houseKey="morrison"
-              fiscalYear={morrisonFy}
-              onFiscalYearChange={setMorrisonFy}
-            />
+          <div className="row g-3 mb-4">
+            <div className="col-12">
+              <GeneralSummaryCard />
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       <div className="card mt-4 shadow-sm">
