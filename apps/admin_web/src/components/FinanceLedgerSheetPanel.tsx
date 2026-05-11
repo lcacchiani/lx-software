@@ -64,7 +64,10 @@ export type FinanceLedgerSheetPanelProps = {
   readonly deleteConfirmMessage: string;
   readonly emptyMessage: string;
   readonly filterPlaceholder?: string;
-  /** When true, table rows are sorted by currency, category, then description (A–Z). */
+  /**
+   * When true (default), table rows are sorted by currency, category, then description (A–Z).
+   * Set false to preserve the records array order from the API.
+   */
   readonly sortTableRowsByCurrencyCategoryDescription?: boolean;
   /** When true, category `<select>` options are listed A–Z (default option is first alphabetically). */
   readonly alphabetizeCategoryDropdown?: boolean;
@@ -80,7 +83,7 @@ export function FinanceLedgerSheetPanel({
   deleteConfirmMessage,
   emptyMessage,
   filterPlaceholder = "Filter records…",
-  sortTableRowsByCurrencyCategoryDescription = false,
+  sortTableRowsByCurrencyCategoryDescription = true,
   alphabetizeCategoryDropdown = false,
 }: FinanceLedgerSheetPanelProps) {
   const formId = `${sheetId}-ledger-form`;
