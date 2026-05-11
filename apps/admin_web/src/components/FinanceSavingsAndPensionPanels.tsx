@@ -338,14 +338,16 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     return list;
   }, [records, tableFilter, sortKey, sortDir, variant]);
 
-  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
+  const recordCurrencies = useMemo(() => filtered.map((r) => r.currency), [filtered]);
   const { needsFx, ratesQuery, fxLoading, fxError } = useFrankfurterRatesForTotals(
     totalDisplayCurrency,
     recordCurrencies,
   );
 
   const convertedTotal = useMemo(() => {
-    if (records.length === 0) return null;
+    if (filtered.length === 0) {
+      return records.length === 0 ? null : 0;
+    }
     let map: ReadonlyMap<string, number> = new Map();
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
@@ -354,14 +356,21 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       map = ratePayload.rateByQuote;
     }
     try {
-      return records.reduce(
+      return filtered.reduce(
         (sum, r) => sum + convertAmountToBase(r.value, r.currency, totalDisplayCurrency, map),
         0,
       );
     } catch {
       return null;
     }
-  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, totalDisplayCurrency]);
+  }, [
+    filtered,
+    records.length,
+    needsFx,
+    ratesQuery.isSuccess,
+    ratesQuery.data,
+    totalDisplayCurrency,
+  ]);
 
   function resetForm() {
     setEditingId(null);
