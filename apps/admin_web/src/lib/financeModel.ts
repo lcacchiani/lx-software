@@ -280,22 +280,6 @@ function sumMonthlyTaggedIncomeByHouseAndCurrency(
   return out;
 }
 
-/** Monthly income (any category) linked to a house — used to split unallocated derived expenses. */
-function sumMonthlyIncomeByHouseAndCurrency(
-  incomeRecords: readonly FinanceLedgerRecord[],
-  houseKey: HouseKey,
-): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const r of incomeRecords) {
-    if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) {
-      continue;
-    }
-    const c = r.currency;
-    out[c] = (out[c] ?? 0) + r.amount;
-  }
-  return out;
-}
-
 /** Tagged monthly income rows with no (or invalid) related property — still counts toward derived rows. */
 function sumMonthlyTaggedIncomeWithoutRelatedHouseByCurrency(
   incomeRecords: readonly FinanceLedgerRecord[],
@@ -403,6 +387,10 @@ export type FinanceLedgerAmountBuckets = {
  * Sums Finance Income / Expenses ledger rows with `amountPeriod` **month** and
  * `relatedHouse` equal to `houseKey`. Yearly rows are excluded. All matching
  * rows are included (no calendar-year filter).
+ *
+ * Derived tax / investment / saving expense slices apply only to monthly income
+ * rows **linked to this house**. Tagged income with no related property is not
+ * attributed here (see synthetic rows from {@link buildDerivedExpenseLedgerRowsFromTaggedIncome}).
  */
 export function sumMonthlyFinanceLedgerAmountsByHouse(
   incomeRecords: readonly FinanceLedgerRecord[],
@@ -413,9 +401,6 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
   const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
   const income: Record<string, number> = {};
   const expenses: Record<string, number> = {};
-
-  const incomeHiByCcy = sumMonthlyIncomeByHouseAndCurrency(incomeRecords, "hillmarton");
-  const incomeMoByCcy = sumMonthlyIncomeByHouseAndCurrency(incomeRecords, "morrison");
 
   for (const r of incomeRecords) {
     if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) continue;
@@ -448,38 +433,9 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
     }
   };
 
-  const addUnallocatedDerivedForFlag = (
-    flag: "isTax" | "isSaving" | "isInvestment",
-    pct: number,
-  ): void => {
-    if (pct <= 0) {
-      return;
-    }
-    const unallocByCcy = sumMonthlyTaggedIncomeWithoutRelatedHouseByCurrency(
-      incomeRecords,
-      flag,
-    );
-    for (const [c, base] of Object.entries(unallocByCcy)) {
-      if (base <= 0) {
-        continue;
-      }
-      const amt = base * (pct / 100);
-      const wHi = incomeHiByCcy[c] ?? 0;
-      const wMo = incomeMoByCcy[c] ?? 0;
-      const wSelf = houseKey === "hillmarton" ? wHi : wMo;
-      const wTot = wHi + wMo;
-      const share = wTot > 0 ? wSelf / wTot : 0.5;
-      expenses[c] = (expenses[c] ?? 0) + amt * share;
-    }
-  };
-
   addDerivedForFlag("isTax", alloc.taxOnIncomePercent);
   addDerivedForFlag("isInvestment", alloc.investmentOnIncomePercent);
   addDerivedForFlag("isSaving", alloc.savingOnIncomePercent);
-
-  addUnallocatedDerivedForFlag("isTax", alloc.taxOnIncomePercent);
-  addUnallocatedDerivedForFlag("isInvestment", alloc.investmentOnIncomePercent);
-  addUnallocatedDerivedForFlag("isSaving", alloc.savingOnIncomePercent);
 
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }

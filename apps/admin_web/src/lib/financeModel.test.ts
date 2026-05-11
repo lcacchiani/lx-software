@@ -470,6 +470,33 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
     expect(r.expensesByCurrency.HKD).toBeCloseTo(50 + 100, 10);
   });
 
+  it("does not add derived expenses from tax-tagged income with no related house", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "General income",
+          amount: 1000,
+          currency: "HKD",
+          isTax: true,
+          isSaving: false,
+          isInvestment: false,
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const alloc = normalizeExpenseIncomeAllocationPercents({
+      taxOnIncomePercent: 10,
+      investmentOnIncomePercent: 0,
+      savingOnIncomePercent: 0,
+    });
+    const r = sumMonthlyFinanceLedgerAmountsByHouse(income, [], "hillmarton", alloc);
+    expect(r.expensesByCurrency.HKD ?? 0).toBe(0);
+    expect(r.incomeByCurrency.HKD ?? 0).toBe(0);
+  });
+
   it("excludes yearly amountPeriod rows", () => {
     const income = normalizeLedgerRecords(
       [
