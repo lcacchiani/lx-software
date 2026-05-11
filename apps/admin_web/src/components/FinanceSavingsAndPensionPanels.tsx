@@ -35,7 +35,8 @@ function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
-type SimpleSortKey = "label" | "amt" | "ccy";
+/** Pension adds description and server-managed `lastUpdated` columns; savings only uses the first three. */
+type MoneyRecordsSortKey = "label" | "amt" | "ccy" | "desc" | "lastUpdated";
 
 type SortHeaderProps = {
   label: string;
@@ -80,7 +81,7 @@ function SortHeader({
 function compareSavings(
   a: FinanceSavingsRecord,
   b: FinanceSavingsRecord,
-  sortKey: SimpleSortKey,
+  sortKey: MoneyRecordsSortKey,
   sortDir: "asc" | "desc",
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
@@ -98,6 +99,10 @@ function compareSavings(
     case "ccy":
       cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
       break;
+    case "desc":
+    case "lastUpdated":
+      cmp = 0;
+      break;
     default:
       break;
   }
@@ -108,7 +113,7 @@ function compareSavings(
 function comparePension(
   a: FinancePensionRecord,
   b: FinancePensionRecord,
-  sortKey: SimpleSortKey,
+  sortKey: MoneyRecordsSortKey,
   sortDir: "asc" | "desc",
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
@@ -126,6 +131,23 @@ function comparePension(
     case "ccy":
       cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
       break;
+    case "desc":
+      cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+      break;
+    case "lastUpdated": {
+      const sa = a.lastUpdated ?? "";
+      const sb = b.lastUpdated ?? "";
+      if (!sa && !sb) {
+        cmp = 0;
+      } else if (!sa) {
+        cmp = 1;
+      } else if (!sb) {
+        cmp = -1;
+      } else {
+        cmp = sa.localeCompare(sb);
+      }
+      break;
+    }
     default:
       break;
   }
@@ -180,9 +202,9 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     columnOrder,
   } = props;
 
-  const [sortKey, setSortKey] = useState<SimpleSortKey | null>(null);
+  const [sortKey, setSortKey] = useState<MoneyRecordsSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const onSort = useCallback((key: SimpleSortKey) => {
+  const onSort = useCallback((key: MoneyRecordsSortKey) => {
     setSortKey((prevKey) => {
       if (prevKey !== key) {
         setSortDir("asc");
@@ -196,13 +218,13 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   const tableColumns = useMemo((): AdminDataTableColumn[] => {
     const manualSort = sortKey !== null;
     const thAria = (
-      key: SimpleSortKey,
+      key: MoneyRecordsSortKey,
     ): "ascending" | "descending" | "none" | "other" | undefined => {
       if (!manualSort) return undefined;
       if (sortKey === key) return sortDir === "asc" ? "ascending" : "descending";
       return "none";
     };
-    const dirFor = (key: SimpleSortKey): "asc" | "desc" | null =>
+    const dirFor = (key: MoneyRecordsSortKey): "asc" | "desc" | null =>
       sortKey === key ? sortDir : null;
 
     const labelCol: AdminDataTableColumn = {
@@ -255,14 +277,30 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
 
     const descCol: AdminDataTableColumn = {
       key: "desc",
-      header: <span className="small fw-semibold">Description</span>,
+      header: (
+        <SortHeader
+          label="Description"
+          isActive={sortKey === "desc"}
+          direction={dirFor("desc")}
+          onClick={() => onSort("desc")}
+        />
+      ),
       className: "small",
+      thAriaSort: thAria("desc"),
     };
 
     const lastUpdatedCol: AdminDataTableColumn = {
       key: "lastUpdated",
-      header: <span className="small fw-semibold">Last Update</span>,
+      header: (
+        <SortHeader
+          label="Last Update"
+          isActive={sortKey === "lastUpdated"}
+          direction={dirFor("lastUpdated")}
+          onClick={() => onSort("lastUpdated")}
+        />
+      ),
       className: "small text-nowrap",
+      thAriaSort: thAria("lastUpdated"),
     };
 
     if (variant === "pension") {
