@@ -220,6 +220,11 @@ export function HouseStatementPanel({
 
   const [pendingLineFiles, setPendingLineFiles] = useState<File[]>([]);
   const [removedAssetKeys, setRemovedAssetKeys] = useState<string[]>([]);
+  /** When duplicating into the editor (add mode), attachment keys copied from the source line. */
+  const [prefillStatementAssetKeys, setPrefillStatementAssetKeys] = useState<
+    string[] | null
+  >(null);
+  const lineEditorSectionRef = useRef<HTMLDivElement | null>(null);
   const [lineSubmitBusy, setLineSubmitBusy] = useState(false);
 
   useEffect(() => {
@@ -234,10 +239,11 @@ export function HouseStatementPanel({
 
   useEffect(() => {
     if (editingId !== null) return;
+    if (prefillStatementAssetKeys !== null) return;
     queueMicrotask(() => {
       setLineForm((f) => ({ ...f, currency: data.defaultCurrency }));
     });
-  }, [data.defaultCurrency, editingId]);
+  }, [data.defaultCurrency, editingId, prefillStatementAssetKeys]);
 
   useEffect(() => {
     if (editingId === null) return;
@@ -277,10 +283,15 @@ export function HouseStatementPanel({
 
   const editingLine =
     editingId === null ? undefined : data.lines.find((l) => l.id === editingId);
-  const keptAttachmentKeys =
-    editingLine === undefined
-      ? []
-      : statementLineAssetKeys(editingLine).filter((k) => !removedAssetKeys.includes(k));
+  const baseStatementAttachmentKeys =
+    editingId !== null
+      ? editingLine === undefined
+        ? []
+        : [...statementLineAssetKeys(editingLine)]
+      : (prefillStatementAssetKeys ?? []);
+  const keptAttachmentKeys = baseStatementAttachmentKeys.filter(
+    (k) => !removedAssetKeys.includes(k),
+  );
 
   function applyHouseDetails() {
     const amt = parseAmount(floatAmount);
@@ -308,6 +319,7 @@ export function HouseStatementPanel({
     setLineForm(emptyLineForm(data.defaultCurrency));
     setPendingLineFiles([]);
     setRemovedAssetKeys([]);
+    setPrefillStatementAssetKeys(null);
     if (linePdfInputRef.current) {
       linePdfInputRef.current.value = "";
     }
@@ -319,9 +331,29 @@ export function HouseStatementPanel({
     setLineForm(lineToForm(line));
     setPendingLineFiles([]);
     setRemovedAssetKeys([]);
+    setPrefillStatementAssetKeys(null);
     if (linePdfInputRef.current) {
       linePdfInputRef.current.value = "";
     }
+  }
+
+  function openDuplicateIntoEditor(line: HouseStatementLine) {
+    setEditingId(null);
+    setFormError(null);
+    setLineForm(lineToForm(line));
+    setPendingLineFiles([]);
+    setRemovedAssetKeys([]);
+    setPrefillStatementAssetKeys(dedupeAssetKeys(statementLineAssetKeys(line)));
+    if (linePdfInputRef.current) {
+      linePdfInputRef.current.value = "";
+    }
+    queueMicrotask(() => {
+      lineEditorSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      lineDescriptionRef.current?.focus({ preventScroll: false });
+    });
   }
 
   async function submitLine(e: FormEvent) {
@@ -586,6 +618,7 @@ export function HouseStatementPanel({
         ) : null}
       </AdminEditorSection>
 
+      <div ref={lineEditorSectionRef}>
       <AdminEditorSection
         title="Statement line"
         footer={
@@ -807,7 +840,8 @@ export function HouseStatementPanel({
                   </ul>
                 </div>
               ) : null}
-              {removedAssetKeys.length > 0 && editingId ? (
+              {removedAssetKeys.length > 0 &&
+              (editingId !== null || prefillStatementAssetKeys !== null) ? (
                 <p className="small text-muted mb-0 mt-2">
                   Removed attachments are dropped when you save this line.
                 </p>
@@ -816,6 +850,7 @@ export function HouseStatementPanel({
           </div>
         </form>
       </AdminEditorSection>
+      </div>
 
       <AdminEditorSection title="House statement">
         <AdminDataTable
@@ -875,6 +910,11 @@ export function HouseStatementPanel({
                     iconClassName="bi bi-pencil"
                     ariaLabel="Edit line"
                     onClick={() => openEdit(line)}
+                  />
+                  <TableIconButton
+                    iconClassName="bi bi-copy"
+                    ariaLabel="Duplicate line into editor"
+                    onClick={() => openDuplicateIntoEditor(line)}
                   />
                   <TableIconButton
                     iconClassName="bi bi-trash"
