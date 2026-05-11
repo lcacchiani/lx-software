@@ -722,7 +722,7 @@ export function FinanceInvestmentsPanel({
                   <MoneyAmount amount={r.principalAmount} currency={r.currency} amountOnly />
                 </td>
                 <td className="small">{r.currency}</td>
-                <td className="small text-end text-muted">{formatUnitCell(r.unit)}</td>
+                <td className="small text-end">{formatUnitCell(r.unit)}</td>
                 <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
                   <TableIconButton
