@@ -22,6 +22,8 @@ import {
   type InvestmentAssetType,
   type InvestmentCategory,
 } from "../lib/financeModel";
+import { buildQuoteMap, type FinanceQuoteResult } from "../lib/financeQuotes";
+import { useFinanceQuotes } from "../hooks/useFinanceQuotes";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import { formatDateUtc } from "../lib/formatDisplay";
 import {
@@ -63,9 +65,11 @@ function formatUnitCell(unit: number | undefined): string {
  * For **sorting** by Current Value: notional in {@link displayCurrency} (Frankfurter when the
  * row currency differs). Table cells show notional in the row’s own currency instead.
  *
- * For market-priced Crypto/ETF rows (positive units + crypto currency / ticker), the notional
- * in the row currency is `unit × rate(1 source → row.currency)` where the rate is fetched
- * via Frankfurter. The result is then converted to {@link displayCurrency} for sorting.
+ * `valueInRowCcy` is the row's current value already in the row's own currency
+ * (computed via the live ticker quote × Frankfurter for market-priced rows,
+ * or the fiat notional fallback for everything else). When that value is
+ * `undefined` (quote/FX still loading or errored), we fall back to the
+ * fiat notional so the row still sorts predictably.
  */
 function investmentNotionalInDisplayCurrency(
   r: FinanceInvestmentRecord,
@@ -73,17 +77,8 @@ function investmentNotionalInDisplayCurrency(
   rateByQuote: ReadonlyMap<string, number>,
   needsFxGlobal: boolean,
   ratesFetchSucceeded: boolean,
+  valueInRowCcy: number | undefined,
 ): number {
-  const ratesAvailable = !needsFxGlobal || ratesFetchSucceeded;
-  const valueInRowCcy = ratesAvailable
-    ? investmentRecordCurrentValueInRowCurrency(r, (from, to) => {
-        try {
-          return convertAmountWithBase(1, from, to, displayCurrency, rateByQuote);
-        } catch {
-          return undefined;
-        }
-      })
-    : undefined;
   const notional =
     valueInRowCcy !== undefined ? valueInRowCcy : investmentRecordFiatNotionalInQuoteCurrency(r);
   const rowNeedsFx =
@@ -402,27 +397,65 @@ export function FinanceInvestmentsPanel({
     GLOBAL_DEFAULT_CURRENCY,
   );
 
+  // Live spot prices for Crypto/ETF rows. The user-entered crypto code or
+  // ETF ticker (e.g. ``BTC``, ``US:TQQQ``) is fetched from the admin
+  // ``/finance/quotes`` endpoint, which proxies Yahoo Finance. The result
+  // is then FX-converted into the row currency via Frankfurter.
+  const marketPricedSymbols = useMemo(() => {
+    const symbols: string[] = [];
+    for (const r of records) {
+      if (!isInvestmentMarketPriced(r)) continue;
+      const src = investmentMarketSourceCurrency(r);
+      if (src) symbols.push(src);
+    }
+    return symbols;
+  }, [records]);
+  const quotesQuery = useFinanceQuotes(marketPricedSymbols);
+  const quoteByOriginalSymbol = useMemo<ReadonlyMap<string, FinanceQuoteResult>>(
+    () => buildQuoteMap(quotesQuery.data ?? []),
+    [quotesQuery.data],
+  );
+  const quotesPending = marketPricedSymbols.length > 0 && quotesQuery.isPending;
+  const quotesErrored = marketPricedSymbols.length > 0 && quotesQuery.isError;
+
+  // Frankfurter rates for: row currencies + every distinct currency reported
+  // by the resolved quotes. The latter only kicks in once quotes resolve, so
+  // this query naturally chains behind ``quotesQuery``.
   const fxQuoteCurrencies = useMemo(() => {
     const quotes: string[] = [];
     for (const r of records) {
       quotes.push(r.currency);
-      const src = investmentMarketSourceCurrency(r);
-      if (src && isInvestmentMarketPriced(r)) {
-        quotes.push(src);
-      }
+    }
+    for (const q of quotesQuery.data ?? []) {
+      if (q.currency) quotes.push(q.currency);
     }
     return quotes;
-  }, [records]);
+  }, [records, quotesQuery.data]);
   const { needsFx, ratesQuery, rateByQuoteForDisplay, fxLoading, fxError } =
     useFrankfurterRatesForTotals(totalDisplayCurrency, fxQuoteCurrencies);
 
+  /**
+   * For a market-priced row's source code → row.currency:
+   * 1) Resolve the live quote (price in the venue's reporting currency).
+   * 2) Convert that price into the row currency via Frankfurter.
+   * Returns ``undefined`` when the quote or FX rate is unavailable.
+   */
   const oneUnitConverter = useCallback(
-    (from: string, to: string): number | undefined => {
+    (sourceCode: string, rowCurrency: string): number | undefined => {
+      const q = quoteByOriginalSymbol.get(sourceCode);
+      if (!q || q.price === undefined || q.currency === undefined) {
+        return undefined;
+      }
+      const quoteCcy = q.currency.trim().toUpperCase();
+      const rowCcy = rowCurrency.trim().toUpperCase();
+      if (quoteCcy === rowCcy) return q.price;
+      // FX is needed, but rates may still be loading or have errored.
+      if (needsFx && !ratesQuery.isSuccess) return undefined;
       try {
         return convertAmountWithBase(
-          1,
-          from,
-          to,
+          q.price,
+          quoteCcy,
+          rowCcy,
           totalDisplayCurrency,
           rateByQuoteForDisplay,
         );
@@ -430,8 +463,27 @@ export function FinanceInvestmentsPanel({
         return undefined;
       }
     },
-    [totalDisplayCurrency, rateByQuoteForDisplay],
+    [
+      quoteByOriginalSymbol,
+      needsFx,
+      ratesQuery.isSuccess,
+      totalDisplayCurrency,
+      rateByQuoteForDisplay,
+    ],
   );
+
+  const currentValueInRowCurrencyByRowId = useMemo<
+    ReadonlyMap<string, number | undefined>
+  >(() => {
+    const m = new Map<string, number | undefined>();
+    for (const r of records) {
+      m.set(
+        r.id,
+        investmentRecordCurrentValueInRowCurrency(r, oneUnitConverter),
+      );
+    }
+    return m;
+  }, [records, oneUnitConverter]);
 
   const rowNotionalInDisplayCurrencyForSort = useCallback(
     (r: FinanceInvestmentRecord): number =>
@@ -441,8 +493,15 @@ export function FinanceInvestmentsPanel({
         rateByQuoteForDisplay,
         needsFx,
         ratesQuery.isSuccess,
+        currentValueInRowCurrencyByRowId.get(r.id),
       ),
-    [totalDisplayCurrency, rateByQuoteForDisplay, needsFx, ratesQuery.isSuccess],
+    [
+      totalDisplayCurrency,
+      rateByQuoteForDisplay,
+      needsFx,
+      ratesQuery.isSuccess,
+      currentValueInRowCurrencyByRowId,
+    ],
   );
 
   const filtered = useMemo(() => {
@@ -527,9 +586,10 @@ export function FinanceInvestmentsPanel({
       if (!ratesQuery.isSuccess) return null;
       if (!ratesQuery.data) return null;
     }
+    if (quotesPending || quotesErrored) return null;
     try {
       return records.reduce((sum, r) => {
-        const valueInRowCcy = investmentRecordCurrentValueInRowCurrency(r, oneUnitConverter);
+        const valueInRowCcy = currentValueInRowCurrencyByRowId.get(r.id);
         const value =
           valueInRowCcy !== undefined
             ? valueInRowCcy
@@ -549,7 +609,9 @@ export function FinanceInvestmentsPanel({
     ratesQuery.data,
     rateByQuoteForDisplay,
     totalDisplayCurrency,
-    oneUnitConverter,
+    currentValueInRowCurrencyByRowId,
+    quotesPending,
+    quotesErrored,
   ]);
 
   function resetForm() {
@@ -887,16 +949,44 @@ export function FinanceInvestmentsPanel({
                 <td className="small text-end">
                   {(() => {
                     const marketPriced = isInvestmentMarketPriced(r);
-                    if (marketPriced && needsFx && ratesQuery.isPending) {
-                      return <span className="text-muted">—</span>;
+                    if (marketPriced) {
+                      const sym = investmentMarketSourceCurrency(r);
+                      const q = sym ? quoteByOriginalSymbol.get(sym) : undefined;
+                      if (quotesPending) {
+                        return (
+                          <span
+                            className="text-muted"
+                            title="Loading live spot price…"
+                          >
+                            —
+                          </span>
+                        );
+                      }
+                      if (quotesErrored) {
+                        return (
+                          <span
+                            className="text-danger"
+                            title="Could not load live spot prices."
+                          >
+                            —
+                          </span>
+                        );
+                      }
+                      if (q?.error) {
+                        return (
+                          <span className="text-danger" title={q.error}>
+                            —
+                          </span>
+                        );
+                      }
+                      if (needsFx && ratesQuery.isPending) {
+                        return <span className="text-muted">—</span>;
+                      }
+                      if (needsFx && ratesQuery.isError) {
+                        return <span className="text-muted">—</span>;
+                      }
                     }
-                    if (marketPriced && needsFx && ratesQuery.isError) {
-                      return <span className="text-muted">—</span>;
-                    }
-                    const valueInRowCcy = investmentRecordCurrentValueInRowCurrency(
-                      r,
-                      oneUnitConverter,
-                    );
+                    const valueInRowCcy = currentValueInRowCurrencyByRowId.get(r.id);
                     if (valueInRowCcy === undefined) {
                       return <span className="text-muted">—</span>;
                     }
@@ -933,12 +1023,20 @@ export function FinanceInvestmentsPanel({
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
               <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
-                  needsFx={needsFx}
-                  fxError={fxError}
-                  fxLoading={fxLoading}
-                  ratesQuery={ratesQuery}
-                />
+                {quotesPending ? (
+                  "Loading quotes…"
+                ) : quotesErrored ? (
+                  <span className="text-danger">
+                    {quotesQuery.error?.message ?? "Could not load quotes."}
+                  </span>
+                ) : (
+                  <FrankfurterRatesFooterNote
+                    needsFx={needsFx}
+                    fxError={fxError}
+                    fxLoading={fxLoading}
+                    ratesQuery={ratesQuery}
+                  />
+                )}
               </td>
               <td className="small" />
               <td className="small" />
