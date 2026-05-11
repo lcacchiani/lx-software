@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  buildDerivedExpenseLedgerRowsFromTaggedIncome,
   ledgerMonthlyAmount,
+  normalizeExpenseIncomeAllocationPercents,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
   monthlyLedgerNetByCurrency,
@@ -237,6 +239,46 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
     expect(r.expensesByCurrency.HKD).toBe(10);
   });
 
+  it("adds derived expenses from tagged income and allocation percents", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Pay",
+          amount: 1000,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+          isTax: true,
+          isSaving: false,
+          isInvestment: false,
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const expenses = normalizeLedgerRecords(
+      [
+        {
+          id: "e1",
+          category: "Utility",
+          description: "Elec",
+          amount: 50,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+        },
+      ],
+      EXPENSE_CATEGORIES,
+    );
+    const alloc = normalizeExpenseIncomeAllocationPercents({
+      taxOnIncomePercent: 10,
+      investmentOnIncomePercent: 0,
+      savingOnIncomePercent: 0,
+    });
+    const r = sumMonthlyFinanceLedgerAmountsByHouse(income, expenses, "hillmarton", alloc);
+    expect(r.expensesByCurrency.HKD).toBeCloseTo(50 + 100, 10);
+  });
+
   it("excludes yearly amountPeriod rows", () => {
     const income = normalizeLedgerRecords(
       [
@@ -263,6 +305,59 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
     );
     const r = sumMonthlyFinanceLedgerAmountsByHouse(income, [], "hillmarton");
     expect(r.incomeByCurrency.HKD).toBe(100);
+  });
+});
+
+describe("normalizeExpenseIncomeAllocationPercents", () => {
+  it("clamps values to 0–100", () => {
+    const r = normalizeExpenseIncomeAllocationPercents({
+      taxOnIncomePercent: -5,
+      investmentOnIncomePercent: 200,
+      savingOnIncomePercent: "12.5",
+    });
+    expect(r.taxOnIncomePercent).toBe(0);
+    expect(r.investmentOnIncomePercent).toBe(100);
+    expect(r.savingOnIncomePercent).toBe(12.5);
+  });
+});
+
+describe("buildDerivedExpenseLedgerRowsFromTaggedIncome", () => {
+  it("builds synthetic rows per house and currency when rate and base are positive", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Pay",
+          amount: 200,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+          isTax: true,
+          isSaving: true,
+          isInvestment: false,
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const rows = buildDerivedExpenseLedgerRowsFromTaggedIncome(
+      income,
+      normalizeExpenseIncomeAllocationPercents({
+        taxOnIncomePercent: 10,
+        investmentOnIncomePercent: 0,
+        savingOnIncomePercent: 20,
+      }),
+      [
+        { value: "hillmarton", label: "H1" },
+        { value: "morrison", label: "M1" },
+      ],
+    );
+    const taxRow = rows.find((r) => r.category === "Tax");
+    const saveRow = rows.find((r) => r.category === "Saving");
+    expect(taxRow?.amount).toBeCloseTo(20, 10);
+    expect(saveRow?.amount).toBeCloseTo(40, 10);
+    expect(taxRow?.isDerivedFromTaggedIncome).toBe(true);
+    expect(ledgerMonthlyAmount(taxRow!)).toBeCloseTo(20, 10);
   });
 });
 

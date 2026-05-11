@@ -650,6 +650,45 @@ def _sanitize_ledger_records_list(
     return out
 
 
+DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES: dict[str, float] = {
+    "taxOnIncomePercent": 0.0,
+    "investmentOnIncomePercent": 0.0,
+    "savingOnIncomePercent": 0.0,
+}
+
+
+def _sanitize_expense_income_allocation_percentages(raw: Any) -> dict[str, float]:
+    """Coerce persisted expense-sheet allocation rates to 0–100 (inclusive)."""
+    out = {**DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES}
+    if not isinstance(raw, dict):
+        return out
+    for key in (
+        "taxOnIncomePercent",
+        "investmentOnIncomePercent",
+        "savingOnIncomePercent",
+    ):
+        val = raw.get(key, 0)
+        if isinstance(val, Decimal):
+            val = float(val)
+        if isinstance(val, bool):
+            continue
+        if isinstance(val, (int, float)):
+            v = float(val)
+        elif isinstance(val, str):
+            try:
+                v = float(val)
+            except ValueError:
+                continue
+        else:
+            continue
+        if v < 0.0:
+            v = 0.0
+        if v > 100.0:
+            v = 100.0
+        out[key] = v
+    return out
+
+
 def _normalize_ledger_sheet_payload(
     body: dict[str, Any],
     *,
@@ -1027,6 +1066,44 @@ def _load_finance_sheet(
         nested.get("records"),
         categories,
         include_income_flags=(sheet_slug == "income"),
+    )
+
+
+def _load_finance_expenses_ledger_with_allocation(
+    table: Any,
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    """Expense ledger rows plus optional income-allocation percentages."""
+    res = table.get_item(Key=_finance_sheet_ddb_key("expenses"))
+    item = res.get("Item")
+    if not item:
+        return [], _sanitize_expense_income_allocation_percentages(None)
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return [], _sanitize_expense_income_allocation_percentages(None)
+    records = _sanitize_ledger_records_list(
+        nested.get("records"),
+        EXPENSE_RECORD_CATEGORIES,
+        include_income_flags=False,
+    )
+    perc = _sanitize_expense_income_allocation_percentages(
+        nested.get("expenseIncomeAllocationPercents")
+    )
+    return records, perc
+
+
+def _load_existing_expense_income_allocation_percentages(table: Any) -> dict[str, float]:
+    """Allocation rates currently stored on the expenses sheet item (if any)."""
+    res = table.get_item(Key=_finance_sheet_ddb_key("expenses"))
+    item = res.get("Item")
+    if not item:
+        return _sanitize_expense_income_allocation_percentages(None)
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return _sanitize_expense_income_allocation_percentages(None)
+    return _sanitize_expense_income_allocation_percentages(
+        nested.get("expenseIncomeAllocationPercents")
     )
 
 
@@ -1730,6 +1807,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     if method == "GET" and path == "/finance":
         table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        exp_rows, exp_pct = _load_finance_expenses_ledger_with_allocation(table)
         return _json_response(
             200,
             {
@@ -1738,9 +1816,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 "incomeRecords": _load_finance_sheet(
                     table, "income", INCOME_RECORD_CATEGORIES
                 ),
-                "expenseRecords": _load_finance_sheet(
-                    table, "expenses", EXPENSE_RECORD_CATEGORIES
-                ),
+                "expenseRecords": exp_rows,
+                "expenseIncomeAllocationPercents": exp_pct,
                 "investmentRecords": _load_investment_records(table),
             },
         )
@@ -1763,10 +1840,31 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except ValueError as exc:
             return _json_response(400, {"message": str(exc)})
         table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        doc = {"records": normalized}
+        if sheet_slug == "expenses":
+            existing_perc = _load_existing_expense_income_allocation_percentages(table)
+            if isinstance(body.get("expenseIncomeAllocationPercents"), dict):
+                patched_perc = _sanitize_expense_income_allocation_percentages(
+                    body["expenseIncomeAllocationPercents"]
+                )
+            else:
+                patched_perc = existing_perc
+            doc = {
+                "records": normalized,
+                "expenseIncomeAllocationPercents": patched_perc,
+            }
+        else:
+            doc = {"records": normalized}
         ddb_item = {**_finance_sheet_ddb_key(sheet_slug), **_to_ddb_nested(doc)}
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", sheet_slug, event)
+        if sheet_slug == "expenses":
+            return _json_response(
+                200,
+                {
+                    body_key: normalized,
+                    "expenseIncomeAllocationPercents": patched_perc,
+                },
+            )
         return _json_response(200, {body_key: normalized})
 
     if method == "PUT" and path == "/finance/investments":

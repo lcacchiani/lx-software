@@ -36,6 +36,7 @@ from handler import (  # noqa: E402
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _path_finance_parse_job,
+    _sanitize_expense_income_allocation_percentages,
     _sanitize_investment_records_list,
     _sanitize_ledger_records_list,
     _statement_basename_already_imported,
@@ -570,6 +571,26 @@ class TestLedgerSheetPayload(unittest.TestCase):
         self.assertFalse(_is_allowed_upload_content_type("text/plain"))
         self.assertFalse(_is_allowed_upload_content_type(""))
         self.assertFalse(_is_allowed_upload_content_type(None))  # type: ignore[arg-type]
+
+
+class TestExpenseIncomeAllocationPercents(unittest.TestCase):
+    def test_clamps_and_defaults(self) -> None:
+        out = _sanitize_expense_income_allocation_percentages(
+            {
+                "taxOnIncomePercent": -1,
+                "investmentOnIncomePercent": 150,
+                "savingOnIncomePercent": 12.5,
+            }
+        )
+        self.assertEqual(out["taxOnIncomePercent"], 0.0)
+        self.assertEqual(out["investmentOnIncomePercent"], 100.0)
+        self.assertEqual(out["savingOnIncomePercent"], 12.5)
+
+    def test_non_object_returns_defaults(self) -> None:
+        out = _sanitize_expense_income_allocation_percentages(None)
+        self.assertEqual(out["taxOnIncomePercent"], 0.0)
+        self.assertEqual(out["investmentOnIncomePercent"], 0.0)
+        self.assertEqual(out["savingOnIncomePercent"], 0.0)
 
 
 class TestUtcIsoZ(unittest.TestCase):

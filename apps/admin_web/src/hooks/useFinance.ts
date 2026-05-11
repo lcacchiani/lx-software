@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
+  type ExpenseIncomeAllocationPercents,
   type FinanceInvestmentRecord,
   type FinanceLedgerRecord,
   type FinanceLedgerSheetKey,
@@ -9,8 +10,10 @@ import {
   type HouseFinanceData,
   type HouseKey,
   DEFAULT_FINANCE_STATE,
+  DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS,
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  normalizeExpenseIncomeAllocationPercents,
   normalizeHouseFinanceData,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
@@ -34,6 +37,9 @@ async function fetchFinance(): Promise<FinancePersistedState> {
       includeIncomeFlags: true,
     }),
     expenseRecords: normalizeLedgerRecords(rawObj.expenseRecords, EXPENSE_CATEGORIES),
+    expenseIncomeAllocationPercents: normalizeExpenseIncomeAllocationPercents(
+      rawObj.expenseIncomeAllocationPercents,
+    ),
     investmentRecords: normalizeInvestmentRecords(rawObj.investmentRecords),
   };
 }
@@ -97,32 +103,50 @@ export function useFinance() {
     mutationFn: async ({
       sheet,
       records,
+      expenseAllocationPercents,
     }: {
       sheet: FinanceLedgerSheetKey;
       records: readonly FinanceLedgerRecord[];
+      expenseAllocationPercents?: ExpenseIncomeAllocationPercents;
     }) => {
       const { path, bodyKey } = LEDGER_CONFIG[sheet];
-      const res = await adminFetchJson<Record<string, FinanceLedgerRecord[]>>(
-        path,
-        {
-          method: "PUT",
-          body: JSON.stringify({ [bodyKey]: records }),
-        },
-      );
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const bodyPayload: Record<string, unknown> = { [bodyKey]: records };
+      if (sheet === "expenses") {
+        bodyPayload.expenseIncomeAllocationPercents =
+          expenseAllocationPercents ??
+          state?.expenseIncomeAllocationPercents ??
+          DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
+      }
+      const res = await adminFetchJson<
+        Record<string, unknown> & { expenseIncomeAllocationPercents?: unknown }
+      >(path, {
+        method: "PUT",
+        body: JSON.stringify(bodyPayload),
+      });
       const list = res[bodyKey];
       const categories = sheet === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+      const normalizedRecords = normalizeLedgerRecords(list as unknown, categories, {
+        includeIncomeFlags: sheet === "income",
+      });
+      const nextPercents =
+        sheet === "expenses" && res.expenseIncomeAllocationPercents !== undefined
+          ? normalizeExpenseIncomeAllocationPercents(res.expenseIncomeAllocationPercents)
+          : undefined;
       return {
         sheet,
         bodyKey,
-        records: normalizeLedgerRecords(list, categories, {
-          includeIncomeFlags: sheet === "income",
-        }),
+        records: normalizedRecords,
+        expenseIncomeAllocationPercents: nextPercents,
       };
     },
-    onSuccess: ({ bodyKey, records }) => {
+    onSuccess: ({ bodyKey, records, expenseIncomeAllocationPercents: respPercents }) => {
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
         ...(old ?? DEFAULT_FINANCE_STATE),
         [bodyKey]: records,
+        ...(respPercents !== undefined
+          ? { expenseIncomeAllocationPercents: respPercents }
+          : {}),
       }));
     },
   });
@@ -167,6 +191,19 @@ export function useFinance() {
     [qc, saveLedgerSheet],
   );
 
+  const patchExpenseIncomeAllocationPercents = useCallback(
+    (next: ExpenseIncomeAllocationPercents) => {
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const records = state?.expenseRecords ?? DEFAULT_FINANCE_STATE.expenseRecords;
+      saveLedgerSheet.mutate({
+        sheet: "expenses",
+        records,
+        expenseAllocationPercents: next,
+      });
+    },
+    [qc, saveLedgerSheet],
+  );
+
   const ledgerSaveErr = saveLedgerSheet.error;
   const houseSaveErr = saveHouse.error;
   const investmentSaveErr = saveInvestmentRecords.error;
@@ -180,8 +217,11 @@ export function useFinance() {
     patchHouse,
     patchLedgerRecords,
     patchInvestmentRecords,
+    patchExpenseIncomeAllocationPercents,
     isSaving:
-      saveHouse.isPending || saveLedgerSheet.isPending || saveInvestmentRecords.isPending,
+      saveHouse.isPending ||
+      saveLedgerSheet.isPending ||
+      saveInvestmentRecords.isPending,
     saveError,
     saveErrorDetail: getAdminApiErrorMessage(saveError),
   };
