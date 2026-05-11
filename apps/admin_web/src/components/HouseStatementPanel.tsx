@@ -896,14 +896,26 @@ export function HouseStatementPanel({
                   </div>
                 </td>
                 <td className="small text-end">
-                  <MoneyAmount amount={line.netAmount} currency={line.currency} />
+                  <MoneyAmount
+                    amount={line.netAmount}
+                    currency={line.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small text-end">
-                  <MoneyAmount amount={line.vat} currency={line.currency} />
+                  <MoneyAmount
+                    amount={line.vat}
+                    currency={line.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small">{line.currency}</td>
                 <td className="small text-end">
-                  <MoneyAmount amount={line.grossAmount} currency={line.currency} />
+                  <MoneyAmount
+                    amount={line.grossAmount}
+                    currency={line.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small text-end">
                   <TableIconButton
