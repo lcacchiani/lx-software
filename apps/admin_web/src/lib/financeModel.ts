@@ -127,6 +127,11 @@ export type FinanceInvestmentRecord = {
   readonly unit?: number;
   /** When category is Real Estate, optional link to a house (same keys as finance house tabs). */
   readonly relatedHouse?: HouseKey;
+  /**
+   * When category is Real Estate, optional market/appraisal value in `currency` for totals and FX.
+   * When omitted, {@link principalAmount} is used as the quote-currency notional.
+   */
+  readonly currentValue?: number;
   /** When category is ETF, optional ticker symbol or name. */
   readonly ticker?: string;
   /** When category is Crypto, optional asset name (e.g. coin); UI label “Crypto currency”. */
@@ -621,12 +626,33 @@ function trimInvestmentDetailString(raw: unknown, maxLen: number): string | unde
  * (coin/token) in the record currency — e.g. 1 BNB = 1 HKD — and the row total is `unit × principalAmount`.
  * Frankfurter converts that total when displaying in another ISO currency.
  * For Crypto without units, `principalAmount` is the total position in quote currency.
- * Other categories use `principalAmount` as the total in quote currency.
+ *
+ * For **Fixed Term Deposit** with a positive `unit`, the notional is `unit × principalAmount`
+ * (e.g. lots × principal per lot); otherwise `principalAmount`.
+ *
+ * For **Real Estate**, uses {@link FinanceInvestmentRecord.currentValue} when set; otherwise
+ * `principalAmount`.
+ *
+ * **ETF** uses `principalAmount` as the total in quote currency.
  */
 export function investmentRecordFiatNotionalInQuoteCurrency(
   record: FinanceInvestmentRecord,
 ): number {
   const p = record.principalAmount;
+  if (record.category === "Real Estate") {
+    const cv = record.currentValue;
+    if (cv !== undefined && Number.isFinite(cv)) {
+      return cv;
+    }
+    return p;
+  }
+  if (record.category === "Fixed Term Deposit") {
+    const u = record.unit;
+    if (u !== undefined && Number.isFinite(u) && u > 0 && Number.isFinite(p)) {
+      return u * p;
+    }
+    return p;
+  }
   if (record.category !== "Crypto") return p;
   const u = record.unit;
   if (u !== undefined && Number.isFinite(u) && u > 0 && Number.isFinite(p)) {
@@ -703,21 +729,39 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       category === "Crypto"
         ? trimInvestmentDetailString(row.cryptoCurrency, INVESTMENT_CRYPTO_CURRENCY_MAX_LEN)
         : undefined;
-    const unitRaw = row.unit;
     let unit: number | undefined;
-    if (unitRaw === undefined || unitRaw === null || unitRaw === "") {
-      unit = undefined;
-    } else {
-      const n =
-        typeof unitRaw === "number"
-          ? unitRaw
-          : typeof unitRaw === "string"
-            ? Number.parseFloat(unitRaw)
-            : Number.NaN;
-      if (!Number.isFinite(n) || Math.abs(n) > 1e15) {
-        continue;
+    if (category !== "Real Estate") {
+      const unitRaw = row.unit;
+      if (unitRaw === undefined || unitRaw === null || unitRaw === "") {
+        unit = undefined;
+      } else {
+        const n =
+          typeof unitRaw === "number"
+            ? unitRaw
+            : typeof unitRaw === "string"
+              ? Number.parseFloat(unitRaw)
+              : Number.NaN;
+        if (!Number.isFinite(n) || Math.abs(n) > 1e15) {
+          continue;
+        }
+        unit = n;
       }
-      unit = n;
+    }
+    let currentValue: number | undefined;
+    if (category === "Real Estate") {
+      const cvRaw = row.currentValue;
+      if (cvRaw !== undefined && cvRaw !== null && cvRaw !== "") {
+        const cvn =
+          typeof cvRaw === "number"
+            ? cvRaw
+            : typeof cvRaw === "string"
+              ? Number.parseFloat(cvRaw)
+              : Number.NaN;
+        if (!Number.isFinite(cvn) || Math.abs(cvn) > 1e15) {
+          continue;
+        }
+        currentValue = cvn;
+      }
     }
     const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
     out.push({
@@ -729,6 +773,7 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       principalAmount,
       ...(unit !== undefined ? { unit } : {}),
       ...(relatedHouse ? { relatedHouse } : {}),
+      ...(currentValue !== undefined ? { currentValue } : {}),
       ...(ticker ? { ticker } : {}),
       ...(cryptoCurrency ? { cryptoCurrency } : {}),
       ...(lastUpdated !== undefined ? { lastUpdated } : {}),

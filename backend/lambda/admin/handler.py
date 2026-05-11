@@ -840,6 +840,25 @@ def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
             rh = row.get("relatedHouse")
             if rh in FINANCE_HOUSE_KEYS:
                 item["relatedHouse"] = rh
+            cv = row.get("currentValue")
+            if cv is not None and not isinstance(cv, bool):
+                if isinstance(cv, Decimal):
+                    cv_f = float(cv)
+                elif isinstance(cv, (int, float)):
+                    cv_f = float(cv)
+                elif isinstance(cv, str):
+                    s = cv.strip()
+                    if not s:
+                        cv_f = None
+                    else:
+                        try:
+                            cv_f = float(s)
+                        except ValueError:
+                            cv_f = None
+                else:
+                    cv_f = None
+                if cv_f is not None and cv_f == cv_f and abs(cv_f) <= 1e15:
+                    item["currentValue"] = cv_f
         elif cat == "ETF":
             tk = _sanitize_investment_detail_str(
                 row.get("ticker"), MAX_INVESTMENT_TICKER_LEN
@@ -853,7 +872,7 @@ def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
             if cc:
                 item["cryptoCurrency"] = cc
         unit_raw = row.get("unit")
-        if unit_raw is not None and not isinstance(unit_raw, bool):
+        if cat != "Real Estate" and unit_raw is not None and not isinstance(unit_raw, bool):
             if isinstance(unit_raw, Decimal):
                 unit_f = float(unit_raw)
             elif isinstance(unit_raw, (int, float)):
@@ -887,6 +906,13 @@ def _investment_row_signature(row: dict[str, Any]) -> tuple[Any, ...]:
         u_f = float(u)
     else:
         u_f = None
+    cv = row.get("currentValue")
+    if isinstance(cv, Decimal):
+        cv_f: float | None = float(cv)
+    elif isinstance(cv, (int, float)) and not isinstance(cv, bool):
+        cv_f = float(cv)
+    else:
+        cv_f = None
     return (
         row["category"],
         row["assetType"],
@@ -897,6 +923,7 @@ def _investment_row_signature(row: dict[str, Any]) -> tuple[Any, ...]:
         row.get("ticker"),
         row.get("cryptoCurrency"),
         u_f,
+        cv_f,
     )
 
 
@@ -986,12 +1013,14 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
         house_raw = row.get("relatedHouse")
         ticker_raw = row.get("ticker")
         crypto_raw = row.get("cryptoCurrency")
+        current_value_raw = row.get("currentValue")
 
         def _reject_investment_detail_fields(*, allowed: frozenset[str]) -> None:
             checks: tuple[tuple[str, Any], ...] = (
                 ("relatedHouse", house_raw),
                 ("ticker", ticker_raw),
                 ("cryptoCurrency", crypto_raw),
+                ("currentValue", current_value_raw),
             )
             for field, raw in checks:
                 if field in allowed:
@@ -1002,6 +1031,29 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                             f"investmentRecords[{i}].relatedHouse is only allowed when "
                             "category is Real Estate"
                         )
+                elif field == "currentValue":
+                    if raw is None:
+                        continue
+                    if isinstance(raw, bool):
+                        raise ValueError(
+                            f"investmentRecords[{i}].currentValue is only allowed when "
+                            "category is Real Estate"
+                        )
+                    if isinstance(raw, (int, float)):
+                        raise ValueError(
+                            f"investmentRecords[{i}].currentValue is only allowed when "
+                            "category is Real Estate"
+                        )
+                    if isinstance(raw, Decimal):
+                        raise ValueError(
+                            f"investmentRecords[{i}].currentValue is only allowed when "
+                            "category is Real Estate"
+                        )
+                    if isinstance(raw, str) and raw.strip() != "":
+                        raise ValueError(
+                            f"investmentRecords[{i}].currentValue is only allowed when "
+                            "category is Real Estate"
+                        )
                 elif _investment_non_empty_strip(raw) is not None:
                     raise ValueError(
                         f"investmentRecords[{i}].{field} is only allowed when category "
@@ -1009,7 +1061,9 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                     )
 
         if cat == "Real Estate":
-            _reject_investment_detail_fields(allowed=frozenset({"relatedHouse"}))
+            _reject_investment_detail_fields(
+                allowed=frozenset({"relatedHouse", "currentValue"})
+            )
             if house_raw is not None and str(house_raw).strip() != "":
                 if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
                     houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
@@ -1017,6 +1071,34 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                         f"investmentRecords[{i}].relatedHouse must be one of: {houses}"
                     )
                 rec["relatedHouse"] = house_raw
+            cv_raw = row.get("currentValue")
+            if cv_raw is not None and not (
+                isinstance(cv_raw, str) and not cv_raw.strip()
+            ):
+                if isinstance(cv_raw, bool):
+                    raise ValueError(
+                        f"investmentRecords[{i}].currentValue must be a number"
+                    )
+                if isinstance(cv_raw, Decimal):
+                    cv_f = float(cv_raw)
+                elif isinstance(cv_raw, (int, float)):
+                    cv_f = float(cv_raw)
+                elif isinstance(cv_raw, str):
+                    try:
+                        cv_f = float(cv_raw.strip())
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"investmentRecords[{i}].currentValue must be a number"
+                        ) from exc
+                else:
+                    raise ValueError(
+                        f"investmentRecords[{i}].currentValue must be a number"
+                    )
+                if cv_f != cv_f or abs(cv_f) > 1e15:
+                    raise ValueError(
+                        f"investmentRecords[{i}].currentValue out of range"
+                    )
+                rec["currentValue"] = cv_f
         elif cat == "ETF":
             _reject_investment_detail_fields(allowed=frozenset({"ticker"}))
             if ticker_raw is not None and str(ticker_raw).strip() != "":
@@ -1043,26 +1125,29 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                 rec["cryptoCurrency"] = c_st
         elif cat == "Fixed Term Deposit":
             _reject_investment_detail_fields(allowed=frozenset())
-        unit_raw = row.get("unit")
-        if unit_raw is not None and not (isinstance(unit_raw, str) and not unit_raw.strip()):
-            if isinstance(unit_raw, bool):
-                raise ValueError(f"investmentRecords[{i}].unit must be a number")
-            if isinstance(unit_raw, Decimal):
-                uf = float(unit_raw)
-            elif isinstance(unit_raw, (int, float)):
-                uf = float(unit_raw)
-            elif isinstance(unit_raw, str):
-                try:
-                    uf = float(unit_raw.strip())
-                except ValueError as exc:
-                    raise ValueError(
-                        f"investmentRecords[{i}].unit must be a number"
-                    ) from exc
-            else:
-                raise ValueError(f"investmentRecords[{i}].unit must be a number")
-            if uf != uf or abs(uf) > 1e15:
-                raise ValueError(f"investmentRecords[{i}].unit out of range")
-            rec["unit"] = uf
+        if cat != "Real Estate":
+            unit_raw = row.get("unit")
+            if unit_raw is not None and not (
+                isinstance(unit_raw, str) and not unit_raw.strip()
+            ):
+                if isinstance(unit_raw, bool):
+                    raise ValueError(f"investmentRecords[{i}].unit must be a number")
+                if isinstance(unit_raw, Decimal):
+                    uf = float(unit_raw)
+                elif isinstance(unit_raw, (int, float)):
+                    uf = float(unit_raw)
+                elif isinstance(unit_raw, str):
+                    try:
+                        uf = float(unit_raw.strip())
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"investmentRecords[{i}].unit must be a number"
+                        ) from exc
+                else:
+                    raise ValueError(f"investmentRecords[{i}].unit must be a number")
+                if uf != uf or abs(uf) > 1e15:
+                    raise ValueError(f"investmentRecords[{i}].unit out of range")
+                rec["unit"] = uf
         out.append(rec)
     return out
 

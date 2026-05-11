@@ -85,6 +85,39 @@ describe("normalizeInvestmentRecords", () => {
     expect(out[1].relatedHouse).toBeUndefined();
   });
 
+  it("drops unit on Real Estate rows (units are not used for this category)", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 100,
+        currency: "HKD",
+        unit: 5,
+      },
+    ];
+    const out = normalizeInvestmentRecords(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].unit).toBeUndefined();
+  });
+
+  it("reads optional currentValue for Real Estate", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 100,
+        currency: "HKD",
+        currentValue: 250,
+      },
+    ];
+    const out = normalizeInvestmentRecords(rows);
+    expect(out[0].currentValue).toBe(250);
+  });
+
   it("reads optional unit and lastUpdated", () => {
     const rows = [
       {
@@ -196,6 +229,47 @@ describe("investmentRecordFiatNotionalInQuoteCurrency", () => {
         currency: "HKD",
       }),
     ).toBe(120000);
+  });
+
+  it("multiplies units by principal for Fixed Term Deposit when units are positive", () => {
+    expect(
+      investmentRecordFiatNotionalInQuoteCurrency({
+        id: "1",
+        category: "Fixed Term Deposit",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 10000,
+        currency: "HKD",
+        unit: 3,
+      }),
+    ).toBe(30000);
+  });
+
+  it("uses currentValue for Real Estate when set", () => {
+    expect(
+      investmentRecordFiatNotionalInQuoteCurrency({
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "X",
+        principalAmount: 100,
+        currency: "HKD",
+        currentValue: 999,
+      }),
+    ).toBe(999);
+  });
+
+  it("falls back to principal for Real Estate when currentValue is omitted", () => {
+    expect(
+      investmentRecordFiatNotionalInQuoteCurrency({
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "X",
+        principalAmount: 100,
+        currency: "HKD",
+      }),
+    ).toBe(100);
   });
 });
 
