@@ -43,6 +43,9 @@ from handler import (  # noqa: E402
     _normalize_pension_sheet_payload,
     _normalize_public_asset_key,
     _normalize_savings_sheet_payload,
+    _normalize_finance_quote_symbol,
+    _normalize_yahoo_price_currency,
+    _parse_finance_quotes_query,
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _path_finance_parse_job,
@@ -1515,6 +1518,142 @@ class TestFxV2RatesQuery(unittest.TestCase):
         self.assertIsInstance(err, str)
         err2 = _parse_fx_v2_rates_query({"base": "HK1", "quotes": "USD"})
         self.assertIsInstance(err2, str)
+
+
+class TestNormalizeFinanceQuoteSymbol(unittest.TestCase):
+    def test_returns_none_for_empty(self) -> None:
+        self.assertIsNone(_normalize_finance_quote_symbol(""))
+        self.assertIsNone(_normalize_finance_quote_symbol("   "))
+
+    def test_us_prefix_strips_to_bare_symbol(self) -> None:
+        self.assertEqual(_normalize_finance_quote_symbol("US:TQQQ"), "TQQQ")
+        self.assertEqual(
+            _normalize_finance_quote_symbol("nasdaq:msft"), "MSFT"
+        )
+        self.assertEqual(_normalize_finance_quote_symbol("NYSE:SPY"), "SPY")
+
+    def test_lse_maps_to_dot_l(self) -> None:
+        self.assertEqual(_normalize_finance_quote_symbol("LON:VWRA"), "VWRA.L")
+        self.assertEqual(_normalize_finance_quote_symbol("LSE:vwra"), "VWRA.L")
+
+    def test_hkex_maps_to_dot_hk(self) -> None:
+        self.assertEqual(_normalize_finance_quote_symbol("HK:0700"), "0700.HK")
+        self.assertEqual(_normalize_finance_quote_symbol("HKG:0700"), "0700.HK")
+        self.assertEqual(
+            _normalize_finance_quote_symbol("HKEX:0700"), "0700.HK"
+        )
+
+    def test_other_exchange_prefixes(self) -> None:
+        self.assertEqual(
+            _normalize_finance_quote_symbol("TYO:7203"), "7203.T"
+        )
+        self.assertEqual(_normalize_finance_quote_symbol("ASX:CBA"), "CBA.AX")
+        self.assertEqual(_normalize_finance_quote_symbol("TSX:RY"), "RY.TO")
+        self.assertEqual(_normalize_finance_quote_symbol("SGX:D05"), "D05.SI")
+        self.assertEqual(_normalize_finance_quote_symbol("PAR:MC"), "MC.PA")
+        self.assertEqual(
+            _normalize_finance_quote_symbol("XETRA:SAP"), "SAP.DE"
+        )
+
+    def test_unknown_prefix_passes_through_bare_symbol(self) -> None:
+        self.assertEqual(
+            _normalize_finance_quote_symbol("FOO:BAR"), "BAR"
+        )
+
+    def test_empty_after_prefix_is_invalid(self) -> None:
+        self.assertIsNone(_normalize_finance_quote_symbol("US:"))
+
+    def test_already_yahoo_native_passes_through(self) -> None:
+        self.assertEqual(_normalize_finance_quote_symbol("VWRA.L"), "VWRA.L")
+        self.assertEqual(
+            _normalize_finance_quote_symbol("BTC-USD"), "BTC-USD"
+        )
+
+    def test_bare_short_token_treated_as_crypto(self) -> None:
+        # 2-6 alpha letters with no separators → assume crypto and append -USD
+        self.assertEqual(_normalize_finance_quote_symbol("BTC"), "BTC-USD")
+        self.assertEqual(_normalize_finance_quote_symbol("eth"), "ETH-USD")
+        self.assertEqual(_normalize_finance_quote_symbol("DOGE"), "DOGE-USD")
+
+    def test_bare_long_or_mixed_token_passed_through(self) -> None:
+        # 7+ chars or non-alpha → pass through uppercased
+        self.assertEqual(
+            _normalize_finance_quote_symbol("MICROSOFT"), "MICROSOFT"
+        )
+        self.assertEqual(_normalize_finance_quote_symbol("0700"), "0700")
+
+
+class TestNormalizeYahooPriceCurrency(unittest.TestCase):
+    def test_passes_through_normal_currency(self) -> None:
+        self.assertEqual(
+            _normalize_yahoo_price_currency(123.45, "USD"), (123.45, "USD")
+        )
+        self.assertEqual(
+            _normalize_yahoo_price_currency(789.0, "hkd"), (789.0, "HKD")
+        )
+
+    def test_gbp_pence_normalized(self) -> None:
+        # GBp / GBX → divide by 100 and report GBP
+        price, ccy = _normalize_yahoo_price_currency(11750.0, "GBp")
+        self.assertAlmostEqual(price, 117.5)
+        self.assertEqual(ccy, "GBP")
+        price2, ccy2 = _normalize_yahoo_price_currency(11750.0, "GBX")
+        self.assertAlmostEqual(price2, 117.5)
+        self.assertEqual(ccy2, "GBP")
+
+    def test_zar_cents_and_ils_agorot_normalized(self) -> None:
+        self.assertEqual(
+            _normalize_yahoo_price_currency(1000.0, "ZAc"), (10.0, "ZAR")
+        )
+        self.assertEqual(
+            _normalize_yahoo_price_currency(500.0, "ILA"), (5.0, "ILS")
+        )
+
+    def test_blank_currency_passes_through(self) -> None:
+        self.assertEqual(
+            _normalize_yahoo_price_currency(1.0, ""), (1.0, "")
+        )
+
+
+class TestParseFinanceQuotesQuery(unittest.TestCase):
+    def test_requires_symbols(self) -> None:
+        self.assertEqual(
+            _parse_finance_quotes_query(None), "symbols is required"
+        )
+        self.assertEqual(
+            _parse_finance_quotes_query({}), "symbols is required"
+        )
+        self.assertEqual(
+            _parse_finance_quotes_query({"symbols": "  ,, "}),
+            "symbols is required",
+        )
+
+    def test_normalizes_and_dedupes(self) -> None:
+        out = _parse_finance_quotes_query(
+            {"symbols": "US:TQQQ, BTC, BTC-USD ,LON:VWRA"}
+        )
+        self.assertIsInstance(out, tuple)
+        pairs, _ = out  # type: ignore[misc]
+        # BTC normalizes to BTC-USD which is already present, so dedup
+        # keeps only the first occurrence.
+        self.assertEqual(
+            pairs,
+            [
+                ("US:TQQQ", "TQQQ"),
+                ("BTC", "BTC-USD"),
+                ("LON:VWRA", "VWRA.L"),
+            ],
+        )
+
+    def test_rejects_too_many_symbols(self) -> None:
+        symbols = ",".join(f"SYM{i}" for i in range(60))
+        out = _parse_finance_quotes_query({"symbols": symbols})
+        self.assertIsInstance(out, str)
+        self.assertIn("At most", out)  # type: ignore[arg-type]
+
+    def test_rejects_too_long_symbol(self) -> None:
+        out = _parse_finance_quotes_query({"symbols": "X" * 64})
+        self.assertIsInstance(out, str)
 
 
 if __name__ == "__main__":
