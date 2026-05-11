@@ -1,5 +1,9 @@
-import { useState } from "react";
-import { TableIconButton } from "../components/ui";
+import { useMemo, useState } from "react";
+import {
+  AdminDataTable,
+  AdminDataTableEmptyRow,
+  TableIconButton,
+} from "../components/ui";
 import {
   useAdminAssets,
   type AdminAssetMeta,
@@ -39,6 +43,26 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function uploadedAtSortMs(iso?: string): number {
+  if (!iso?.trim()) return Number.NEGATIVE_INFINITY;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+}
+
+function rowMatchesFilter(
+  row: AdminAssetMeta,
+  filterText: string,
+): boolean {
+  const q = filterText.trim().toLowerCase();
+  if (!q) return true;
+  const file = displayFileName(row).toLowerCase();
+  const houseKey = (row.house ?? "").toLowerCase();
+  const houseDisplay = houseLabel(row.house).toLowerCase();
+  return (
+    file.includes(q) || houseKey.includes(q) || houseDisplay.includes(q)
+  );
+}
+
 function houseLabel(house?: string): string {
   if (!house?.trim()) return "—";
   return HOUSE_LABEL[house] ?? house;
@@ -72,10 +96,29 @@ function AssetOpenLink({ objectKey }: { readonly objectKey: string }) {
   );
 }
 
+const ASSET_TABLE_COLUMNS = [
+  { key: "uploaded", header: "Uploaded" },
+  { key: "file", header: "File" },
+  { key: "house", header: "House" },
+  { key: "open", header: "Open", className: "text-end" },
+] as const;
+
 export function AssetsPage() {
   const q = useAdminAssets();
+  const [tableFilter, setTableFilter] = useState("");
 
-  const rows = q.data?.pages.flatMap((p) => p.items) ?? [];
+  const rows = useMemo(
+    () => q.data?.pages.flatMap((p) => p.items) ?? [],
+    [q.data],
+  );
+
+  const displayRows = useMemo(() => {
+    const sorted = [...rows].sort(
+      (a, b) =>
+        uploadedAtSortMs(b.uploadedAt) - uploadedAtSortMs(a.uploadedAt),
+    );
+    return sorted.filter((row) => rowMatchesFilter(row, tableFilter));
+  }, [rows, tableFilter]);
 
   return (
     <div>
@@ -92,52 +135,46 @@ export function AssetsPage() {
         </div>
       ) : (
         <>
-          <div className="table-responsive card shadow-sm">
-            <table className="table table-sm table-striped mb-0 align-middle">
-              <thead>
-                <tr>
-                  <th scope="col">Uploaded</th>
-                  <th scope="col">File</th>
-                  <th scope="col">House</th>
-                  <th scope="col" className="text-end">
-                    Open
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length ? (
-                  rows.map((row) => {
-                    const objectKey = objectKeyFromAssetPk(row.pk);
-                    return (
-                      <tr key={row.pk}>
-                        <td className="text-nowrap small">
-                          {formatUploadedInstant(row.uploadedAt)}
-                        </td>
-                        <td>
-                          <div className="fw-medium">{displayFileName(row)}</div>
-                          {typeof row.size === "number" ? (
-                            <div className="text-muted small">
-                              {formatFileSize(row.size)}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="small">{houseLabel(row.house)}</td>
-                        <td className="text-end">
-                          <AssetOpenLink objectKey={objectKey} />
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={4} className="text-muted text-center py-4">
-                      No confirmed assets yet.
+          <AdminDataTable
+            columns={ASSET_TABLE_COLUMNS}
+            filterValue={tableFilter}
+            onFilterChange={setTableFilter}
+            filterPlaceholder="Filter by file or house…"
+          >
+            {displayRows.length ? (
+              displayRows.map((row) => {
+                const objectKey = objectKeyFromAssetPk(row.pk);
+                return (
+                  <tr key={row.pk}>
+                    <td className="text-nowrap small">
+                      {formatUploadedInstant(row.uploadedAt)}
+                    </td>
+                    <td>
+                      <div className="fw-medium">{displayFileName(row)}</div>
+                      {typeof row.size === "number" ? (
+                        <div className="text-muted small">
+                          {formatFileSize(row.size)}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="small">{houseLabel(row.house)}</td>
+                    <td className="text-end">
+                      <AssetOpenLink objectKey={objectKey} />
                     </td>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                );
+              })
+            ) : (
+              <AdminDataTableEmptyRow
+                colSpan={4}
+                message={
+                  rows.length
+                    ? "No assets match the filter."
+                    : "No confirmed assets yet."
+                }
+              />
+            )}
+          </AdminDataTable>
           {q.hasNextPage ? (
             <button
               type="button"
