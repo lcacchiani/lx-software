@@ -84,3 +84,26 @@ export function sumHouseStatementLinesForFiscalYear(
 
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }
+
+/** Sums statement-line net amounts by type for lines whose `dateUtc` falls in the same UTC calendar month as `reference`. */
+export function sumHouseStatementLinesForUtcMonth(
+  lines: readonly HouseStatementLine[],
+  reference: Date,
+): FiscalYearAmountBuckets {
+  const y = reference.getUTCFullYear();
+  const m = reference.getUTCMonth();
+  const startMs = Date.UTC(y, m, 1, 0, 0, 0, 0);
+  const endExclusiveMs = Date.UTC(y, m + 1, 1, 0, 0, 0, 0);
+  const income: Record<string, number> = {};
+  const expenses: Record<string, number> = {};
+
+  for (const line of lines) {
+    const t = new Date(line.dateUtc).getTime();
+    if (Number.isNaN(t) || t < startMs || t >= endExclusiveMs) continue;
+    const bucket = line.type === "income" ? income : expenses;
+    const cur = line.currency;
+    bucket[cur] = (bucket[cur] ?? 0) + line.netAmount;
+  }
+
+  return { incomeByCurrency: income, expensesByCurrency: expenses };
+}
