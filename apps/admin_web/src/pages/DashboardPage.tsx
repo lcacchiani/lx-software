@@ -65,18 +65,12 @@ function HouseFiscalSummaryCard({
 
   const fyLabel = formatFiscalYearIdLabel(fiscalYear);
 
-  const selectId = `fiscal-year-${houseKey}`;
-
   return (
     <div className="card h-100 shadow-sm">
       <div className="card-body d-flex flex-column">
         <h2 className="h6 mb-3">{title}</h2>
         <div className="mb-3">
-          <label className="form-label small text-muted mb-1" htmlFor={selectId}>
-            {fyLabel}
-          </label>
           <select
-            id={selectId}
             className="form-select form-select-sm"
             value={fiscalYear}
             onChange={(e) => onFiscalYearChange(e.target.value as FiscalYearId)}
