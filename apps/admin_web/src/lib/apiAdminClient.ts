@@ -13,6 +13,20 @@ export class AdminApiError extends Error {
   }
 }
 
+/** Parses API Gateway/Lambda JSON error bodies like `{ "message": "…" }`. */
+export function getAdminApiErrorMessage(err: unknown): string | null {
+  if (!(err instanceof AdminApiError)) return null;
+  try {
+    const parsed = JSON.parse(err.responseBody) as { message?: unknown };
+    if (typeof parsed.message === "string" && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    /* ignore malformed JSON */
+  }
+  return null;
+}
+
 /** Join API base URL and path (exported for unit tests). */
 export function joinUrl(base: string, path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
