@@ -88,8 +88,17 @@ async function readJson(req) {
 // Sanitise a value for inclusion in a console log line so that any CR/LF
 // or other control characters from a malicious request body cannot forge
 // fake log entries (CWE-117 / log injection).
+//
+// The first `.replace(/[\r\n]/g, "")` is the form CodeQL's
+// `js/log-injection` query recognises as a sanitizer (regex matches
+// `\n` and replacement is the empty string), so it acts as a taint
+// barrier for the static analyser. The second pass collapses any
+// remaining non-printable characters for human readability.
 function safeForLog(value) {
-  return String(value).replace(/[^\x20-\x7E]/g, "?").slice(0, 200);
+  return String(value)
+    .replace(/[\r\n]/g, "")
+    .replace(/[^\x20-\x7E]/g, "?")
+    .slice(0, 200);
 }
 
 // Whitelist of supported house keys. Routing always picks one of these
