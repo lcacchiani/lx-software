@@ -6,6 +6,7 @@ import {
 } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
+  MAX_PENSION_DESCRIPTION_LEN,
   newStatementLineId,
   type FinancePensionRecord,
   type FinanceSavingsRecord,
@@ -244,15 +245,27 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       headerClassName: "text-end",
     };
 
-    const mid =
-      columnOrder === "valueFirst" ? [labelCol, valueCol, ccyCol, opsCol] : [labelCol, ccyCol, valueCol, opsCol];
-    return mid;
+    const descCol: AdminDataTableColumn = {
+      key: "desc",
+      header: <span className="small fw-semibold">Description</span>,
+      className: "small",
+    };
+
+    if (variant === "pension") {
+      return columnOrder === "valueFirst"
+        ? [labelCol, descCol, valueCol, ccyCol, opsCol]
+        : [labelCol, descCol, ccyCol, valueCol, opsCol];
+    }
+    return columnOrder === "valueFirst"
+      ? [labelCol, valueCol, ccyCol, opsCol]
+      : [labelCol, ccyCol, valueCol, opsCol];
   }, [
     columnOrder,
     labelColumnHeader,
     onSort,
     sortDir,
     sortKey,
+    variant,
   ]);
 
   const colSpan = tableColumns.length;
@@ -261,6 +274,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
+  const [descriptionInput, setDescriptionInput] = useState("");
   const [valueStr, setValueStr] = useState("");
   const [formCurrency, setFormCurrency] = useState(GLOBAL_DEFAULT_CURRENCY);
   const [tableFilter, setTableFilter] = useState("");
@@ -293,7 +307,9 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const list = !q
       ? [...recs]
       : recs.filter((r) => {
-          const hay = [r.fund, r.currency, String(r.value)].join(" ").toLowerCase();
+          const hay = [r.fund, r.description, r.currency, String(r.value)]
+            .join(" ")
+            .toLowerCase();
           return hay.includes(q);
         });
     if (sortKey !== null) {
@@ -342,6 +358,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     setEditingId(null);
     setFormError(null);
     setNameInput("");
+    setDescriptionInput("");
     setValueStr("");
     setFormCurrency(GLOBAL_DEFAULT_CURRENCY);
   }
@@ -357,6 +374,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     } else {
       const r = row as FinancePensionRecord;
       setNameInput(r.fund);
+      setDescriptionInput(r.description);
       setValueStr(String(r.value));
       setFormCurrency(coerceSupportedCurrency(r.currency, GLOBAL_DEFAULT_CURRENCY));
     }
@@ -393,9 +411,14 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
         return [...prev, row];
       });
     } else {
+      const descTrimmed = descriptionInput.trim();
       const row: FinancePensionRecord = {
         id,
         fund: nameInput.trim(),
+        description:
+          descTrimmed.length > MAX_PENSION_DESCRIPTION_LEN
+            ? descTrimmed.slice(0, MAX_PENSION_DESCRIPTION_LEN)
+            : descTrimmed,
         value: valueNum,
         currency,
       };
@@ -453,7 +476,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-md-4">
+            <div className={variant === "pension" ? "col-md-3" : "col-md-4"}>
               <label className="form-label small" htmlFor={labelInputId}>
                 {labelFormLabel}
               </label>
@@ -466,6 +489,20 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 onChange={(ev) => setNameInput(ev.target.value)}
               />
             </div>
+            {variant === "pension" ? (
+              <div className="col-md-3">
+                <label className="form-label small" htmlFor={`${sheetId}-description`}>
+                  Description
+                </label>
+                <input
+                  id={`${sheetId}-description`}
+                  type="text"
+                  className="form-control form-control-sm"
+                  value={descriptionInput}
+                  onChange={(ev) => setDescriptionInput(ev.target.value)}
+                />
+              </div>
+            ) : null}
             {columnOrder === "currencyFirst" ? (
               <div className="col-md-3">
                 <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
@@ -523,9 +560,14 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {filtered.length ? (
             filtered.map((r) => {
               const label = variant === "savings" ? (r as FinanceSavingsRecord).deposit : (r as FinancePensionRecord).fund;
+              const descCellPension =
+                variant === "pension" ? (
+                  <td className="small">{(r as FinancePensionRecord).description}</td>
+                ) : null;
               const cellsValueFirst = (
                 <>
                   <td className="small">{label}</td>
+                  {descCellPension}
                   <td className="small text-end">
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
                   </td>
@@ -535,6 +577,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               const cellsCurrencyFirst = (
                 <>
                   <td className="small">{label}</td>
+                  {descCellPension}
                   <td className="small">{r.currency}</td>
                   <td className="small text-end">
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
@@ -569,6 +612,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
+              {variant === "pension" ? <td className="small" /> : null}
               {columnOrder === "valueFirst" ? (
                 <>
                   <td className="small text-end">
@@ -680,7 +724,7 @@ export function FinancePensionPanel(props: {
       labelInputId="pension-fund"
       deleteConfirmMessage="Delete this pension record?"
       emptyMessage="No pension records yet."
-      columnOrder="currencyFirst"
+      columnOrder="valueFirst"
     />
   );
 }

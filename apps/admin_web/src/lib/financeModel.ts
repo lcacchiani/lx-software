@@ -139,10 +139,14 @@ export type FinanceSavingsRecord = {
   readonly currency: string;
 };
 
+/** Max UTF-8 length for pension description (aligned with admin Lambda `MAX_FINANCE_DESCRIPTION`). */
+export const MAX_PENSION_DESCRIPTION_LEN = 8000;
+
 /** One row in the Pension sheet (DynamoDB finance sheet `pension`). */
 export type FinancePensionRecord = {
   readonly id: string;
   readonly fund: string;
+  readonly description: string;
   readonly value: number;
   readonly currency: string;
 };
@@ -687,7 +691,11 @@ export function normalizePensionRecords(input: unknown): FinancePensionRecord[] 
     }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
-    out.push({ id, fund, value, currency });
+    let description = typeof row.description === "string" ? row.description.trim() : "";
+    if (description.length > MAX_PENSION_DESCRIPTION_LEN) {
+      description = description.slice(0, MAX_PENSION_DESCRIPTION_LEN);
+    }
+    out.push({ id, fund, description, value, currency });
   }
   return out;
 }
