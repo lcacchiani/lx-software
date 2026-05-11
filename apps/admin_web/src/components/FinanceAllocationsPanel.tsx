@@ -268,7 +268,7 @@ export function FinanceAllocationsPanel(props: {
     return list;
   }, [records, tableFilter, sortKey, sortDir]);
 
-  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
+  const recordCurrencies = useMemo(() => filtered.map((r) => r.currency), [filtered]);
 
   const { needsFx, ratesQuery, fxLoading, fxError } = useFrankfurterRatesForTotals(
     totalDisplayCurrency,
@@ -276,8 +276,8 @@ export function FinanceAllocationsPanel(props: {
   );
 
   const convertedAccumulatedTotal = useMemo(() => {
-    if (records.length === 0) {
-      return null;
+    if (filtered.length === 0) {
+      return records.length === 0 ? null : 0;
     }
     let map: ReadonlyMap<string, number> = new Map();
     if (needsFx) {
@@ -287,7 +287,7 @@ export function FinanceAllocationsPanel(props: {
       map = ratePayload.rateByQuote;
     }
     try {
-      return records.reduce(
+      return filtered.reduce(
         (sum, r) =>
           sum +
           convertAmountToBase(
@@ -301,7 +301,14 @@ export function FinanceAllocationsPanel(props: {
     } catch {
       return null;
     }
-  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, totalDisplayCurrency]);
+  }, [
+    filtered,
+    records.length,
+    needsFx,
+    ratesQuery.isSuccess,
+    ratesQuery.data,
+    totalDisplayCurrency,
+  ]);
 
   const editingRow = useMemo(
     () => (editingExpenseId ? records.find((r) => r.expenseId === editingExpenseId) : undefined),

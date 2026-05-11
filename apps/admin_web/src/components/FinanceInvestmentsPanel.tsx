@@ -558,13 +558,15 @@ export function FinanceInvestmentsPanel({
   ]);
 
   const convertedPrincipalTotal = useMemo(() => {
-    if (records.length === 0) return null;
+    if (filtered.length === 0) {
+      return records.length === 0 ? null : 0;
+    }
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
       if (!ratesQuery.data) return null;
     }
     try {
-      return records.reduce(
+      return filtered.reduce(
         (sum, r) =>
           sum +
           convertAmountToBase(
@@ -578,17 +580,27 @@ export function FinanceInvestmentsPanel({
     } catch {
       return null;
     }
-  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, rateByQuoteForDisplay, totalDisplayCurrency]);
+  }, [
+    filtered,
+    records.length,
+    needsFx,
+    ratesQuery.isSuccess,
+    ratesQuery.data,
+    rateByQuoteForDisplay,
+    totalDisplayCurrency,
+  ]);
 
   const convertedCurrentValueTotal = useMemo(() => {
-    if (records.length === 0) return null;
+    if (filtered.length === 0) {
+      return records.length === 0 ? null : 0;
+    }
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
       if (!ratesQuery.data) return null;
     }
     if (quotesPending || quotesErrored) return null;
     try {
-      return records.reduce((sum, r) => {
+      return filtered.reduce((sum, r) => {
         const valueInRowCcy = currentValueInRowCurrencyByRowId.get(r.id);
         const value =
           valueInRowCcy !== undefined
@@ -603,7 +615,8 @@ export function FinanceInvestmentsPanel({
       return null;
     }
   }, [
-    records,
+    filtered,
+    records.length,
     needsFx,
     ratesQuery.isSuccess,
     ratesQuery.data,
