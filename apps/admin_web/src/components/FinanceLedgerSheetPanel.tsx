@@ -64,6 +64,10 @@ export type FinanceLedgerSheetPanelProps = {
   readonly deleteConfirmMessage: string;
   readonly emptyMessage: string;
   readonly filterPlaceholder?: string;
+  /** When true, table rows are sorted by currency, category, then description (A–Z). */
+  readonly sortTableRowsByCurrencyCategoryDescription?: boolean;
+  /** When true, category `<select>` options are listed A–Z (default option is first alphabetically). */
+  readonly alphabetizeCategoryDropdown?: boolean;
 };
 
 export function FinanceLedgerSheetPanel({
@@ -76,9 +80,18 @@ export function FinanceLedgerSheetPanel({
   deleteConfirmMessage,
   emptyMessage,
   filterPlaceholder = "Filter records…",
+  sortTableRowsByCurrencyCategoryDescription = false,
+  alphabetizeCategoryDropdown = false,
 }: FinanceLedgerSheetPanelProps) {
   const formId = `${sheetId}-ledger-form`;
-  const defaultCategory = categories[0] ?? "";
+  const categoryOptions = useMemo(() => {
+    const list = [...categories];
+    if (alphabetizeCategoryDropdown) {
+      list.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    }
+    return list;
+  }, [categories, alphabetizeCategoryDropdown]);
+  const defaultCategory = categoryOptions[0] ?? "";
   const emptyForm = (): LineFormState => ({
     category: defaultCategory,
     description: "",
@@ -96,14 +109,25 @@ export function FinanceLedgerSheetPanel({
 
   const filtered = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
-    if (!q) return [...records];
-    return records.filter((r) => {
-      const hay = [r.category, r.description, r.currency, String(r.amount)]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [records, tableFilter]);
+    const list = !q
+      ? [...records]
+      : records.filter((r) => {
+          const hay = [r.category, r.description, r.currency, String(r.amount)]
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        });
+    if (sortTableRowsByCurrencyCategoryDescription) {
+      list.sort((a, b) => {
+        const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+        if (byCcy !== 0) return byCcy;
+        const byCat = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+        if (byCat !== 0) return byCat;
+        return a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+      });
+    }
+    return list;
+  }, [records, tableFilter, sortTableRowsByCurrencyCategoryDescription]);
 
   const recordCurrencies = useMemo(
     () => records.map((r) => r.currency),
@@ -238,7 +262,7 @@ export function FinanceLedgerSheetPanel({
                   setLineForm((f) => ({ ...f, category: ev.target.value }))
                 }
               >
-                {categories.map((c) => (
+                {categoryOptions.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
