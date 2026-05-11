@@ -78,6 +78,14 @@ export const INCOME_LEDGER_FLAG_FIELDS: ReadonlyArray<{
   { field: "isInvestment", label: "Investment" },
 ];
 
+/** Expense ledger only: tag shown on Expenses tab and drives the Allocations tab. */
+export type ExpenseLedgerFlagField = "isAllocate";
+
+export const EXPENSE_LEDGER_FLAG_FIELDS: ReadonlyArray<{
+  readonly field: ExpenseLedgerFlagField;
+  readonly label: string;
+}> = [{ field: "isAllocate", label: "Allocate" }];
+
 /** Expense tab categories (aligned with admin Lambda validation). */
 export const EXPENSE_CATEGORIES = [
   "Utility",
@@ -158,6 +166,21 @@ export type FinancePensionRecord = {
   readonly lastUpdated?: string;
 };
 
+/**
+ * One row on the Allocations tab: mirrors an expense tagged Allocate, with a persisted
+ * accumulated amount (DynamoDB finance sheet `allocations`).
+ */
+export type FinanceAllocationRecord = {
+  readonly expenseId: string;
+  readonly description: string;
+  /** Monthly equivalent of the expense amount (yearly amounts are ÷12). */
+  readonly monthlyAmount: number;
+  readonly accumulatedAmount: number;
+  readonly currency: string;
+  /** UTC calendar date `YYYY-MM-DD` when accumulated amount last changed (set by admin API). */
+  readonly lastUpdated?: string;
+};
+
 export type FinanceLedgerSheetKey = "income" | "expenses";
 
 /** Whether `amount` is entered per calendar month or per year (yearly rows are shown ÷12 in monthly views). */
@@ -178,6 +201,8 @@ export type FinanceLedgerRecord = {
   readonly isTax?: boolean;
   readonly isSaving?: boolean;
   readonly isInvestment?: boolean;
+  /** Expense ledger only: when true, row appears on the Allocations tab (stored on expense sheet). */
+  readonly isAllocate?: boolean;
   /**
    * Client-only: expense rows computed from tagged monthly income and allocation rates
    * (never persisted on the expense sheet).
@@ -566,6 +591,7 @@ export type FinancePersistedState = {
   readonly investmentRecords: readonly FinanceInvestmentRecord[];
   readonly savingsRecords: readonly FinanceSavingsRecord[];
   readonly pensionRecords: readonly FinancePensionRecord[];
+  readonly allocationRecords: readonly FinanceAllocationRecord[];
 };
 
 export const DEFAULT_FLOAT: HouseFloat = {
@@ -590,6 +616,7 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   investmentRecords: [],
   savingsRecords: [],
   pensionRecords: [],
+  allocationRecords: [],
 };
 
 function categorySet(categories: readonly string[]): Set<string> {
@@ -831,6 +858,8 @@ export function normalizePensionRecords(input: unknown): FinancePensionRecord[] 
 export type NormalizeLedgerRecordsOptions = {
   /** When true, reads `isTax` / `isSaving` / `isInvestment` for income rows (defaults false). */
   readonly includeIncomeFlags?: boolean;
+  /** When true, reads `isAllocate` for expense rows (defaults false). */
+  readonly includeExpenseFlags?: boolean;
 };
 
 function parseIncomeLedgerFlag(row: Record<string, unknown>, key: string): boolean {
@@ -849,6 +878,7 @@ export function normalizeLedgerRecords(
   }
   const allowed = categorySet(allowedCategories);
   const includeIncomeFlags = options?.includeIncomeFlags === true;
+  const includeExpenseFlags = options?.includeExpenseFlags === true;
   const out: FinanceLedgerRecord[] = [];
   for (const raw of input) {
     if (!raw || typeof raw !== "object") continue;
@@ -893,9 +923,63 @@ export function normalizeLedgerRecords(
         isSaving: parseIncomeLedgerFlag(row, "isSaving"),
         isInvestment: parseIncomeLedgerFlag(row, "isInvestment"),
       });
+    } else if (includeExpenseFlags) {
+      out.push({
+        ...base,
+        isAllocate: parseIncomeLedgerFlag(row, "isAllocate"),
+      });
     } else {
       out.push(base);
     }
+  }
+  return out;
+}
+
+/** Coerces GET/PUT allocation tab payloads from the admin API. */
+export function normalizeAllocationRecords(input: unknown): FinanceAllocationRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: FinanceAllocationRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const expenseId = typeof row.expenseId === "string" ? row.expenseId.trim() : "";
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (!expenseId || !description) {
+      continue;
+    }
+    const monthlyRaw = row.monthlyAmount;
+    const monthlyAmount =
+      typeof monthlyRaw === "number"
+        ? monthlyRaw
+        : typeof monthlyRaw === "string"
+          ? Number.parseFloat(monthlyRaw)
+          : Number.NaN;
+    if (!Number.isFinite(monthlyAmount) || Math.abs(monthlyAmount) > 1e15) {
+      continue;
+    }
+    const accRaw = row.accumulatedAmount;
+    const accumulatedAmount =
+      typeof accRaw === "number"
+        ? accRaw
+        : typeof accRaw === "string"
+          ? Number.parseFloat(accRaw)
+          : Number.NaN;
+    if (!Number.isFinite(accumulatedAmount) || Math.abs(accumulatedAmount) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
+    const rec: FinanceAllocationRecord = {
+      expenseId,
+      description,
+      monthlyAmount,
+      accumulatedAmount,
+      currency,
+    };
+    out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
   }
   return out;
 }

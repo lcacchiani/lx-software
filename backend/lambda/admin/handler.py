@@ -594,7 +594,11 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sanitize_ledger_records_list(
-    raw: Any, categories: frozenset[str], *, include_income_flags: bool = False
+    raw: Any,
+    categories: frozenset[str],
+    *,
+    include_income_flags: bool = False,
+    include_expense_flags: bool = False,
 ) -> list[dict[str, Any]]:
     """Best-effort coercion for GET responses (drops invalid rows)."""
     if not isinstance(raw, list):
@@ -648,6 +652,8 @@ def _sanitize_ledger_records_list(
         if include_income_flags:
             for fk in ("isTax", "isSaving", "isInvestment"):
                 rec[fk] = row.get(fk) is True
+        if include_expense_flags:
+            rec["isAllocate"] = row.get("isAllocate") is True
         out.append(rec)
     return out
 
@@ -763,6 +769,14 @@ def _normalize_ledger_sheet_payload(
                     rec[fk] = v
                 else:
                     raise ValueError(f"{body_key}[{i}].{fk} must be a boolean")
+        if body_key == "expenseRecords":
+            v = row.get("isAllocate")
+            if v is None:
+                rec["isAllocate"] = False
+            elif isinstance(v, bool):
+                rec["isAllocate"] = v
+            else:
+                raise ValueError(f"{body_key}[{i}].isAllocate must be a boolean")
         out.append(rec)
     return out
 
@@ -1176,6 +1190,184 @@ def _merge_pension_last_updated(
     return out
 
 
+def _ledger_row_monthly_amount(row: dict[str, Any]) -> float:
+    amt = float(row["amount"])
+    return amt / 12.0 if row.get("amountPeriod") == "year" else amt
+
+
+def _sanitize_allocation_stored_list(raw: Any) -> list[dict[str, Any]]:
+    """Best-effort coercion for persisted allocation rows (expenseId + accumulatedAmount)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        eid = row.get("expenseId")
+        if not isinstance(eid, str) or not eid.strip():
+            continue
+        amt = row.get("accumulatedAmount")
+        if isinstance(amt, Decimal):
+            amt_f = float(amt)
+        elif isinstance(amt, (int, float)) and not isinstance(amt, bool):
+            amt_f = float(amt)
+        elif isinstance(amt, str):
+            try:
+                amt_f = float(amt)
+            except ValueError:
+                continue
+        else:
+            continue
+        if abs(amt_f) > 1e15:
+            continue
+        rec: dict[str, Any] = {"expenseId": eid.strip(), "accumulatedAmount": amt_f}
+        lu = row.get("lastUpdated")
+        if isinstance(lu, str) and _is_calendar_date_string(lu):
+            rec["lastUpdated"] = lu
+        out.append(rec)
+    return out
+
+
+def _load_allocation_stored_records(table: Any) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key("allocations"))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_allocation_stored_list(nested.get("records"))
+
+
+def _merge_allocation_accumulated_last_updated(
+    normalized: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+    *,
+    today_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """Set `lastUpdated` when accumulated amount changes; keep prior date when unchanged."""
+    today = today_iso or datetime.now(timezone.utc).date().isoformat()
+    by_id = {r["expenseId"]: r for r in existing}
+    out: list[dict[str, Any]] = []
+    for row in normalized:
+        eid = row["expenseId"]
+        amt = float(row["accumulatedAmount"])
+        merged: dict[str, Any] = {"expenseId": eid, "accumulatedAmount": amt}
+        prev = by_id.get(eid)
+        if prev is None:
+            if amt != 0.0:
+                merged["lastUpdated"] = today
+        else:
+            prev_amt = float(prev.get("accumulatedAmount", 0.0))
+            if abs(prev_amt - amt) < 1e-9:
+                lu = prev.get("lastUpdated")
+                if isinstance(lu, str) and _is_calendar_date_string(lu):
+                    merged["lastUpdated"] = lu
+            else:
+                merged["lastUpdated"] = today
+        out.append(merged)
+    return out
+
+
+def _normalize_allocations_sheet_payload(
+    body: dict[str, Any],
+    allocated_expense_ids: frozenset[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get("allocationRecords")
+    if not isinstance(raw, list):
+        raise ValueError("allocationRecords must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(
+            f"At most {MAX_LEDGER_RECORDS} records allowed in allocationRecords"
+        )
+    if not allocated_expense_ids and raw:
+        raise ValueError(
+            "allocationRecords must be empty when no expenses are tagged Allocate"
+        )
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"allocationRecords[{i}] must be an object")
+        eid_raw = row.get("expenseId")
+        if not isinstance(eid_raw, str) or not eid_raw.strip():
+            raise ValueError(f"allocationRecords[{i}].expenseId is required")
+        eid = eid_raw.strip()
+        if eid not in allocated_expense_ids:
+            raise ValueError(
+                f"allocationRecords[{i}].expenseId is not an expense tagged Allocate"
+            )
+        if eid in seen:
+            raise ValueError(f"allocationRecords[{i}].expenseId is duplicated")
+        seen.add(eid)
+        amt_raw = row.get("accumulatedAmount")
+        if isinstance(amt_raw, Decimal):
+            amt_f = float(amt_raw)
+        elif isinstance(amt_raw, (int, float)) and not isinstance(amt_raw, bool):
+            amt_f = float(amt_raw)
+        elif isinstance(amt_raw, str):
+            try:
+                amt_f = float(amt_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"allocationRecords[{i}].accumulatedAmount must be a number"
+                ) from exc
+        else:
+            raise ValueError(
+                f"allocationRecords[{i}].accumulatedAmount must be a number"
+            )
+        if abs(amt_f) > 1e15:
+            raise ValueError(
+                f"allocationRecords[{i}].accumulatedAmount out of range"
+            )
+        out.append({"expenseId": eid, "accumulatedAmount": amt_f})
+    if seen != allocated_expense_ids:
+        missing = allocated_expense_ids - seen
+        extra = seen - allocated_expense_ids
+        parts: list[str] = []
+        if missing:
+            parts.append(f"missing expenseIds: {', '.join(sorted(missing))}")
+        if extra:
+            parts.append(f"unexpected expenseIds: {', '.join(sorted(extra))}")
+        raise ValueError(
+            "allocationRecords must include exactly one entry per expense tagged Allocate"
+            + (f" ({'; '.join(parts)})" if parts else "")
+        )
+    return out
+
+
+def _build_allocation_records_for_response(
+    expense_rows: list[dict[str, Any]],
+    stored: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge expense rows tagged Allocate with persisted accumulated amounts."""
+    by_stored = {r["expenseId"]: r for r in stored}
+    out: list[dict[str, Any]] = []
+    for er in expense_rows:
+        if not er.get("isAllocate"):
+            continue
+        eid = er["id"]
+        st = by_stored.get(eid, {})
+        acc = float(st.get("accumulatedAmount", 0.0))
+        lu = st.get("lastUpdated")
+        last_u: str | None = lu if isinstance(lu, str) and _is_calendar_date_string(lu) else None
+        row_out: dict[str, Any] = {
+            "expenseId": eid,
+            "description": er["description"],
+            "monthlyAmount": _ledger_row_monthly_amount(er),
+            "accumulatedAmount": acc,
+            "currency": er["currency"],
+        }
+        if last_u is not None:
+            row_out["lastUpdated"] = last_u
+        out.append(row_out)
+    out.sort(key=lambda r: (str(r["description"]).lower(), str(r["expenseId"])))
+    return out
+
+
 def _sanitize_pension_records_list(raw: Any) -> list[dict[str, Any]]:
     """Best-effort coercion for GET responses (drops invalid rows)."""
     if not isinstance(raw, list):
@@ -1535,6 +1727,7 @@ def _load_finance_sheet(
         nested.get("records"),
         categories,
         include_income_flags=(sheet_slug == "income"),
+        include_expense_flags=False,
     )
 
 
@@ -1554,6 +1747,7 @@ def _load_finance_expenses_ledger_with_allocation(
         nested.get("records"),
         EXPENSE_RECORD_CATEGORIES,
         include_income_flags=False,
+        include_expense_flags=True,
     )
     perc = _sanitize_expense_income_allocation_percentages(
         nested.get("expenseIncomeAllocationPercents")
@@ -2277,6 +2471,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if method == "GET" and path == "/finance":
         table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
         exp_rows, exp_pct = _load_finance_expenses_ledger_with_allocation(table)
+        alloc_stored = _load_allocation_stored_records(table)
+        allocation_records = _build_allocation_records_for_response(exp_rows, alloc_stored)
         return _json_response(
             200,
             {
@@ -2290,6 +2486,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 "investmentRecords": _load_investment_records(table),
                 "savingsRecords": _load_savings_records(table),
                 "pensionRecords": _load_pension_records(table),
+                "allocationRecords": allocation_records,
             },
         )
 
@@ -2380,6 +2577,26 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", "pension", event)
         return _json_response(200, {"pensionRecords": merged})
+
+    if method == "PUT" and path == "/finance/allocations":
+        body = _parse_json_body(event)
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        exp_rows, _ = _load_finance_expenses_ledger_with_allocation(table)
+        allocated_ids = frozenset(
+            str(r["id"]) for r in exp_rows if isinstance(r, dict) and r.get("isAllocate")
+        )
+        try:
+            normalized = _normalize_allocations_sheet_payload(body, allocated_ids)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        existing = _load_allocation_stored_records(table)
+        merged_stored = _merge_allocation_accumulated_last_updated(normalized, existing)
+        doc = {"records": merged_stored}
+        ddb_item = {**_finance_sheet_ddb_key("allocations"), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "allocations", event)
+        allocation_response = _build_allocation_records_for_response(exp_rows, merged_stored)
+        return _json_response(200, {"allocationRecords": allocation_response})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"

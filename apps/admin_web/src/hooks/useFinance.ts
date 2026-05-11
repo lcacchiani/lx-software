@@ -9,6 +9,7 @@ import { useCallback } from "react";
 import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
   type ExpenseIncomeAllocationPercents,
+  type FinanceAllocationRecord,
   type FinanceInvestmentRecord,
   type FinanceLedgerRecord,
   type FinanceLedgerSheetKey,
@@ -21,6 +22,7 @@ import {
   DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS,
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  normalizeAllocationRecords,
   normalizeExpenseIncomeAllocationPercents,
   normalizeHouseFinanceData,
   normalizeInvestmentRecords,
@@ -46,13 +48,16 @@ async function fetchFinance(): Promise<FinancePersistedState> {
     incomeRecords: normalizeLedgerRecords(rawObj.incomeRecords, INCOME_CATEGORIES, {
       includeIncomeFlags: true,
     }),
-    expenseRecords: normalizeLedgerRecords(rawObj.expenseRecords, EXPENSE_CATEGORIES),
+    expenseRecords: normalizeLedgerRecords(rawObj.expenseRecords, EXPENSE_CATEGORIES, {
+      includeExpenseFlags: true,
+    }),
     expenseIncomeAllocationPercents: normalizeExpenseIncomeAllocationPercents(
       rawObj.expenseIncomeAllocationPercents,
     ),
     investmentRecords: normalizeInvestmentRecords(rawObj.investmentRecords),
     savingsRecords: normalizeSavingsRecords(rawObj.savingsRecords),
     pensionRecords: normalizePensionRecords(rawObj.pensionRecords),
+    allocationRecords: normalizeAllocationRecords(rawObj.allocationRecords),
   };
 }
 
@@ -60,7 +65,11 @@ type PutFinanceResponse = {
   readonly data: HouseFinanceData;
 };
 
-type FinanceListStateKey = "investmentRecords" | "savingsRecords" | "pensionRecords";
+type FinanceListStateKey =
+  | "investmentRecords"
+  | "savingsRecords"
+  | "pensionRecords"
+  | "allocationRecords";
 
 function financeRecordsPutMutationOptions(
   qc: QueryClient,
@@ -145,6 +154,14 @@ export function useFinance() {
     }),
   );
 
+  const saveAllocationRecords = useMutation(
+    financeRecordsPutMutationOptions(qc, {
+      path: "/finance/allocations",
+      listKey: "allocationRecords",
+      normalize: normalizeAllocationRecords,
+    }),
+  );
+
   const saveLedgerSheet = useMutation({
     mutationFn: async ({
       sheet,
@@ -174,6 +191,7 @@ export function useFinance() {
       const categories = sheet === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
       const normalizedRecords = normalizeLedgerRecords(list as unknown, categories, {
         includeIncomeFlags: sheet === "income",
+        includeExpenseFlags: sheet === "expenses",
       });
       const nextPercents =
         sheet === "expenses" && res.expenseIncomeAllocationPercents !== undefined
@@ -186,12 +204,17 @@ export function useFinance() {
         expenseIncomeAllocationPercents: nextPercents,
       };
     },
-    onSuccess: ({ bodyKey, records, expenseIncomeAllocationPercents: respPercents }) => {
+    onSuccess: async (payload) => {
+      if (payload.sheet === "expenses") {
+        const fresh = await fetchFinance();
+        qc.setQueryData<FinancePersistedState>(["finance"], fresh);
+        return;
+      }
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
         ...(old ?? DEFAULT_FINANCE_STATE),
-        [bodyKey]: records,
-        ...(respPercents !== undefined
-          ? { expenseIncomeAllocationPercents: respPercents }
+        [payload.bodyKey]: payload.records,
+        ...(payload.expenseIncomeAllocationPercents !== undefined
+          ? { expenseIncomeAllocationPercents: payload.expenseIncomeAllocationPercents }
           : {}),
       }));
     },
@@ -241,6 +264,20 @@ export function useFinance() {
     [qc, savePensionRecords],
   );
 
+  const patchAllocationRecords = useCallback(
+    (
+      patch: (
+        prev: readonly FinanceAllocationRecord[],
+      ) => readonly FinanceAllocationRecord[],
+    ) => {
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const prev = state?.allocationRecords ?? DEFAULT_FINANCE_STATE.allocationRecords;
+      const next = patch(prev);
+      saveAllocationRecords.mutate([...next]);
+    },
+    [qc, saveAllocationRecords],
+  );
+
   const patchLedgerRecords = useCallback(
     (
       sheet: FinanceLedgerSheetKey,
@@ -275,12 +312,14 @@ export function useFinance() {
   const investmentSaveErr = saveInvestmentRecords.error;
   const savingsSaveErr = saveSavingsRecords.error;
   const pensionSaveErr = savePensionRecords.error;
+  const allocationSaveErr = saveAllocationRecords.error;
   const saveError =
     houseSaveErr ??
     ledgerSaveErr ??
     investmentSaveErr ??
     savingsSaveErr ??
-    pensionSaveErr;
+    pensionSaveErr ??
+    allocationSaveErr;
 
   return {
     data: q.data ?? DEFAULT_FINANCE_STATE,
@@ -292,13 +331,15 @@ export function useFinance() {
     patchInvestmentRecords,
     patchSavingsRecords,
     patchPensionRecords,
+    patchAllocationRecords,
     patchExpenseIncomeAllocationPercents,
     isSaving:
       saveHouse.isPending ||
       saveLedgerSheet.isPending ||
       saveInvestmentRecords.isPending ||
       saveSavingsRecords.isPending ||
-      savePensionRecords.isPending,
+      savePensionRecords.isPending ||
+      saveAllocationRecords.isPending,
     saveError,
     saveErrorDetail: getAdminApiErrorMessage(saveError),
   };
