@@ -1113,10 +1113,17 @@ def _sanitize_savings_records_list(raw: Any) -> list[dict[str, Any]]:
         cur = _coerce_finance_currency_value(
             row.get("currency"), DEFAULT_FINANCE_CURRENCY
         )
+        desc_raw = row.get("description")
+        desc = ""
+        if isinstance(desc_raw, str):
+            desc = desc_raw.strip()
+            if len(desc) > MAX_FINANCE_DESCRIPTION:
+                desc = desc[:MAX_FINANCE_DESCRIPTION]
         out.append(
             {
                 "id": rid.strip(),
                 "deposit": d,
+                "description": desc,
                 "value": amt_f,
                 "currency": cur,
             }
@@ -1257,10 +1264,19 @@ def _normalize_savings_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any
             row.get("currency", DEFAULT_FINANCE_CURRENCY),
             f"savingsRecords[{i}].currency",
         )
+        desc_raw = row.get("description", "")
+        if desc_raw is None:
+            desc_raw = ""
+        if not isinstance(desc_raw, str):
+            raise ValueError(f"savingsRecords[{i}].description must be a string")
+        d = desc_raw.strip()
+        if len(d) > MAX_FINANCE_DESCRIPTION:
+            raise ValueError(f"savingsRecords[{i}].description is too long")
         out.append(
             {
                 "id": rid.strip(),
                 "deposit": dep.strip(),
+                "description": d,
                 "value": amt_f,
                 "currency": cur,
             }

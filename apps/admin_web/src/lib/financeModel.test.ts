@@ -264,6 +264,16 @@ describe("normalizeSavingsRecords", () => {
     const out = normalizeSavingsRecords(rows);
     expect(out).toHaveLength(1);
     expect(out[0].deposit).toBe("Bank A");
+    expect(out[0].description).toBe("");
+  });
+
+  it("reads description", () => {
+    const rows = [
+      { id: "1", deposit: "Bank A", description: "  Term  ", value: 1000, currency: "HKD" },
+    ];
+    const out = normalizeSavingsRecords(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].description).toBe("Term");
   });
 });
 

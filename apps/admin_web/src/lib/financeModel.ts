@@ -139,6 +139,7 @@ export type FinanceInvestmentRecord = {
 export type FinanceSavingsRecord = {
   readonly id: string;
   readonly deposit: string;
+  readonly description: string;
   readonly value: number;
   readonly currency: string;
 };
@@ -762,7 +763,11 @@ export function normalizeSavingsRecords(input: unknown): FinanceSavingsRecord[] 
     }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
-    out.push({ id, deposit, value, currency });
+    let description = typeof row.description === "string" ? row.description.trim() : "";
+    if (description.length > MAX_PENSION_DESCRIPTION_LEN) {
+      description = description.slice(0, MAX_PENSION_DESCRIPTION_LEN);
+    }
+    out.push({ id, deposit, description, value, currency });
   }
   return out;
 }
