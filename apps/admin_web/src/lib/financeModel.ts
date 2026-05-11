@@ -488,6 +488,57 @@ export function sumMonthlyFinanceLedgerAmountsGeneral(
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }
 
+/**
+ * Per-currency monthly expense totals for the **general** ledger slice (no related
+ * property), matching {@link sumMonthlyFinanceLedgerAmountsGeneral}: persisted
+ * expense rows with `amountPeriod: month` and no `relatedHouse`, plus derived
+ * tax / saving / investment rows from tagged income with no related property.
+ * Every {@link EXPENSE_CATEGORIES} key is present; currencies with zero net are omitted.
+ */
+export function sumMonthlyGeneralExpenseAmountsByCategory(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  expenseRecords: readonly FinanceLedgerRecord[],
+  expenseAllocationPercents: ExpenseIncomeAllocationPercents,
+  relatedHouseOptions: ReadonlyArray<{ readonly value: HouseKey; readonly label: string }>,
+): Readonly<Record<string, Readonly<Record<string, number>>>> {
+  const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
+  const byCat: Record<string, Record<string, number>> = {};
+  for (const cat of EXPENSE_CATEGORIES) {
+    byCat[cat] = {};
+  }
+
+  for (const r of expenseRecords) {
+    if (r.amountPeriod !== "month" || isLedgerRelatedHouse(r.relatedHouse)) {
+      continue;
+    }
+    const bucket = byCat[r.category];
+    if (!bucket) {
+      continue;
+    }
+    const c = r.currency;
+    bucket[c] = (bucket[c] ?? 0) + r.amount;
+  }
+
+  const derived = buildDerivedExpenseLedgerRowsFromTaggedIncome(
+    incomeRecords,
+    alloc,
+    relatedHouseOptions,
+  );
+  for (const r of derived) {
+    if (isLedgerRelatedHouse(r.relatedHouse)) {
+      continue;
+    }
+    const bucket = byCat[r.category];
+    if (!bucket) {
+      continue;
+    }
+    const c = r.currency;
+    bucket[c] = (bucket[c] ?? 0) + r.amount;
+  }
+
+  return byCat;
+}
+
 /** Per-currency income minus expenses for {@link FinanceLedgerAmountBuckets}. */
 export function monthlyLedgerNetByCurrency(
   buckets: FinanceLedgerAmountBuckets,

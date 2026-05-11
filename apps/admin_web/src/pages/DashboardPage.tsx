@@ -14,9 +14,11 @@ import {
   sumHouseStatementLinesForFiscalYear,
 } from "../lib/fiscalYearFinance";
 import {
+  EXPENSE_CATEGORIES,
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
   sumMonthlyFinanceLedgerAmountsGeneral,
+  sumMonthlyGeneralExpenseAmountsByCategory,
   type HouseKey,
 } from "../lib/financeModel";
 import { MoneyAmount } from "../components/ui";
@@ -28,6 +30,14 @@ const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
   { value: "hillmarton", label: "32 Hillmarton" },
   { value: "morrison", label: "The Morrison" },
 ];
+
+function formatExpensePercentOfIncome(percent: number): string {
+  const rounded = Math.round(percent * 10) / 10;
+  if (Number.isInteger(rounded)) {
+    return `${rounded}%`;
+  }
+  return `${rounded.toFixed(1)}%`;
+}
 
 function sortedCurrencyEntries(record: Readonly<Record<string, number>>): [string, number][] {
   return Object.entries(record)
@@ -255,16 +265,37 @@ function GeneralSummaryCard() {
         );
       const income = sumBucket(generalBuckets.incomeByCurrency);
       const expenses = sumBucket(generalBuckets.expensesByCurrency);
+      const expenseByCategory = sumMonthlyGeneralExpenseAmountsByCategory(
+        data.incomeRecords,
+        data.expenseRecords,
+        data.expenseIncomeAllocationPercents,
+        LEDGER_RELATED_HOUSE_OPTIONS,
+      );
+      const categoryPercentsSorted = EXPENSE_CATEGORIES.map((category) => {
+        const buckets: Readonly<Record<string, number>> = expenseByCategory[category] ?? {};
+        const amountHkd = sumBucket(buckets);
+        const percent = income > 0 ? (amountHkd / income) * 100 : 0;
+        return { category, amountHkd, percent };
+      }).sort((a, b) => {
+        if (b.percent !== a.percent) {
+          return b.percent - a.percent;
+        }
+        return a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+      });
       return {
         status: "ok" as const,
         income,
         expenses,
         net: income - expenses,
+        categoryPercentsSorted,
       };
     } catch {
       return { status: "fx-missing" as const };
     }
   }, [
+    data.expenseIncomeAllocationPercents,
+    data.expenseRecords,
+    data.incomeRecords,
     generalBuckets.expensesByCurrency,
     generalBuckets.incomeByCurrency,
     hasActivity,
@@ -302,25 +333,68 @@ function GeneralSummaryCard() {
     return <MoneyAmount amount={amt} currency={GLOBAL_DEFAULT_CURRENCY} />;
   }
 
+  function generalCategoryPercentPanel(c: typeof convertedHkd): ReactNode {
+    if (c.status === "empty") {
+      return <span className="text-muted">—</span>;
+    }
+    if (c.status === "loading") {
+      return <span className="text-muted">Loading rates…</span>;
+    }
+    if (c.status === "error") {
+      return <span className="text-danger">Could not load exchange rates.</span>;
+    }
+    if (c.status === "fx-missing") {
+      return <span className="text-danger">Missing FX rate for a currency.</span>;
+    }
+    if (c.income <= 0) {
+      return (
+        <p className="text-muted small mb-0">
+          General income is zero in {GLOBAL_DEFAULT_CURRENCY}, so category shares of income
+          are not shown.
+        </p>
+      );
+    }
+    return (
+      <ul className="list-unstyled mb-0 small">
+        {c.categoryPercentsSorted.map(({ category, percent }) => (
+          <li key={category}>
+            {category}: {formatExpensePercentOfIncome(percent)}
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <div className="card h-100 shadow-sm">
       <div className="card-body d-flex flex-column">
         <h2 className="h6 mb-3">
           <strong>General</strong>
         </h2>
-        <p className="text-muted small mb-3">
-          Monthly income and expenses not linked to any property (including
-          derived tax, saving, and investment amounts from tagged income with no
-          related property), summed in {GLOBAL_DEFAULT_CURRENCY}.
-        </p>
-        <dl className="row small mb-0">
-          <dt className="col-sm-4 text-muted">Income</dt>
-          <dd className="col-sm-8">{generalHkdValue(convertedHkd, "income")}</dd>
-          <dt className="col-sm-4 text-muted pt-2">Expenses</dt>
-          <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "expenses")}</dd>
-          <dt className="col-sm-4 text-muted pt-2">Net</dt>
-          <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "net")}</dd>
-        </dl>
+        <div className="d-flex flex-column flex-lg-row gap-3 flex-grow-1">
+          <div className="flex-grow-1 flex-lg-shrink-0" style={{ flexBasis: "min(100%, 20rem)" }}>
+            <p className="text-muted small mb-3">
+              Monthly income and expenses not linked to any property (including
+              derived tax, saving, and investment amounts from tagged income with no
+              related property), summed in {GLOBAL_DEFAULT_CURRENCY}.
+            </p>
+            <dl className="row small mb-0">
+              <dt className="col-sm-4 text-muted">Income</dt>
+              <dd className="col-sm-8">{generalHkdValue(convertedHkd, "income")}</dd>
+              <dt className="col-sm-4 text-muted pt-2">Expenses</dt>
+              <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "expenses")}</dd>
+              <dt className="col-sm-4 text-muted pt-2">Net</dt>
+              <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "net")}</dd>
+            </dl>
+          </div>
+          <div className="vr text-muted opacity-50 d-none d-lg-block align-self-stretch flex-shrink-0" />
+          <div className="flex-grow-1 border-top border-lg-0 pt-3 pt-lg-0">
+            <p className="small text-muted mb-2">
+              Expense categories as a share of general income (highest first).
+            </p>
+            {generalCategoryPercentPanel(convertedHkd)}
+          </div>
+        </div>
       </div>
     </div>
   );
