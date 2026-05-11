@@ -3,6 +3,7 @@ import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
+  investmentRecordFiatNotionalInQuoteCurrency,
   investmentDetailsDisplay,
   ledgerMonthlyAmount,
   normalizeExpenseIncomeAllocationPercents,
@@ -152,6 +153,49 @@ describe("normalizeInvestmentRecords", () => {
     expect(out[0].ticker).toBe("VWRA");
     expect(out[1].cryptoCurrency).toBe("BTC");
     expect(out[2].ticker).toBeUndefined();
+  });
+});
+
+describe("investmentRecordFiatNotionalInQuoteCurrency", () => {
+  it("uses principal total for non-crypto", () => {
+    expect(
+      investmentRecordFiatNotionalInQuoteCurrency({
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 5000,
+        currency: "USD",
+        unit: 10,
+      }),
+    ).toBe(5000);
+  });
+
+  it("multiplies units by principal for Crypto when units are positive", () => {
+    expect(
+      investmentRecordFiatNotionalInQuoteCurrency({
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 95000,
+        currency: "USD",
+        unit: 2,
+      }),
+    ).toBe(190000);
+  });
+
+  it("uses principal alone for Crypto when units are absent", () => {
+    expect(
+      investmentRecordFiatNotionalInQuoteCurrency({
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 120000,
+        currency: "HKD",
+      }),
+    ).toBe(120000);
   });
 });
 

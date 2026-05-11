@@ -612,6 +612,25 @@ function trimInvestmentDetailString(raw: unknown, maxLen: number): string | unde
   return t.length > maxLen ? t.slice(0, maxLen) : t;
 }
 
+/**
+ * Fiat notional in {@link FinanceInvestmentRecord.currency} for FX conversion (e.g. Frankfurter).
+ *
+ * For **Crypto** rows with a positive `unit`, `principalAmount` is treated as fiat **per unit**
+ * (price per coin/token in the record currency); holding value is `unit × principalAmount`.
+ * Otherwise `principalAmount` is the total in quote currency (other categories, or Crypto without units).
+ */
+export function investmentRecordFiatNotionalInQuoteCurrency(
+  record: FinanceInvestmentRecord,
+): number {
+  const p = record.principalAmount;
+  if (record.category !== "Crypto") return p;
+  const u = record.unit;
+  if (u !== undefined && Number.isFinite(u) && u > 0 && Number.isFinite(p)) {
+    return u * p;
+  }
+  return p;
+}
+
 /** Value shown in the Investments “Details” column (property, ticker, or crypto label). */
 export function investmentDetailsDisplay(
   record: FinanceInvestmentRecord,
