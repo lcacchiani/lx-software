@@ -129,7 +129,6 @@ export function FinancePage() {
                 tableSectionTitle="Monthly Expenses"
                 deleteConfirmMessage="Delete this expense record?"
                 emptyMessage="No expense records yet."
-                sortTableRowsByCurrencyCategoryDescription
                 alphabetizeCategoryDropdown
               />
             ) : null}
