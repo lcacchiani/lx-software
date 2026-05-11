@@ -57,10 +57,8 @@ function formatUnitCell(unit: number | undefined): string {
 }
 
 /**
- * Investment notional in {@link displayCurrency}: quote-currency amount from
- * {@link investmentRecordFiatNotionalInQuoteCurrency}, then Frankfurter when the row currency
- * differs from {@link displayCurrency}. While rates are loading, returns quote notional so
- * sorting stays stable.
+ * For **sorting** by Current Value: notional in {@link displayCurrency} (Frankfurter when the
+ * row currency differs). Table cells show notional in the row’s own currency instead.
  */
 function investmentNotionalInDisplayCurrency(
   r: FinanceInvestmentRecord,
@@ -455,7 +453,30 @@ export function FinanceInvestmentsPanel({
     rowNotionalInDisplayCurrencyForSort,
   ]);
 
-  const convertedTotal = useMemo(() => {
+  const convertedPrincipalTotal = useMemo(() => {
+    if (records.length === 0) return null;
+    if (needsFx) {
+      if (!ratesQuery.isSuccess) return null;
+      if (!ratesQuery.data) return null;
+    }
+    try {
+      return records.reduce(
+        (sum, r) =>
+          sum +
+          convertAmountToBase(
+            r.principalAmount,
+            r.currency,
+            totalDisplayCurrency,
+            rateByQuoteForDisplay,
+          ),
+        0,
+      );
+    } catch {
+      return null;
+    }
+  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, rateByQuoteForDisplay, totalDisplayCurrency]);
+
+  const convertedCurrentValueTotal = useMemo(() => {
     if (records.length === 0) return null;
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
@@ -811,31 +832,11 @@ export function FinanceInvestmentsPanel({
                   {r.category === "Real Estate" ? "—" : formatUnitCell(r.unit)}
                 </td>
                 <td className="small text-end">
-                  {(() => {
-                    const rowNeedsFx =
-                      r.currency.trim().toUpperCase() !==
-                      totalDisplayCurrency.trim().toUpperCase();
-                    if (needsFx && rowNeedsFx && ratesQuery.isPending) {
-                      return <span className="text-muted">Loading rates…</span>;
-                    }
-                    if (needsFx && rowNeedsFx && ratesQuery.isError) {
-                      return <span className="text-muted">—</span>;
-                    }
-                    const conv = investmentNotionalInDisplayCurrency(
-                      r,
-                      totalDisplayCurrency,
-                      rateByQuoteForDisplay,
-                      needsFx,
-                      ratesQuery.isSuccess,
-                    );
-                    return (
-                      <MoneyAmount
-                        amount={conv}
-                        currency={totalDisplayCurrency}
-                        amountOnly
-                      />
-                    );
-                  })()}
+                  <MoneyAmount
+                    amount={investmentRecordFiatNotionalInQuoteCurrency(r)}
+                    currency={r.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
@@ -864,11 +865,35 @@ export function FinanceInvestmentsPanel({
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              <td className="small" />
+              <td className="small text-muted fw-normal">
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
+              </td>
               <td className="small" />
               <td className="small" />
               <td className="small text-end">
-                <span className="text-muted">—</span>
+                {(() => {
+                  if (needsFx && ratesQuery.isPending) {
+                    return <span className="text-muted">—</span>;
+                  }
+                  if (needsFx && ratesQuery.isError) {
+                    return <span className="text-muted">—</span>;
+                  }
+                  if (convertedPrincipalTotal !== null) {
+                    return (
+                      <MoneyAmount
+                        amount={convertedPrincipalTotal}
+                        currency={totalDisplayCurrency}
+                        amountOnly
+                      />
+                    );
+                  }
+                  return <span className="text-muted">—</span>;
+                })()}
               </td>
               <td className="small">
                 <CurrencySelect
@@ -883,33 +908,18 @@ export function FinanceInvestmentsPanel({
               <td className="small text-end">
                 {(() => {
                   if (needsFx && ratesQuery.isPending) {
-                    return <span className="text-muted">Loading rates…</span>;
+                    return <span className="text-muted">—</span>;
                   }
                   if (needsFx && ratesQuery.isError) {
-                    return (
-                      <span className="text-danger small">
-                        {(ratesQuery.error as Error | undefined)?.message ??
-                          "Could not load exchange rates."}
-                      </span>
-                    );
+                    return <span className="text-muted">—</span>;
                   }
-                  if (convertedTotal !== null) {
+                  if (convertedCurrentValueTotal !== null) {
                     return (
-                      <>
-                        <MoneyAmount
-                          amount={convertedTotal}
-                          currency={totalDisplayCurrency}
-                          amountOnly
-                        />
-                        <div className="small text-muted fw-normal mt-1">
-                          <FrankfurterRatesFooterNote
-                            needsFx={needsFx}
-                            fxError={fxError}
-                            fxLoading={fxLoading}
-                            ratesQuery={ratesQuery}
-                          />
-                        </div>
-                      </>
+                      <MoneyAmount
+                        amount={convertedCurrentValueTotal}
+                        currency={totalDisplayCurrency}
+                        amountOnly
+                      />
                     );
                   }
                   return <span className="text-muted">—</span>;
