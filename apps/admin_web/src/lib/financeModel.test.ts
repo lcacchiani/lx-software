@@ -4,6 +4,7 @@ import {
   INCOME_CATEGORIES,
   ledgerMonthlyAmount,
   normalizeLedgerRecords,
+  sumMonthlyFinanceLedgerAmountsByHouse,
 } from "./financeModel";
 
 describe("normalizeLedgerRecords", () => {
@@ -110,5 +111,90 @@ describe("normalizeLedgerRecords", () => {
     ];
     const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES);
     expect(out[0].relatedHouse).toBeUndefined();
+  });
+});
+
+describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
+  it("sums month-period ledger rows linked to the house, by currency", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "A",
+          amount: 100,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+        },
+        {
+          id: "i2",
+          category: "Salary",
+          description: "B",
+          amount: 40,
+          currency: "USD",
+          relatedHouse: "hillmarton",
+        },
+        {
+          id: "i3",
+          category: "Salary",
+          description: "Other house",
+          amount: 999,
+          currency: "HKD",
+          relatedHouse: "morrison",
+        },
+        {
+          id: "i4",
+          category: "Salary",
+          description: "No house",
+          amount: 50,
+          currency: "HKD",
+        },
+      ],
+      INCOME_CATEGORIES,
+    );
+    const expenses = normalizeLedgerRecords(
+      [
+        {
+          id: "e1",
+          category: "Retirement",
+          description: "MPF",
+          amount: 10,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+        },
+      ],
+      EXPENSE_CATEGORIES,
+    );
+    const r = sumMonthlyFinanceLedgerAmountsByHouse(income, expenses, "hillmarton");
+    expect(r.incomeByCurrency.HKD).toBe(100);
+    expect(r.incomeByCurrency.USD).toBe(40);
+    expect(r.expensesByCurrency.HKD).toBe(10);
+  });
+
+  it("excludes yearly amountPeriod rows", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Annual",
+          amount: 12000,
+          currency: "HKD",
+          amountPeriod: "year",
+          relatedHouse: "hillmarton",
+        },
+        {
+          id: "i2",
+          category: "Salary",
+          description: "Monthly",
+          amount: 100,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+        },
+      ],
+      INCOME_CATEGORIES,
+    );
+    const r = sumMonthlyFinanceLedgerAmountsByHouse(income, [], "hillmarton");
+    expect(r.incomeByCurrency.HKD).toBe(100);
   });
 });
