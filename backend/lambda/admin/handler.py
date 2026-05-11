@@ -42,6 +42,7 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
         "Saving",
         "Investment",
         "Rent",
+        "Mortgage",
         "Insurance",
         "Retirement",
         "Tax",
@@ -49,6 +50,7 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
     }
 )
 MAX_LEDGER_RECORDS = 2000
+LEDGER_RECORD_AMOUNT_PERIODS = frozenset({"month", "year"})
 # Asset uploads accept any image/* type plus statement PDFs.
 ALLOWED_UPLOAD_CONTENT_TYPES = frozenset({"application/pdf"})
 _s3 = boto3.client("s3")
@@ -172,6 +174,59 @@ def _asset_download_presigned_response(
     )
     _audit(user_sub, "ASSET_DOWNLOAD_URL", norm, event)
     return _json_response(200, {"url": url, "expiresIn": 300})
+
+
+def _asset_delete_response(
+    event: dict[str, Any],
+    user_sub: str | None,
+    raw_key: Any,
+) -> dict[str, Any]:
+    """Remove a confirmed asset object from S3 and delete its META row.
+
+    Same key rules and confirmation requirement as download URLs: only
+    ``uploads/*`` or validated ``inbound/*`` keys with an existing ``ASSET#``
+    META record may be deleted.
+    """
+    norm = _normalize_public_asset_key(raw_key)
+    if norm is None:
+        return _json_response(400, {"message": "key is required"})
+    table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    ddb_key = {"pk": f"ASSET#{norm}", "sk": "META"}
+    meta = table.get_item(Key=ddb_key)
+    if "Item" not in meta:
+        _log_event(
+            "warning",
+            tag="asset_delete_rejected",
+            reason="not_confirmed",
+            sub=user_sub,
+            key=norm[:512],
+            request_id=_request_id(event),
+        )
+        return _json_response(404, {"message": "Asset not found"})
+    bucket = os.environ["ASSETS_BUCKET_NAME"]
+    try:
+        _s3.delete_object(Bucket=bucket, Key=norm)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        _log_event(
+            "warning",
+            tag="asset_delete_s3_error",
+            sub=user_sub,
+            key=norm[:512],
+            s3_error_code=code,
+            request_id=_request_id(event),
+        )
+        raise
+    table.delete_item(Key=ddb_key)
+    _log_event(
+        "info",
+        tag="asset_delete_ok",
+        sub=user_sub,
+        key=norm[:512],
+        request_id=_request_id(event),
+    )
+    _audit(user_sub, "ASSET_DELETE", norm, event)
+    return _json_response(200, {"ok": True, "key": norm})
 
 
 def _json_response(
@@ -568,12 +623,15 @@ def _sanitize_ledger_records_list(
         d = desc.strip()
         if len(d) > MAX_FINANCE_DESCRIPTION:
             d = d[:MAX_FINANCE_DESCRIPTION]
+        period_raw = row.get("amountPeriod")
+        period = "year" if period_raw == "year" else "month"
         rec: dict[str, Any] = {
             "id": rid.strip(),
             "category": cat,
             "description": d,
             "amount": amt_f,
             "currency": cur,
+            "amountPeriod": period,
         }
         rh = row.get("relatedHouse")
         if rh in FINANCE_HOUSE_KEYS:
@@ -622,14 +680,22 @@ def _normalize_ledger_sheet_payload(
             row.get("currency", DEFAULT_FINANCE_CURRENCY),
             f"{body_key}[{i}].currency",
         )
-        house_raw = row.get("relatedHouse")
+        period_raw = row.get("amountPeriod", "month")
+        if period_raw not in LEDGER_RECORD_AMOUNT_PERIODS:
+            allowed_p = ", ".join(sorted(LEDGER_RECORD_AMOUNT_PERIODS))
+            raise ValueError(
+                f"{body_key}[{i}].amountPeriod must be one of: {allowed_p}"
+            )
+        period = str(period_raw)
         rec: dict[str, Any] = {
             "id": rid.strip(),
             "category": cat,
             "description": desc.strip(),
             "amount": float(amt),
             "currency": cur,
+            "amountPeriod": period,
         }
+        house_raw = row.get("relatedHouse")
         if house_raw is not None and house_raw != "":
             if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
                 houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
@@ -1420,6 +1486,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if method == "POST" and path == "/assets/download-url":
         body = _parse_json_body(event)
         return _asset_download_presigned_response(event, user_sub, body.get("key"))
+
+    if method == "POST" and path == "/assets/delete":
+        body = _parse_json_body(event)
+        return _asset_delete_response(event, user_sub, body.get("key"))
 
     if method == "GET" and path == "/records":
         qs = event.get("rawQueryString") or ""

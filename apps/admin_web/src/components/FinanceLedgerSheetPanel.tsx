@@ -6,7 +6,9 @@ import {
 } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
+  ledgerMonthlyAmount,
   newStatementLineId,
+  type FinanceLedgerAmountPeriod,
   type FinanceLedgerRecord,
   type HouseKey,
 } from "../lib/financeModel";
@@ -31,6 +33,7 @@ type LineFormState = {
   description: string;
   amount: string;
   currency: string;
+  amountPeriod: FinanceLedgerAmountPeriod;
   relatedHouse: HouseKey | "";
 };
 
@@ -48,7 +51,7 @@ const RELATED_HOUSE_TABLE_COLUMN: AdminDataTableColumn = {
 const AMOUNT_CCY_OPS_COLUMNS: AdminDataTableColumn[] = [
   {
     key: "amt",
-    header: "Amount",
+    header: "Monthly amount",
     className: "small text-end",
     headerClassName: "small text-end",
   },
@@ -133,6 +136,7 @@ export function FinanceLedgerSheetPanel({
     description: "",
     amount: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
+    amountPeriod: "month",
     relatedHouse: "",
   });
 
@@ -153,7 +157,14 @@ export function FinanceLedgerSheetPanel({
             r.relatedHouse && relatedHouseLabelByValue.get(r.relatedHouse)
               ? relatedHouseLabelByValue.get(r.relatedHouse)
               : r.relatedHouse ?? "";
-          const hay = [r.category, r.description, r.currency, String(r.amount), houseHay ?? ""]
+          const hay = [
+            r.category,
+            r.description,
+            r.currency,
+            r.amountPeriod,
+            String(r.amount),
+            houseHay ?? "",
+          ]
             .join(" ")
             .toLowerCase();
           return hay.includes(q);
@@ -197,7 +208,14 @@ export function FinanceLedgerSheetPanel({
     }
     try {
       return records.reduce(
-        (sum, r) => sum + convertAmountToBase(r.amount, r.currency, totalDisplayCurrency, map),
+        (sum, r) =>
+          sum +
+          convertAmountToBase(
+            ledgerMonthlyAmount(r),
+            r.currency,
+            totalDisplayCurrency,
+            map,
+          ),
         0,
       );
     } catch {
@@ -228,6 +246,7 @@ export function FinanceLedgerSheetPanel({
       description: row.description,
       amount: String(row.amount),
       currency: row.currency,
+      amountPeriod: row.amountPeriod,
       relatedHouse: row.relatedHouse ?? "",
     });
   }
@@ -254,6 +273,7 @@ export function FinanceLedgerSheetPanel({
       description: lineForm.description.trim(),
       amount,
       currency,
+      amountPeriod: lineForm.amountPeriod,
       ...(lineForm.relatedHouse === "hillmarton" || lineForm.relatedHouse === "morrison"
         ? { relatedHouse: lineForm.relatedHouse }
         : {}),
@@ -318,7 +338,7 @@ export function FinanceLedgerSheetPanel({
                 ))}
               </select>
             </div>
-            <div className="col-md-5">
+            <div className="col-md-3">
               <label className="form-label small" htmlFor={`${sheetId}-ledger-desc`}>
                 Description
               </label>
@@ -348,6 +368,25 @@ export function FinanceLedgerSheetPanel({
                   setLineForm((f) => ({ ...f, amount: ev.target.value }))
                 }
               />
+            </div>
+            <div className="col-md-2">
+              <label className="form-label small" htmlFor={`${sheetId}-ledger-period`}>
+                Amount is
+              </label>
+              <select
+                id={`${sheetId}-ledger-period`}
+                className="form-select form-select-sm"
+                value={lineForm.amountPeriod}
+                onChange={(ev) =>
+                  setLineForm((f) => ({
+                    ...f,
+                    amountPeriod: ev.target.value as FinanceLedgerAmountPeriod,
+                  }))
+                }
+              >
+                <option value="month">Per month</option>
+                <option value="year">Per year</option>
+              </select>
             </div>
             <div className="col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-ledger-ccy`}>
@@ -413,7 +452,11 @@ export function FinanceLedgerSheetPanel({
                   </td>
                 ) : null}
                 <td className="small text-end">
-                  <MoneyAmount amount={r.amount} currency={r.currency} amountOnly />
+                  <MoneyAmount
+                    amount={ledgerMonthlyAmount(r)}
+                    currency={r.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-end">

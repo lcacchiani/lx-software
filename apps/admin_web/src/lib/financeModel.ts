@@ -72,6 +72,7 @@ export const EXPENSE_CATEGORIES = [
   "Saving",
   "Investment",
   "Rent",
+  "Mortgage",
   "Insurance",
   "Retirement",
   "Tax",
@@ -82,6 +83,9 @@ export type FinanceLedgerSheetKey = "income" | "expenses";
 
 export type HouseKey = "hillmarton" | "morrison";
 
+/** Whether `amount` is entered per calendar month or per year (yearly rows are shown ÷12 in monthly views). */
+export type FinanceLedgerAmountPeriod = "month" | "year";
+
 /** One row in the Income or Expenses ledger (same shape; category lists differ per sheet). */
 export type FinanceLedgerRecord = {
   readonly id: string;
@@ -89,9 +93,16 @@ export type FinanceLedgerRecord = {
   readonly description: string;
   readonly amount: number;
   readonly currency: string;
+  /** Defaults to `month` when omitted (legacy rows). */
+  readonly amountPeriod: FinanceLedgerAmountPeriod;
   /** Optional link to a house (same keys as finance house tabs). */
   readonly relatedHouse?: HouseKey;
 };
+
+/** Monthly equivalent for ledger tables that show a per-month column. */
+export function ledgerMonthlyAmount(record: FinanceLedgerRecord): number {
+  return record.amountPeriod === "year" ? record.amount / 12 : record.amount;
+}
 
 export type FinancePersistedState = {
   readonly hillmarton: HouseFinanceData;
@@ -155,6 +166,9 @@ export function normalizeLedgerRecords(
     }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    const periodRaw = row.amountPeriod;
+    const amountPeriod: FinanceLedgerAmountPeriod =
+      periodRaw === "year" ? "year" : "month";
     const rh = row.relatedHouse;
     const relatedHouse: HouseKey | undefined =
       rh === "hillmarton" || rh === "morrison" ? rh : undefined;
@@ -164,6 +178,7 @@ export function normalizeLedgerRecords(
       description,
       amount,
       currency,
+      amountPeriod,
       ...(relatedHouse ? { relatedHouse } : {}),
     });
   }
