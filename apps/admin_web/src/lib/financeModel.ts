@@ -74,6 +74,8 @@ export const EXPENSE_CATEGORIES = [
   "Rent",
   "Insurance",
   "Retirement",
+  "Tax",
+  "Amenities",
 ] as const;
 
 export type FinanceLedgerSheetKey = "income" | "expenses";

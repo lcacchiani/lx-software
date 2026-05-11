@@ -37,7 +37,16 @@ MAX_SOURCE_ASSET_KEYS_PER_LINE = 20
 MAX_SOURCE_ASSET_KEY_LEN = 1024
 INCOME_RECORD_CATEGORIES = frozenset({"Salary", "Rent"})
 EXPENSE_RECORD_CATEGORIES = frozenset(
-    {"Utility", "Saving", "Investment", "Rent", "Insurance", "Retirement"}
+    {
+        "Utility",
+        "Saving",
+        "Investment",
+        "Rent",
+        "Insurance",
+        "Retirement",
+        "Tax",
+        "Amenities",
+    }
 )
 MAX_LEDGER_RECORDS = 2000
 # Asset uploads accept any image/* type plus statement PDFs.
