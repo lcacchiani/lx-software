@@ -548,8 +548,8 @@ export function FinanceLedgerSheetPanel({
   ]);
 
   const recordCurrencies = useMemo(
-    () => tableSourceRecords.map((r) => r.currency),
-    [tableSourceRecords],
+    () => filtered.map((r) => r.currency),
+    [filtered],
   );
 
   const needsFx = useMemo(() => {
@@ -560,7 +560,9 @@ export function FinanceLedgerSheetPanel({
   const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
 
   const convertedTotal = useMemo(() => {
-    if (tableSourceRecords.length === 0) return null;
+    if (filtered.length === 0) {
+      return tableSourceRecords.length === 0 ? null : 0;
+    }
     let map: ReadonlyMap<string, number> = new Map();
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
@@ -569,7 +571,7 @@ export function FinanceLedgerSheetPanel({
       map = ratePayload.rateByQuote;
     }
     try {
-      return tableSourceRecords.reduce(
+      return filtered.reduce(
         (sum, r) =>
           sum +
           convertAmountToBase(
@@ -584,7 +586,8 @@ export function FinanceLedgerSheetPanel({
       return null;
     }
   }, [
-    tableSourceRecords,
+    filtered,
+    tableSourceRecords.length,
     needsFx,
     ratesQuery.isSuccess,
     ratesQuery.data,
