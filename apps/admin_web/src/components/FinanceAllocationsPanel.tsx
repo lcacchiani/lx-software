@@ -316,8 +316,7 @@ export function FinanceAllocationsPanel(props: {
     [records, editingLinkedExpenseId],
   );
 
-  const customFormId = "finance-allocations-custom-form";
-  const linkedFormId = "finance-allocations-linked-form";
+  const editorFormId = "finance-allocations-editor-form";
 
   function resetCustomForm() {
     setEditingCustomExpenseId(null);
@@ -360,8 +359,7 @@ export function FinanceAllocationsPanel(props: {
     }
   }
 
-  function submitCustomAllocation(e: FormEvent) {
-    e.preventDefault();
+  function submitCustomAllocationCore() {
     const d = customDesc.trim();
     if (!d) {
       setCustomFormError("Description is required.");
@@ -446,8 +444,16 @@ export function FinanceAllocationsPanel(props: {
     resetCustomForm();
   }
 
-  function submitLinkedAllocationEdit(e: FormEvent) {
+  function submitEditor(e: FormEvent) {
     e.preventDefault();
+    if (editingLinkedExpenseId && editingLinkedRow) {
+      submitLinkedAllocationEditCore();
+      return;
+    }
+    submitCustomAllocationCore();
+  }
+
+  function submitLinkedAllocationEditCore() {
     if (!editingLinkedExpenseId || !editingLinkedRow) return;
     const n = parseAmount(linkedAccumStr);
     if (n === null) {
@@ -489,183 +495,177 @@ export function FinanceAllocationsPanel(props: {
         derived allocation lines (also labeled Allocate there); for those you only set accumulated
         amounts here—the monthly column follows the expense ledger. Check <strong>Income</strong> to
         mirror that monthly amount on the Income tab (for custom lines, enter the monthly income
-        when Income is checked). <strong>Custom allocations</strong> use the form below: set
-        description, currency, and accumulated amount; monthly is optional when tagged as income.
+        when Income is checked). Use the editor below to add or change custom lines, or to adjust
+        accumulated amounts and Income tagging for linked rows.
       </p>
 
       <AdminEditorSection
-        title="Custom allocation"
+        title={editingLinkedRow ? "Edit accumulated amount" : "Custom allocation"}
         footer={
-          <>
-            <button type="submit" form={customFormId} className="btn btn-primary btn-sm">
-              {editingCustomExpenseId ? "Update allocation" : "Add allocation"}
-            </button>
-            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetCustomForm}>
-              Clear
-            </button>
-          </>
-        }
-      >
-        <form id={customFormId} onSubmit={submitCustomAllocation}>
-          {customFormError ? (
-            <div className="alert alert-danger py-2 small" role="alert">
-              {customFormError}
-            </div>
-          ) : null}
-          <div className="row g-3 align-items-end">
-            <div className="col-md-4">
-              <label className="form-label small" htmlFor="alloc-custom-desc">
-                Description
-              </label>
-              <input
-                id="alloc-custom-desc"
-                type="text"
-                className="form-control form-control-sm"
-                required
-                value={customDesc}
-                onChange={(ev) => setCustomDesc(ev.target.value)}
-              />
-            </div>
-            <div className="col-md-2">
-              <label className="form-label small" htmlFor="alloc-custom-ccy">
-                Currency
-              </label>
-              <CurrencySelect
-                id="alloc-custom-ccy"
-                value={customCcy}
-                onChange={(code) =>
-                  setCustomCcy(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
-                }
-              />
-            </div>
-            <div className="col-md-2">
-              <label className="form-label small" htmlFor="alloc-custom-accum">
-                Accumulated amount
-              </label>
-              <input
-                id="alloc-custom-accum"
-                type="number"
-                step="0.01"
-                className="form-control form-control-sm"
-                required
-                value={customAccumStr}
-                onChange={(ev) => setCustomAccumStr(ev.target.value)}
-              />
-            </div>
-          </div>
-          <div className="row g-3 mt-2 align-items-end">
-            <div className="col-12">
-              <div className="form-check mb-0">
-                <input
-                  id="alloc-custom-income"
-                  type="checkbox"
-                  className="form-check-input"
-                  checked={customIsIncome}
-                  onChange={(ev) => {
-                    setCustomIsIncome(ev.target.checked);
-                    if (!ev.target.checked) {
-                      setCustomIncomeMonthlyStr("");
-                    }
-                  }}
-                />
-                <label className="form-check-label small" htmlFor="alloc-custom-income">
-                  Income (show on Income tab with monthly amount below)
-                </label>
-              </div>
-            </div>
-            {customIsIncome ? (
-              <div className="col-md-2">
-                <label className="form-label small" htmlFor="alloc-custom-income-monthly">
-                  Monthly income
-                </label>
-                <input
-                  id="alloc-custom-income-monthly"
-                  type="number"
-                  step="0.01"
-                  className="form-control form-control-sm"
-                  required={customIsIncome}
-                  value={customIncomeMonthlyStr}
-                  onChange={(ev) => setCustomIncomeMonthlyStr(ev.target.value)}
-                />
-              </div>
-            ) : null}
-          </div>
-        </form>
-      </AdminEditorSection>
-
-      {editingLinkedRow ? (
-        <AdminEditorSection
-          title="Edit accumulated amount"
-          footer={
+          editingLinkedRow ? (
             <>
-              <button type="submit" form={linkedFormId} className="btn btn-primary btn-sm">
+              <button type="submit" form={editorFormId} className="btn btn-primary btn-sm">
                 Save accumulated amount
               </button>
               <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetLinkedForm}>
                 Cancel
               </button>
             </>
-          }
-        >
-          <form id={linkedFormId} onSubmit={submitLinkedAllocationEdit}>
-            {linkedFormError ? (
-              <div className="alert alert-danger py-2 small" role="alert">
-                {linkedFormError}
-              </div>
-            ) : null}
-            <div className="row g-3 align-items-end">
-              <div className="col-md-4">
-                <span className="form-label small d-block text-muted">Description (from expense)</span>
-                <div className="small fw-semibold">{editingLinkedRow.description}</div>
-              </div>
-              <div className="col-md-2">
-                <span className="form-label small d-block text-muted">Monthly amount</span>
-                <div className="small">
-                  <MoneyAmount
-                    amount={editingLinkedRow.monthlyAmount}
-                    currency={editingLinkedRow.currency}
-                    amountOnly
-                  />
-                </div>
-              </div>
-              <div className="col-md-2">
-                <span className="form-label small d-block text-muted">Currency</span>
-                <div className="small">{editingLinkedRow.currency}</div>
-              </div>
-              <div className="col-md-2">
-                <label className="form-label small" htmlFor="alloc-linked-accum">
-                  Accumulated amount
-                </label>
-                <input
-                  id="alloc-linked-accum"
-                  type="number"
-                  step="0.01"
-                  className="form-control form-control-sm"
-                  required
-                  value={linkedAccumStr}
-                  onChange={(ev) => setLinkedAccumStr(ev.target.value)}
-                />
-              </div>
+          ) : (
+            <>
+              <button type="submit" form={editorFormId} className="btn btn-primary btn-sm">
+                {editingCustomExpenseId ? "Update allocation" : "Add allocation"}
+              </button>
+              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetCustomForm}>
+                Clear
+              </button>
+            </>
+          )
+        }
+      >
+        <form id={editorFormId} onSubmit={submitEditor}>
+          {(editingLinkedRow ? linkedFormError : customFormError) ? (
+            <div className="alert alert-danger py-2 small" role="alert">
+              {editingLinkedRow ? linkedFormError : customFormError}
             </div>
-            <div className="row g-3 mt-2">
-              <div className="col-12">
-                <div className="form-check mb-0">
-                  <input
-                    id="alloc-linked-income"
-                    type="checkbox"
-                    className="form-check-input"
-                    checked={linkedIsIncome}
-                    onChange={(ev) => setLinkedIsIncome(ev.target.checked)}
-                  />
-                  <label className="form-check-label small" htmlFor="alloc-linked-income">
-                    Income (show monthly amount from the expense on the Income tab)
+          ) : null}
+          {editingLinkedRow ? (
+            <>
+              <div className="row g-3 align-items-end">
+                <div className="col-md-4">
+                  <span className="form-label small d-block text-muted">Description (from expense)</span>
+                  <div className="small fw-semibold">{editingLinkedRow.description}</div>
+                </div>
+                <div className="col-md-2">
+                  <span className="form-label small d-block text-muted">Monthly amount</span>
+                  <div className="small">
+                    <MoneyAmount
+                      amount={editingLinkedRow.monthlyAmount}
+                      currency={editingLinkedRow.currency}
+                      amountOnly
+                    />
+                  </div>
+                </div>
+                <div className="col-md-2">
+                  <span className="form-label small d-block text-muted">Currency</span>
+                  <div className="small">{editingLinkedRow.currency}</div>
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label small" htmlFor="alloc-linked-accum">
+                    Accumulated amount
                   </label>
+                  <input
+                    id="alloc-linked-accum"
+                    type="number"
+                    step="0.01"
+                    className="form-control form-control-sm"
+                    required
+                    value={linkedAccumStr}
+                    onChange={(ev) => setLinkedAccumStr(ev.target.value)}
+                  />
                 </div>
               </div>
-            </div>
-          </form>
-        </AdminEditorSection>
-      ) : null}
+              <div className="row g-3 mt-2">
+                <div className="col-12">
+                  <div className="form-check mb-0">
+                    <input
+                      id="alloc-linked-income"
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={linkedIsIncome}
+                      onChange={(ev) => setLinkedIsIncome(ev.target.checked)}
+                    />
+                    <label className="form-check-label small" htmlFor="alloc-linked-income">
+                      Income (show monthly amount from the expense on the Income tab)
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="row g-3 align-items-end">
+                <div className="col-md-4">
+                  <label className="form-label small" htmlFor="alloc-custom-desc">
+                    Description
+                  </label>
+                  <input
+                    id="alloc-custom-desc"
+                    type="text"
+                    className="form-control form-control-sm"
+                    required
+                    value={customDesc}
+                    onChange={(ev) => setCustomDesc(ev.target.value)}
+                  />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label small" htmlFor="alloc-custom-ccy">
+                    Currency
+                  </label>
+                  <CurrencySelect
+                    id="alloc-custom-ccy"
+                    value={customCcy}
+                    onChange={(code) =>
+                      setCustomCcy(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                    }
+                  />
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label small" htmlFor="alloc-custom-accum">
+                    Accumulated amount
+                  </label>
+                  <input
+                    id="alloc-custom-accum"
+                    type="number"
+                    step="0.01"
+                    className="form-control form-control-sm"
+                    required
+                    value={customAccumStr}
+                    onChange={(ev) => setCustomAccumStr(ev.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="row g-3 mt-2 align-items-end">
+                <div className="col-12">
+                  <div className="form-check mb-0">
+                    <input
+                      id="alloc-custom-income"
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={customIsIncome}
+                      onChange={(ev) => {
+                        setCustomIsIncome(ev.target.checked);
+                        if (!ev.target.checked) {
+                          setCustomIncomeMonthlyStr("");
+                        }
+                      }}
+                    />
+                    <label className="form-check-label small" htmlFor="alloc-custom-income">
+                      Income (show on Income tab with monthly amount below)
+                    </label>
+                  </div>
+                </div>
+                {customIsIncome ? (
+                  <div className="col-md-2">
+                    <label className="form-label small" htmlFor="alloc-custom-income-monthly">
+                      Monthly income
+                    </label>
+                    <input
+                      id="alloc-custom-income-monthly"
+                      type="number"
+                      step="0.01"
+                      className="form-control form-control-sm"
+                      required={customIsIncome}
+                      value={customIncomeMonthlyStr}
+                      onChange={(ev) => setCustomIncomeMonthlyStr(ev.target.value)}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
+        </form>
+      </AdminEditorSection>
 
       <AdminEditorSection title="Allocations">
         <AdminDataTable
