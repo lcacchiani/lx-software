@@ -4,6 +4,7 @@ import {
   INCOME_CATEGORIES,
   ledgerMonthlyAmount,
   normalizeLedgerRecords,
+  monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
 } from "./financeModel";
 
@@ -196,5 +197,17 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
     );
     const r = sumMonthlyFinanceLedgerAmountsByHouse(income, [], "hillmarton");
     expect(r.incomeByCurrency.HKD).toBe(100);
+  });
+});
+
+describe("monthlyLedgerNetByCurrency", () => {
+  it("returns income minus expenses per currency", () => {
+    const n = monthlyLedgerNetByCurrency({
+      incomeByCurrency: { HKD: 100, USD: 50 },
+      expensesByCurrency: { HKD: 40, EUR: 20 },
+    });
+    expect(n.HKD).toBe(60);
+    expect(n.USD).toBe(50);
+    expect(n.EUR).toBe(-20);
   });
 });

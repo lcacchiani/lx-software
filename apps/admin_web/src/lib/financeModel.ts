@@ -137,6 +137,19 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }
 
+/** Per-currency income minus expenses for {@link FinanceLedgerAmountBuckets}. */
+export function monthlyLedgerNetByCurrency(
+  buckets: FinanceLedgerAmountBuckets,
+): Record<string, number> {
+  const { incomeByCurrency: inc, expensesByCurrency: exp } = buckets;
+  const keys = [...new Set([...Object.keys(inc), ...Object.keys(exp)])];
+  const out: Record<string, number> = {};
+  for (const c of keys) {
+    out[c] = (inc[c] ?? 0) - (exp[c] ?? 0);
+  }
+  return out;
+}
+
 export type FinancePersistedState = {
   readonly hillmarton: HouseFinanceData;
   readonly morrison: HouseFinanceData;

@@ -10,7 +10,11 @@ import {
   fiscalYearIdToStartCalendarYear,
   sumHouseStatementLinesForFiscalYear,
 } from "../lib/fiscalYearFinance";
-import { sumMonthlyFinanceLedgerAmountsByHouse, type HouseKey } from "../lib/financeModel";
+import {
+  monthlyLedgerNetByCurrency,
+  sumMonthlyFinanceLedgerAmountsByHouse,
+  type HouseKey,
+} from "../lib/financeModel";
 import { MoneyAmount } from "../components/ui";
 
 function sortedCurrencyEntries(record: Readonly<Record<string, number>>): [string, number][] {
@@ -37,6 +41,31 @@ function FiscalBucketList({
           <MoneyAmount amount={amount} currency={currency} />
         </li>
       ))}
+    </ul>
+  );
+}
+
+function MonthlyNetByCurrencyList({
+  netByCurrency,
+  emptyLabel,
+}: {
+  readonly netByCurrency: Readonly<Record<string, number>>;
+  readonly emptyLabel: string;
+}) {
+  const currencies = Object.keys(netByCurrency).sort((a, b) => a.localeCompare(b));
+  if (currencies.length === 0) {
+    return <span className="text-muted">{emptyLabel}</span>;
+  }
+  return (
+    <ul className="list-unstyled mb-0 small">
+      {currencies.map((currency) => {
+        const amount = netByCurrency[currency] ?? 0;
+        return (
+          <li key={currency} className={amount >= 0 ? "text-success" : "text-danger"}>
+            <MoneyAmount amount={amount} currency={currency} />
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -71,6 +100,11 @@ function HouseSummaryCard({
         houseKey,
       ),
     [data.expenseRecords, data.incomeRecords, houseKey],
+  );
+
+  const monthlyNetByCurrency = useMemo(
+    () => monthlyLedgerNetByCurrency(monthlySums),
+    [monthlySums],
   );
 
   const fyLabel = formatFiscalYearIdLabel(fiscalYear);
@@ -118,6 +152,10 @@ function HouseSummaryCard({
           <dt className="col-sm-4 text-muted pt-2">Expenses</dt>
           <dd className="col-sm-8 pt-2">
             <FiscalBucketList buckets={monthlySums.expensesByCurrency} emptyLabel="—" />
+          </dd>
+          <dt className="col-sm-4 text-muted pt-2">Net</dt>
+          <dd className="col-sm-8 pt-2">
+            <MonthlyNetByCurrencyList netByCurrency={monthlyNetByCurrency} emptyLabel="—" />
           </dd>
         </dl>
       </div>
