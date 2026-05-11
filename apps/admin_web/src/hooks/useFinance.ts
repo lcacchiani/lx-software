@@ -22,6 +22,7 @@ import {
   DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS,
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  allocationRecordsToApiPayload,
   normalizeAllocationRecords,
   normalizeExpenseIncomeAllocationPercents,
   normalizeHouseFinanceData,
@@ -154,13 +155,24 @@ export function useFinance() {
     }),
   );
 
-  const saveAllocationRecords = useMutation(
-    financeRecordsPutMutationOptions(qc, {
-      path: "/finance/allocations",
-      listKey: "allocationRecords",
-      normalize: normalizeAllocationRecords,
-    }),
-  );
+  const saveAllocationRecords = useMutation({
+    mutationFn: async (records: readonly FinanceAllocationRecord[]) => {
+      const res = await adminFetchJson<Record<string, unknown>>("/finance/allocations", {
+        method: "PUT",
+        body: JSON.stringify({
+          allocationRecords: allocationRecordsToApiPayload(records),
+        }),
+      });
+      const list = res.allocationRecords;
+      return { records: normalizeAllocationRecords(list) };
+    },
+    onSuccess: ({ records }) => {
+      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
+        ...(old ?? DEFAULT_FINANCE_STATE),
+        allocationRecords: records,
+      }));
+    },
+  });
 
   const saveLedgerSheet = useMutation({
     mutationFn: async ({

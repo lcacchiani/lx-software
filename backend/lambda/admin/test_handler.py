@@ -3,6 +3,7 @@
 import sys
 import types
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -25,11 +26,14 @@ def _install_stubs() -> None:
 _install_stubs()
 
 from handler import (  # noqa: E402
+    DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
     EXPENSE_RECORD_CATEGORIES,
     INCOME_RECORD_CATEGORIES,
     _groups_include_admin,
     _is_allowed_upload_content_type,
-    _merge_allocation_accumulated_last_updated,
+    _build_allocation_records_for_response,
+    _derived_expense_rows_from_tagged_income,
+    _merge_allocation_stored_last_updated,
     _merge_investment_last_updated,
     _merge_pension_last_updated,
     _normalize_allocations_sheet_payload,
@@ -1092,16 +1096,63 @@ class TestLedgerSheetPayload(unittest.TestCase):
                 frozenset({"a"}),
             )
 
+    def test_normalize_allocations_custom_only(self) -> None:
+        eid = f"__custom__{uuid.uuid4()}"
+        body = {
+            "allocationRecords": [
+                {
+                    "expenseId": eid,
+                    "description": "Slush fund",
+                    "currency": "HKD",
+                    "accumulatedAmount": 50,
+                }
+            ]
+        }
+        out = _normalize_allocations_sheet_payload(body, frozenset())
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["description"], "Slush fund")
+        self.assertEqual(out[0]["currency"], "HKD")
+
+    def test_normalize_allocations_rejects_bad_custom_id(self) -> None:
+        body = {
+            "allocationRecords": [
+                {
+                    "expenseId": "__custom__not-a-uuid",
+                    "description": "x",
+                    "currency": "HKD",
+                    "accumulatedAmount": 1,
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_allocations_sheet_payload(body, frozenset())
+
+    def test_normalize_allocations_mixed_linked_and_custom(self) -> None:
+        eid = f"__custom__{uuid.uuid4()}"
+        body = {
+            "allocationRecords": [
+                {"expenseId": "a", "accumulatedAmount": 0},
+                {
+                    "expenseId": eid,
+                    "description": "Extra",
+                    "currency": "USD",
+                    "accumulatedAmount": 10,
+                },
+            ]
+        }
+        out = _normalize_allocations_sheet_payload(body, frozenset({"a"}))
+        self.assertEqual(len(out), 2)
+
     def test_merge_allocation_updates_last_updated_on_amount_change(self) -> None:
         existing = [{"expenseId": "a", "accumulatedAmount": 1.0, "lastUpdated": "2026-01-01"}]
         normalized = [{"expenseId": "a", "accumulatedAmount": 2.0}]
-        out = _merge_allocation_accumulated_last_updated(
+        out = _merge_allocation_stored_last_updated(
             normalized, existing, today_iso="2026-02-02"
         )
         self.assertEqual(out[0]["lastUpdated"], "2026-02-02")
 
     def test_merge_allocation_keeps_last_updated_when_amount_unchanged(self) -> None:
-        out = _merge_allocation_accumulated_last_updated(
+        out = _merge_allocation_stored_last_updated(
             [{"expenseId": "a", "accumulatedAmount": 2.0}],
             [{"expenseId": "a", "accumulatedAmount": 2.0, "lastUpdated": "2026-01-01"}],
             today_iso="2026-02-02",
@@ -1123,6 +1174,59 @@ class TestLedgerSheetPayload(unittest.TestCase):
             raw, EXPENSE_RECORD_CATEGORIES, include_expense_flags=True
         )
         self.assertTrue(out[0]["isAllocate"])
+
+    def test_derived_expense_tax_on_income_row(self) -> None:
+        income = [
+            {
+                "id": "1",
+                "category": "Salary",
+                "description": "Pay",
+                "amount": 1000,
+                "currency": "HKD",
+                "amountPeriod": "month",
+                "relatedHouse": "hillmarton",
+                "isTax": True,
+                "isSaving": False,
+                "isInvestment": False,
+            }
+        ]
+        perc = {
+            **DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
+            "taxOnIncomePercent": 10.0,
+        }
+        rows = _derived_expense_rows_from_tagged_income(income, perc)
+        match = [r for r in rows if r["id"] == "__derived__tax-on-income__hillmarton__HKD"]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(match[0]["amount"], 100.0)
+
+    def test_build_allocation_response_includes_derived(self) -> None:
+        income = [
+            {
+                "id": "1",
+                "category": "Salary",
+                "description": "Pay",
+                "amount": 800,
+                "currency": "USD",
+                "amountPeriod": "month",
+                "relatedHouse": "morrison",
+                "isTax": False,
+                "isSaving": True,
+                "isInvestment": False,
+            }
+        ]
+        perc = {
+            **DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
+            "savingOnIncomePercent": 25.0,
+        }
+        out = _build_allocation_records_for_response([], [], income, perc)
+        match = [
+            r
+            for r in out
+            if r["expenseId"] == "__derived__saving-on-income__morrison__USD"
+        ]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(match[0]["monthlyAmount"], 200.0)
+        self.assertEqual(match[0]["accumulatedAmount"], 0.0)
 
     def test_expense_helper_category(self) -> None:
         body = {

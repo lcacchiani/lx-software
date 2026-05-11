@@ -47,8 +47,10 @@ export function FinancePage() {
       <h1 className="h3 mb-3">Finance</h1>
       <p className="text-muted mb-4">
         House statements, floats, investments, savings, pension, and income and expense ledgers are
-        stored in the admin API (DynamoDB). Expenses tagged <strong>Allocate</strong> also surface on
-        the Allocations tab.
+        stored in the admin API (DynamoDB). The Allocations tab lists expenses tagged{" "}
+        <strong>Allocate</strong>, derived allocation lines from tagged income (both labeled Allocate
+        on Expenses), and <strong>custom</strong> allocation rows you add on Allocations (no monthly
+        budget for those).
       </p>
       <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
       {!isLoading && !isError ? (
