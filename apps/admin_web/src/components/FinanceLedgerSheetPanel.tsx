@@ -408,7 +408,7 @@ export function FinanceLedgerSheetPanel({
     if (showIncomeFlagsCol) {
       cols.push({
         key: "flags",
-        header: <span className="small fw-semibold">Tags</span>,
+        header: <span className="fw-semibold text-nowrap">Tags</span>,
         className: "small",
       });
     }
@@ -818,7 +818,7 @@ export function FinanceLedgerSheetPanel({
           {showIncomeFlagsCol && incomeFlagFields ? (
             <div className="row g-3 mt-0">
               <div className="col-12">
-                <span className="form-label small d-block mb-1">Classification</span>
+                <span className="form-label small d-block mb-1">Tags</span>
                 <div className="d-flex flex-wrap gap-3">
                   {incomeFlagFields.map(({ field, label }) => (
                     <div key={field} className="form-check mb-0">
