@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
@@ -355,13 +355,22 @@ function GeneralSummaryCard() {
       );
     }
     return (
-      <ul className="list-unstyled mb-0 small">
-        {c.categoryPercentsSorted.map(({ category, percent }) => (
-          <li key={category}>
-            {category}: {formatExpensePercentOfIncome(percent)}
-          </li>
+      <dl className="row small mb-0">
+        {c.categoryPercentsSorted.map(({ category, percent }, idx) => (
+          <Fragment key={category}>
+            <dt
+              className={
+                idx > 0 ? "col-sm-4 text-muted pt-2" : "col-sm-4 text-muted"
+              }
+            >
+              {category}
+            </dt>
+            <dd className={idx > 0 ? "col-sm-8 pt-2" : "col-sm-8"}>
+              {formatExpensePercentOfIncome(percent)}
+            </dd>
+          </Fragment>
         ))}
-      </ul>
+      </dl>
     );
   }
 
@@ -388,7 +397,7 @@ function GeneralSummaryCard() {
             </dl>
           </div>
           <div className="vr text-muted opacity-50 d-none d-lg-block align-self-stretch flex-shrink-0" />
-          <div className="flex-grow-1 border-top border-lg-0 pt-3 pt-lg-0">
+          <div className="flex-grow-1">
             <p className="small text-muted mb-2">
               Expense categories as a share of general income (highest first).
             </p>
