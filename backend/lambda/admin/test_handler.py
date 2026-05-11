@@ -43,6 +43,7 @@ from handler import (  # noqa: E402
     _sanitize_ledger_records_list,
     _sanitize_pension_records_list,
     _sanitize_savings_records_list,
+    _load_investment_records,
     _statement_basename_already_imported,
     _utc_iso_z,
 )
@@ -478,6 +479,31 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             _normalize_pension_sheet_payload(body)
+
+
+class TestLoadInvestmentRecords(unittest.TestCase):
+    def test_returns_rows_when_dynamo_item_has_records(self) -> None:
+        table = MagicMock()
+        table.get_item.return_value = {
+            "Item": {
+                "pk": "FINANCE#sheet#investments",
+                "sk": "STATE",
+                "records": [
+                    {
+                        "id": "x1",
+                        "category": "ETF",
+                        "assetType": "Liquid",
+                        "provider": "Broker",
+                        "principalAmount": 42.5,
+                        "currency": "HKD",
+                    }
+                ],
+            }
+        }
+        out = _load_investment_records(table)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["id"], "x1")
+        self.assertEqual(out[0]["principalAmount"], 42.5)
 
 
 class TestLedgerSheetPayload(unittest.TestCase):

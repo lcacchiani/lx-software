@@ -987,7 +987,7 @@ def _load_investment_records(table: Any) -> list[dict[str, Any]]:
     nested = _from_ddb_nested(payload)
     if not isinstance(nested, dict):
         return []
-        return _sanitize_investment_records_list(nested.get("records"))
+    return _sanitize_investment_records_list(nested.get("records"))
 
 
 def _sanitize_savings_records_list(raw: Any) -> list[dict[str, Any]]:
