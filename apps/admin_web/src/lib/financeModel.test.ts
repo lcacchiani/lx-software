@@ -13,6 +13,7 @@ import {
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
   sumMonthlyFinanceLedgerAmountsGeneral,
+  sumMonthlyGeneralExpenseAmountsByCategory,
   type HouseKey,
 } from "./financeModel";
 
@@ -614,6 +615,60 @@ describe("sumMonthlyFinanceLedgerAmountsGeneral", () => {
     );
     expect(r.incomeByCurrency.HKD).toBe(500);
     expect(r.expensesByCurrency.HKD).toBeCloseTo(50, 10);
+  });
+});
+
+describe("sumMonthlyGeneralExpenseAmountsByCategory", () => {
+  it("splits general expenses by category and includes unallocated derived rows", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Pay",
+          amount: 1000,
+          currency: "HKD",
+          isTax: true,
+          isSaving: false,
+          isInvestment: false,
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const expenses = normalizeLedgerRecords(
+      [
+        {
+          id: "e1",
+          category: "Rent",
+          description: "Flat",
+          amount: 700,
+          currency: "HKD",
+        },
+        {
+          id: "e2",
+          category: "Utility",
+          description: "Power",
+          amount: 50,
+          currency: "HKD",
+        },
+      ],
+      EXPENSE_CATEGORIES,
+    );
+    const alloc = normalizeExpenseIncomeAllocationPercents({
+      taxOnIncomePercent: 10,
+      investmentOnIncomePercent: 0,
+      savingOnIncomePercent: 0,
+    });
+    const byCat = sumMonthlyGeneralExpenseAmountsByCategory(
+      income,
+      expenses,
+      alloc,
+      LEDGER_HOUSE_OPTIONS,
+    );
+    expect(byCat.Rent?.HKD).toBe(700);
+    expect(byCat.Utility?.HKD).toBe(50);
+    expect(byCat.Tax?.HKD).toBeCloseTo(100, 10);
   });
 });
 
