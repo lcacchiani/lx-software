@@ -206,10 +206,11 @@ function TaggedIncomeAllocationSection({
       }
     >
       <p className="small text-muted mb-3">
-        Each rate applies to monthly income on the Income tab for the same related property,
-        using rows marked <strong>Tax</strong>, <strong>Investment</strong>, or{" "}
-        <strong>Saving</strong>. Derived expense lines appear in the table below and cannot be
-        edited or deleted.
+        Each rate applies to monthly income on the Income tab using rows marked{" "}
+        <strong>Tax</strong>, <strong>Investment</strong>, or <strong>Saving</strong>. Rows with a
+        related property use that property; rows without one are grouped as &quot;no related
+        property&quot;. Derived expense lines appear in the table below and cannot be edited or
+        deleted.
       </p>
       <div className="row g-3">
         <div className="col-md-4">

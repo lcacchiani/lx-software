@@ -386,6 +386,36 @@ describe("buildDerivedExpenseLedgerRowsFromTaggedIncome", () => {
     expect(taxRow?.isDerivedFromTaggedIncome).toBe(true);
     expect(ledgerMonthlyAmount(taxRow!)).toBeCloseTo(20, 10);
   });
+
+  it("includes tax-tagged income without related property", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Pay",
+          amount: 500,
+          currency: "HKD",
+          isTax: true,
+          isSaving: false,
+          isInvestment: false,
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const rows = buildDerivedExpenseLedgerRowsFromTaggedIncome(
+      income,
+      normalizeExpenseIncomeAllocationPercents({ taxOnIncomePercent: 12, investmentOnIncomePercent: 0, savingOnIncomePercent: 0 }),
+      [
+        { value: "hillmarton", label: "H1" },
+        { value: "morrison", label: "M1" },
+      ],
+    );
+    const unalloc = rows.find((r) => r.description.includes("no related property"));
+    expect(unalloc?.category).toBe("Tax");
+    expect(unalloc?.amount).toBeCloseTo(60, 10);
+  });
 });
 
 describe("monthlyLedgerNetByCurrency", () => {
