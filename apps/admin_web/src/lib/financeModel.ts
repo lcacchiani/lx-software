@@ -121,7 +121,7 @@ export type FinanceInvestmentRecord = {
   readonly currency: string;
   readonly assetType: InvestmentAssetType;
   readonly provider: string;
-  /** Amount originally invested (principal). */
+  /** Amount in `currency`: invested principal; for Crypto with `unit`, spot fiat value of one unit. */
   readonly principalAmount: number;
   /** Optional quantity (e.g. shares, coins, lots). */
   readonly unit?: number;
@@ -613,11 +613,14 @@ function trimInvestmentDetailString(raw: unknown, maxLen: number): string | unde
 }
 
 /**
- * Fiat notional in {@link FinanceInvestmentRecord.currency} for FX conversion (e.g. Frankfurter).
+ * Fiat notional in {@link FinanceInvestmentRecord.currency} before cross-currency conversion
+ * (e.g. Frankfurter).
  *
- * For **Crypto** rows with a positive `unit`, `principalAmount` is treated as fiat **per unit**
- * (price per coin/token in the record currency); holding value is `unit × principalAmount`.
- * Otherwise `principalAmount` is the total in quote currency (other categories, or Crypto without units).
+ * For **Crypto** with a positive `unit`, `principalAmount` is the spot fiat value of **one** unit
+ * (coin/token) in the record currency — e.g. 1 BNB = 1 HKD — and the row total is `unit × principalAmount`.
+ * Frankfurter converts that total when displaying in another ISO currency.
+ * For Crypto without units, `principalAmount` is the total position in quote currency.
+ * Other categories use `principalAmount` as the total in quote currency.
  */
 export function investmentRecordFiatNotionalInQuoteCurrency(
   record: FinanceInvestmentRecord,
