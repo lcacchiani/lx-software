@@ -11,6 +11,7 @@ import {
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
   INVESTMENT_TICKER_MAX_LEN,
   investmentDetailsDisplay,
+  investmentRecordFiatNotionalInQuoteCurrency,
   newStatementLineId,
   type FinanceInvestmentRecord,
   type HouseKey,
@@ -324,7 +325,7 @@ export function FinanceInvestmentsPanel({
         key: "unit",
         header: (
           <SortHeader
-            label="Unit"
+            label="Units"
             isActive={sortKey === "unit"}
             direction={dirFor("unit")}
             onClick={() => onSort("unit")}
@@ -334,6 +335,12 @@ export function FinanceInvestmentsPanel({
         className: "small text-end",
         headerClassName: "small text-end",
         thAriaSort: thAria("unit"),
+      },
+      {
+        key: "currVal",
+        header: <span className="small fw-semibold">Current Value</span>,
+        className: "small text-end",
+        headerClassName: "small text-end",
       },
       {
         key: "lastUpd",
@@ -420,26 +427,35 @@ export function FinanceInvestmentsPanel({
 
   const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
 
+  const rateByQuoteForDisplay = useMemo((): ReadonlyMap<string, number> => {
+    if (!needsFx || !ratesQuery.isSuccess || !ratesQuery.data) {
+      return new Map();
+    }
+    return ratesQuery.data.rateByQuote;
+  }, [needsFx, ratesQuery.isSuccess, ratesQuery.data]);
+
   const convertedTotal = useMemo(() => {
     if (records.length === 0) return null;
-    let map: ReadonlyMap<string, number> = new Map();
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
-      const ratePayload = ratesQuery.data;
-      if (!ratePayload) return null;
-      map = ratePayload.rateByQuote;
+      if (!ratesQuery.data) return null;
     }
     try {
       return records.reduce(
         (sum, r) =>
           sum +
-          convertAmountToBase(r.principalAmount, r.currency, totalDisplayCurrency, map),
+          convertAmountToBase(
+            investmentRecordFiatNotionalInQuoteCurrency(r),
+            r.currency,
+            totalDisplayCurrency,
+            rateByQuoteForDisplay,
+          ),
         0,
       );
     } catch {
       return null;
     }
-  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, totalDisplayCurrency]);
+  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, rateByQuoteForDisplay, totalDisplayCurrency]);
 
   const fxLoading = needsFx && ratesQuery.isPending;
   const fxError = needsFx && ratesQuery.isError;
@@ -483,7 +499,7 @@ export function FinanceInvestmentsPanel({
     }
     const unitParsed = parseOptionalUnit(form.unit);
     if (unitParsed === null) {
-      setFormError("Unit must be a valid number.");
+      setFormError("Units must be a valid number.");
       return;
     }
     if (!INVESTMENT_CATEGORIES.includes(form.category)) {
@@ -686,7 +702,7 @@ export function FinanceInvestmentsPanel({
             </div>
             <div className="col-12 col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-unit`}>
-                Unit
+                Units
               </label>
               <input
                 id={`${sheetId}-unit`}
@@ -723,6 +739,40 @@ export function FinanceInvestmentsPanel({
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-end">{formatUnitCell(r.unit)}</td>
+                <td className="small text-end">
+                  {r.category === "Crypto" ? (
+                    (() => {
+                      const rowNeedsFx =
+                        r.currency.trim().toUpperCase() !==
+                        totalDisplayCurrency.trim().toUpperCase();
+                      if (needsFx && rowNeedsFx && ratesQuery.isPending) {
+                        return <span className="text-muted">Loading rates…</span>;
+                      }
+                      if (needsFx && rowNeedsFx && ratesQuery.isError) {
+                        return <span className="text-muted">—</span>;
+                      }
+                      try {
+                        const conv = convertAmountToBase(
+                          investmentRecordFiatNotionalInQuoteCurrency(r),
+                          r.currency,
+                          totalDisplayCurrency,
+                          rateByQuoteForDisplay,
+                        );
+                        return (
+                          <MoneyAmount
+                            amount={conv}
+                            currency={totalDisplayCurrency}
+                            amountOnly
+                          />
+                        );
+                      } catch {
+                        return <span className="text-muted">—</span>;
+                      }
+                    })()
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
                 <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
                   <TableIconButton
@@ -785,6 +835,7 @@ export function FinanceInvestmentsPanel({
                   disabled={fxLoading}
                 />
               </td>
+              <td className="small" />
               <td className="small" />
               <td className="small" />
               <td className="small text-end" />
