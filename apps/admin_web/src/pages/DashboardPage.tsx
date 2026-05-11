@@ -1,10 +1,12 @@
 import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { FinanceDataLoadOrError } from "../components/FinanceDataStatus";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
 import { useFinance } from "../hooks/useFinance";
 import { GLOBAL_DEFAULT_CURRENCY } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
+import { LEDGER_RELATED_HOUSE_OPTIONS } from "../lib/houses";
 import {
   defaultFiscalYearIdForNowUtc,
   FISCAL_YEAR_OPTIONS,
@@ -21,15 +23,8 @@ import {
   sumMonthlyGeneralExpenseAmountsByCategory,
   type HouseKey,
 } from "../lib/financeModel";
+import { HOUSE_DISPLAY_LABEL } from "../lib/houses";
 import { MoneyAmount } from "../components/ui";
-
-const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
-  readonly value: HouseKey;
-  readonly label: string;
-}> = [
-  { value: "hillmarton", label: "32 Hillmarton" },
-  { value: "morrison", label: "The Morrison" },
-];
 
 function formatExpensePercentOfIncome(percent: number): string {
   const rounded = Math.round(percent * 10) / 10;
@@ -439,18 +434,17 @@ export function DashboardPage() {
         and records.
       </p>
 
-      {financeQuery.isLoading ? (
-        <p className="text-muted small mb-3">Loading finance data…</p>
-      ) : financeQuery.isError ? (
-        <div className="alert alert-danger py-2 small mb-3" role="alert">
-          Could not load finance data for summaries. Check API configuration and sign-in.
-        </div>
-      ) : (
+      <FinanceDataLoadOrError
+        isLoading={financeQuery.isLoading}
+        isError={financeQuery.isError}
+        loadErrorMessage="Could not load finance data for summaries. Check API configuration and sign-in."
+      />
+      {!financeQuery.isLoading && !financeQuery.isError ? (
         <>
           <div className="row g-3 mb-3">
             <div className="col-md-6">
               <HouseSummaryCard
-                houseName="32 Hillmarton"
+                houseName={HOUSE_DISPLAY_LABEL.hillmarton}
                 houseKey="hillmarton"
                 fiscalYear={hillmartonFy}
                 onFiscalYearChange={setHillmartonFy}
@@ -458,7 +452,7 @@ export function DashboardPage() {
             </div>
             <div className="col-md-6">
               <HouseSummaryCard
-                houseName="The Morrison"
+                houseName={HOUSE_DISPLAY_LABEL.morrison}
                 houseKey="morrison"
                 fiscalYear={morrisonFy}
                 onFiscalYearChange={setMorrisonFy}
@@ -471,7 +465,7 @@ export function DashboardPage() {
             </div>
           </div>
         </>
-      )}
+      ) : null}
 
       <div className="card mt-4 shadow-sm">
         <div className="card-body">

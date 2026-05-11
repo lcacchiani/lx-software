@@ -5,6 +5,7 @@ import {
   type CurrencyCode,
 } from "../lib/currencies";
 import { formatDateUtc } from "../lib/formatDisplay";
+import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   MAX_PENSION_DESCRIPTION_LEN,
@@ -12,21 +13,18 @@ import {
   type FinancePensionRecord,
   type FinanceSavingsRecord,
 } from "../lib/financeModel";
-import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
+import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
+  FrankfurterRatesFooterNote,
   MoneyAmount,
   TableIconButton,
+  TableSortHeaderButton,
 } from "./ui";
-
-function parseAmount(raw: string): number | null {
-  const n = Number.parseFloat(raw.trim());
-  return Number.isFinite(n) ? n : null;
-}
 
 function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
   if (!lastUpdated) {
@@ -37,46 +35,6 @@ function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
 
 /** Pension adds server-managed `lastUpdated`; both sheets include a description column between label and value. */
 type MoneyRecordsSortKey = "label" | "amt" | "ccy" | "desc" | "lastUpdated";
-
-type SortHeaderProps = {
-  label: string;
-  isActive: boolean;
-  direction: "asc" | "desc" | null;
-  onClick: () => void;
-  align?: "start" | "end";
-};
-
-function SortHeader({
-  label,
-  isActive,
-  direction,
-  onClick,
-  align = "start",
-}: SortHeaderProps) {
-  const iconClass =
-    direction === "asc"
-      ? "bi bi-arrow-up"
-      : direction === "desc"
-        ? "bi bi-arrow-down"
-        : "";
-  return (
-    <button
-      type="button"
-      className={`btn btn-link link-dark p-0 text-decoration-none small fw-semibold ${
-        align === "end" ? "w-100 text-end" : "text-start"
-      }`}
-      onClick={onClick}
-      aria-label={
-        isActive
-          ? `Sorted by ${label}, ${direction === "asc" ? "ascending" : "descending"}. Click to reverse.`
-          : `Sort by ${label}`
-      }
-    >
-      <span className="text-nowrap">{label}</span>
-      {iconClass ? <i className={`${iconClass} ms-1`} aria-hidden /> : null}
-    </button>
-  );
-}
 
 function compareSavings(
   a: FinanceSavingsRecord,
@@ -232,7 +190,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const labelCol: AdminDataTableColumn = {
       key: "label",
       header: (
-        <SortHeader
+        <TableSortHeaderButton
           label={labelColumnHeader}
           isActive={sortKey === "label"}
           direction={dirFor("label")}
@@ -245,7 +203,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const valueCol: AdminDataTableColumn = {
       key: "amt",
       header: (
-        <SortHeader
+        <TableSortHeaderButton
           label="Value"
           isActive={sortKey === "amt"}
           direction={dirFor("amt")}
@@ -260,7 +218,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const ccyCol: AdminDataTableColumn = {
       key: "ccy",
       header: (
-        <SortHeader
+        <TableSortHeaderButton
           label="Currency"
           isActive={sortKey === "ccy"}
           direction={dirFor("ccy")}
@@ -280,7 +238,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const descCol: AdminDataTableColumn = {
       key: "desc",
       header: (
-        <SortHeader
+        <TableSortHeaderButton
           label="Description"
           isActive={sortKey === "desc"}
           direction={dirFor("desc")}
@@ -294,7 +252,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const lastUpdatedCol: AdminDataTableColumn = {
       key: "lastUpdated",
       header: (
-        <SortHeader
+        <TableSortHeaderButton
           label="Last Update"
           isActive={sortKey === "lastUpdated"}
           direction={dirFor("lastUpdated")}
@@ -381,12 +339,10 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   }, [records, tableFilter, sortKey, sortDir, variant]);
 
   const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
-  const needsFx = useMemo(() => {
-    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
-    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
-  }, [recordCurrencies, totalDisplayCurrency]);
-
-  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
+  const { needsFx, ratesQuery, fxLoading, fxError } = useFrankfurterRatesForTotals(
+    totalDisplayCurrency,
+    recordCurrencies,
+  );
 
   const convertedTotal = useMemo(() => {
     if (records.length === 0) return null;
@@ -406,22 +362,6 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       return null;
     }
   }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, totalDisplayCurrency]);
-
-  const fxLoading = needsFx && ratesQuery.isPending;
-  const fxError = needsFx && ratesQuery.isError;
-
-  const frankfurterTotalNote =
-    fxError ? (
-      <span className="text-danger">
-        {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
-      </span>
-    ) : fxLoading ? (
-      "Loading rates…"
-    ) : needsFx && ratesQuery.isSuccess && ratesQuery.data?.date ? (
-      <>Frankfurter · {ratesQuery.data.date}</>
-    ) : (
-      "\u2014"
-    );
 
   function resetForm() {
     setEditingId(null);
@@ -694,7 +634,14 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              <td className="small text-muted fw-normal">{frankfurterTotalNote}</td>
+              <td className="small text-muted fw-normal">
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
+              </td>
               {columnOrder === "valueFirst" ? (
                 <>
                   <td className="small text-end">

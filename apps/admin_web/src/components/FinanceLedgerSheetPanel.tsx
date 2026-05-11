@@ -5,6 +5,7 @@ import {
   type CurrencyCode,
 } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
+import { parseAmount } from "../lib/formParse";
 import {
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
   ledgerMonthlyAmount,
@@ -15,21 +16,18 @@ import {
   type HouseKey,
   type IncomeLedgerFlagField,
 } from "../lib/financeModel";
-import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
+import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
+  FrankfurterRatesFooterNote,
   MoneyAmount,
   TableIconButton,
+  TableSortHeaderButton,
 } from "./ui";
-
-function parseAmount(raw: string): number | null {
-  const n = Number.parseFloat(raw.trim());
-  return Number.isFinite(n) ? n : null;
-}
 
 type LedgerSortColumnKey = "cat" | "desc" | "house" | "amt" | "ccy";
 
@@ -78,46 +76,6 @@ function compareLedgerRecords(
   }
   if (cmp !== 0) return dir * cmp;
   return a.id.localeCompare(b.id);
-}
-
-type LedgerSortHeaderProps = {
-  label: string;
-  isActive: boolean;
-  direction: "asc" | "desc" | null;
-  onClick: () => void;
-  align?: "start" | "end";
-};
-
-function LedgerSortHeader({
-  label,
-  isActive,
-  direction,
-  onClick,
-  align = "start",
-}: LedgerSortHeaderProps) {
-  const iconClass =
-    direction === "asc"
-      ? "bi bi-arrow-up"
-      : direction === "desc"
-        ? "bi bi-arrow-down"
-        : "";
-  return (
-    <button
-      type="button"
-      className={`btn btn-link link-dark p-0 text-decoration-none small fw-semibold ${
-        align === "end" ? "w-100 text-end" : "text-start"
-      }`}
-      onClick={onClick}
-      aria-label={
-        isActive
-          ? `Sorted by ${label}, ${direction === "asc" ? "ascending" : "descending"}. Click to reverse.`
-          : `Sort by ${label}`
-      }
-    >
-      <span className="text-nowrap">{label}</span>
-      {iconClass ? <i className={`${iconClass} ms-1`} aria-hidden /> : null}
-    </button>
-  );
 }
 
 type LineFormState = {
@@ -381,7 +339,7 @@ export function FinanceLedgerSheetPanel({
       {
         key: "cat",
         header: (
-          <LedgerSortHeader
+          <TableSortHeaderButton
             label="Category"
             isActive={sortKey === "cat"}
             direction={dirFor("cat")}
@@ -394,7 +352,7 @@ export function FinanceLedgerSheetPanel({
       {
         key: "desc",
         header: (
-          <LedgerSortHeader
+          <TableSortHeaderButton
             label="Description"
             isActive={sortKey === "desc"}
             direction={dirFor("desc")}
@@ -416,7 +374,7 @@ export function FinanceLedgerSheetPanel({
       cols.push({
         key: "house",
         header: (
-          <LedgerSortHeader
+          <TableSortHeaderButton
             label="Related property"
             isActive={sortKey === "house"}
             direction={dirFor("house")}
@@ -431,7 +389,7 @@ export function FinanceLedgerSheetPanel({
       {
         key: "amt",
         header: (
-          <LedgerSortHeader
+          <TableSortHeaderButton
             label="Monthly amount"
             isActive={sortKey === "amt"}
             direction={dirFor("amt")}
@@ -446,7 +404,7 @@ export function FinanceLedgerSheetPanel({
       {
         key: "ccy",
         header: (
-          <LedgerSortHeader
+          <TableSortHeaderButton
             label="Currency"
             isActive={sortKey === "ccy"}
             direction={dirFor("ccy")}
@@ -552,12 +510,10 @@ export function FinanceLedgerSheetPanel({
     [filtered],
   );
 
-  const needsFx = useMemo(() => {
-    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
-    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
-  }, [recordCurrencies, totalDisplayCurrency]);
-
-  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
+  const { needsFx, ratesQuery, fxLoading, fxError } = useFrankfurterRatesForTotals(
+    totalDisplayCurrency,
+    recordCurrencies,
+  );
 
   const convertedTotal = useMemo(() => {
     if (filtered.length === 0) {
@@ -593,9 +549,6 @@ export function FinanceLedgerSheetPanel({
     ratesQuery.data,
     totalDisplayCurrency,
   ]);
-
-  const fxLoading = needsFx && ratesQuery.isPending;
-  const fxError = needsFx && ratesQuery.isError;
 
   function resetForm() {
     setEditingId(null);
@@ -917,17 +870,12 @@ export function FinanceLedgerSheetPanel({
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
               <td className="small text-muted fw-normal">
-                {fxError ? (
-                  <span className="text-danger">
-                    {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
-                  </span>
-                ) : fxLoading ? (
-                  "Loading rates…"
-                ) : needsFx && ratesQuery.isSuccess && ratesQuery.data.date ? (
-                  <>Frankfurter · {ratesQuery.data.date}</>
-                ) : (
-                  "\u2014"
-                )}
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
               </td>
               {showIncomeFlagsCol ? <td className="small" /> : null}
               {showRelatedHouseCol ? <td className="small" /> : null}

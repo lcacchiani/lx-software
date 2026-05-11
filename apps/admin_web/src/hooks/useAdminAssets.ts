@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { objectKeyFromAssetPk } from "../lib/adminAssets";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import {
   statementLineAssetKeys,
@@ -7,10 +8,6 @@ import {
 } from "../lib/financeModel";
 
 const HOUSE_KEYS: readonly HouseKey[] = ["hillmarton", "morrison"];
-
-function objectKeyFromAssetPk(pk: string): string {
-  return pk.startsWith("ASSET#") ? pk.slice("ASSET#".length) : pk;
-}
 
 function inferHouseFromFinanceLines(
   objectKey: string,

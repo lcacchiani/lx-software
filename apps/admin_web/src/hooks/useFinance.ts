@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  type UseMutationOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback } from "react";
 import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
@@ -54,6 +60,38 @@ type PutFinanceResponse = {
   readonly data: HouseFinanceData;
 };
 
+type FinanceListStateKey = "investmentRecords" | "savingsRecords" | "pensionRecords";
+
+function financeRecordsPutMutationOptions(
+  qc: QueryClient,
+  spec: {
+    readonly path: string;
+    readonly listKey: FinanceListStateKey;
+    readonly normalize: (raw: unknown) => FinancePersistedState[FinanceListStateKey];
+  },
+): UseMutationOptions<
+  { records: FinancePersistedState[FinanceListStateKey] },
+  Error,
+  FinancePersistedState[FinanceListStateKey]
+> {
+  return {
+    mutationFn: async (records) => {
+      const res = await adminFetchJson<Record<string, unknown>>(spec.path, {
+        method: "PUT",
+        body: JSON.stringify({ [spec.listKey]: records }),
+      });
+      const list = res[spec.listKey];
+      return { records: spec.normalize(list) };
+    },
+    onSuccess: ({ records }) => {
+      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
+        ...(old ?? DEFAULT_FINANCE_STATE),
+        [spec.listKey]: records,
+      }));
+    },
+  };
+}
+
 export function useFinance() {
   const qc = useQueryClient();
   const q = useQuery({
@@ -83,65 +121,29 @@ export function useFinance() {
     },
   });
 
-  const saveInvestmentRecords = useMutation({
-    mutationFn: async (records: readonly FinanceInvestmentRecord[]) => {
-      const res = await adminFetchJson<{ investmentRecords: FinanceInvestmentRecord[] }>(
-        "/finance/investments",
-        {
-          method: "PUT",
-          body: JSON.stringify({ investmentRecords: records }),
-        },
-      );
-      const list = res.investmentRecords;
-      return {
-        records: normalizeInvestmentRecords(list),
-      };
-    },
-    onSuccess: ({ records }) => {
-      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
-        ...(old ?? DEFAULT_FINANCE_STATE),
-        investmentRecords: records,
-      }));
-    },
-  });
+  const saveInvestmentRecords = useMutation(
+    financeRecordsPutMutationOptions(qc, {
+      path: "/finance/investments",
+      listKey: "investmentRecords",
+      normalize: normalizeInvestmentRecords,
+    }),
+  );
 
-  const saveSavingsRecords = useMutation({
-    mutationFn: async (records: readonly FinanceSavingsRecord[]) => {
-      const res = await adminFetchJson<{ savingsRecords: FinanceSavingsRecord[] }>(
-        "/finance/savings",
-        {
-          method: "PUT",
-          body: JSON.stringify({ savingsRecords: records }),
-        },
-      );
-      return { records: normalizeSavingsRecords(res.savingsRecords) };
-    },
-    onSuccess: ({ records }) => {
-      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
-        ...(old ?? DEFAULT_FINANCE_STATE),
-        savingsRecords: records,
-      }));
-    },
-  });
+  const saveSavingsRecords = useMutation(
+    financeRecordsPutMutationOptions(qc, {
+      path: "/finance/savings",
+      listKey: "savingsRecords",
+      normalize: normalizeSavingsRecords,
+    }),
+  );
 
-  const savePensionRecords = useMutation({
-    mutationFn: async (records: readonly FinancePensionRecord[]) => {
-      const res = await adminFetchJson<{ pensionRecords: FinancePensionRecord[] }>(
-        "/finance/pension",
-        {
-          method: "PUT",
-          body: JSON.stringify({ pensionRecords: records }),
-        },
-      );
-      return { records: normalizePensionRecords(res.pensionRecords) };
-    },
-    onSuccess: ({ records }) => {
-      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
-        ...(old ?? DEFAULT_FINANCE_STATE),
-        pensionRecords: records,
-      }));
-    },
-  });
+  const savePensionRecords = useMutation(
+    financeRecordsPutMutationOptions(qc, {
+      path: "/finance/pension",
+      listKey: "pensionRecords",
+      normalize: normalizePensionRecords,
+    }),
+  );
 
   const saveLedgerSheet = useMutation({
     mutationFn: async ({

@@ -15,15 +15,9 @@ import {
   deleteAdminAsset,
   getAdminApiErrorMessage,
 } from "../lib/apiAdminClient";
-
-const HOUSE_LABEL: Record<string, string> = {
-  hillmarton: "32 Hillmarton",
-  morrison: "The Morrison",
-};
-
-function objectKeyFromAssetPk(pk: string): string {
-  return pk.startsWith("ASSET#") ? pk.slice("ASSET#".length) : pk;
-}
+import { formatFileSizeBytes, objectKeyFromAssetPk } from "../lib/adminAssets";
+import { formatDateTimeHKT } from "../lib/formatDisplay";
+import { houseDisplayLabel } from "../lib/houses";
 
 function displayFileName(row: AdminAssetMeta): string {
   const n = row.fileName?.trim();
@@ -35,18 +29,7 @@ function displayFileName(row: AdminAssetMeta): string {
 
 function formatUploadedInstant(iso?: string): string {
   if (!iso?.trim()) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return formatDateTimeHKT(iso);
 }
 
 function uploadedAtSortMs(iso?: string): number {
@@ -63,18 +46,19 @@ function rowMatchesFilter(
   if (!q) return true;
   const file = displayFileName(row).toLowerCase();
   const houseKey = (row.house ?? "").toLowerCase();
-  const houseDisplay = houseLabel(row.house).toLowerCase();
+  const houseDisplay = houseDisplayLabel(row.house).toLowerCase();
   return (
     file.includes(q) || houseKey.includes(q) || houseDisplay.includes(q)
   );
 }
 
-function houseLabel(house?: string): string {
-  if (!house?.trim()) return "—";
-  return HOUSE_LABEL[house] ?? house;
-}
-
-function AssetOpenLink({ objectKey }: { readonly objectKey: string }) {
+function AssetOpenLink({
+  objectKey,
+  onError,
+}: {
+  readonly objectKey: string;
+  readonly onError: (message: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const open = async () => {
     setBusy(true);
@@ -84,9 +68,10 @@ function AssetOpenLink({ objectKey }: { readonly objectKey: string }) {
         `/assets/download-url${qs}`,
       );
       window.open(url, "_blank", "noopener,noreferrer");
-    } catch {
-      window.alert(
-        "Could not open the file. Check your connection and try again.",
+    } catch (err) {
+      onError(
+        getAdminApiErrorMessage(err) ??
+          "Could not open the file. Check your connection and try again.",
       );
     } finally {
       setBusy(false);
@@ -112,9 +97,11 @@ const ASSET_TABLE_COLUMNS = [
 function AssetDeleteButton({
   objectKey,
   label,
+  onError,
 }: {
   readonly objectKey: string;
   readonly label: string;
+  readonly onError: (message: string) => void;
 }) {
   const qc = useQueryClient();
   const del = useMutation({
@@ -133,7 +120,7 @@ function AssetDeleteButton({
     }
     void del.mutateAsync().catch((err: unknown) => {
       const detail = getAdminApiErrorMessage(err);
-      window.alert(
+      onError(
         detail ??
           (err instanceof AdminApiError
             ? `Delete failed (${err.status}).`
@@ -155,6 +142,7 @@ function AssetDeleteButton({
 export function AssetsPage() {
   const q = useAdminAssets();
   const [tableFilter, setTableFilter] = useState("");
+  const [pageError, setPageError] = useState<string | null>(null);
 
   const rows = useMemo(
     () => q.data?.pages.flatMap((p) => p.items) ?? [],
@@ -184,10 +172,27 @@ export function AssetsPage() {
         </div>
       ) : (
         <>
+          {pageError ? (
+            <div
+              className="alert alert-danger alert-dismissible py-2 small mb-3"
+              role="alert"
+            >
+              <button
+                type="button"
+                className="btn-close"
+                aria-label="Dismiss"
+                onClick={() => setPageError(null)}
+              />
+              {pageError}
+            </div>
+          ) : null}
           <AdminDataTable
             columns={ASSET_TABLE_COLUMNS}
             filterValue={tableFilter}
-            onFilterChange={setTableFilter}
+            onFilterChange={(v) => {
+              setTableFilter(v);
+              setPageError(null);
+            }}
             filterPlaceholder="Filter by file or house…"
           >
             {displayRows.length ? (
@@ -202,17 +207,21 @@ export function AssetsPage() {
                       <div className="fw-medium">{displayFileName(row)}</div>
                       {typeof row.size === "number" ? (
                         <div className="text-muted small">
-                          {formatFileSize(row.size)}
+                          {formatFileSizeBytes(row.size)}
                         </div>
                       ) : null}
                     </td>
-                    <td className="small">{houseLabel(row.house)}</td>
+                    <td className="small">{houseDisplayLabel(row.house)}</td>
                     <td className="text-end">
                       <div className="d-inline-flex align-items-center gap-1">
-                        <AssetOpenLink objectKey={objectKey} />
+                        <AssetOpenLink
+                          objectKey={objectKey}
+                          onError={setPageError}
+                        />
                         <AssetDeleteButton
                           objectKey={objectKey}
                           label={displayFileName(row)}
+                          onError={setPageError}
                         />
                       </div>
                     </td>

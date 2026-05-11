@@ -1,14 +1,15 @@
 import { useState } from "react";
+import { FinanceDataLoadOrError, FinanceSaveStatus } from "../components/FinanceDataStatus";
 import { FinanceInvestmentsPanel } from "../components/FinanceInvestmentsPanel";
 import { FinancePensionPanel, FinanceSavingsPanel } from "../components/FinanceSavingsAndPensionPanels";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { useFinance } from "../hooks/useFinance";
+import { HOUSE_DISPLAY_LABEL, LEDGER_RELATED_HOUSE_OPTIONS } from "../lib/houses";
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
   INCOME_LEDGER_FLAG_FIELDS,
-  type HouseKey,
 } from "../lib/financeModel";
 
 type FinanceTab =
@@ -19,14 +20,6 @@ type FinanceTab =
   | "pension"
   | "income"
   | "expenses";
-
-const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
-  readonly value: HouseKey;
-  readonly label: string;
-}> = [
-  { value: "hillmarton", label: "32 Hillmarton" },
-  { value: "morrison", label: "The Morrison" },
-];
 
 export function FinancePage() {
   const {
@@ -52,23 +45,14 @@ export function FinancePage() {
         House statements, floats, investments, savings, pension, and income and expense ledgers are
         stored in the admin API (DynamoDB).
       </p>
-      {isLoading ? (
-        <p className="text-muted small mb-3">Loading finance data…</p>
-      ) : isError ? (
-        <div className="alert alert-danger py-2 small mb-3" role="alert">
-          Could not load finance data. Check API configuration and sign-in.
-        </div>
-      ) : (
+      <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
+      {!isLoading && !isError ? (
         <>
-          {saveError ? (
-            <div className="alert alert-warning py-2 small mb-3" role="alert">
-              <span className="fw-semibold">Could not save changes.</span>{" "}
-              {saveErrorDetail ?? "Try again or refresh the page."}
-            </div>
-          ) : null}
-          {isSaving ? (
-            <p className="text-muted small mb-3">Saving…</p>
-          ) : null}
+          <FinanceSaveStatus
+            isSaving={isSaving}
+            saveError={saveError}
+            saveErrorDetail={saveErrorDetail}
+          />
 
           <ul className="nav nav-tabs mb-4" role="tablist">
             <li className="nav-item" role="presentation">
@@ -79,7 +63,7 @@ export function FinancePage() {
                 aria-selected={tab === "hillmarton"}
                 onClick={() => setTab("hillmarton")}
               >
-                32 Hillmarton
+                {HOUSE_DISPLAY_LABEL.hillmarton}
               </button>
             </li>
             <li className="nav-item" role="presentation">
@@ -90,7 +74,7 @@ export function FinancePage() {
                 aria-selected={tab === "morrison"}
                 onClick={() => setTab("morrison")}
               >
-                The Morrison
+                {HOUSE_DISPLAY_LABEL.morrison}
               </button>
             </li>
             <li className="nav-item" role="presentation">
@@ -211,7 +195,7 @@ export function FinancePage() {
             ) : null}
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

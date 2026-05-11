@@ -14,6 +14,7 @@ import {
   statementLineAssetKeys,
 } from "../lib/financeModel";
 import { formatDateUtc } from "../lib/formatDisplay";
+import { parseAmount } from "../lib/formParse";
 import {
   existingImportedStatementBasenames,
   useParseStatement,
@@ -146,11 +147,6 @@ function lineToForm(line: HouseStatementLine): LineFormState {
   };
 }
 
-function parseAmount(raw: string): number | null {
-  const n = Number.parseFloat(raw.trim());
-  return Number.isFinite(n) ? n : null;
-}
-
 export type HouseStatementPanelProps = {
   readonly houseKey: HouseKey;
   readonly data: HouseFinanceData;
@@ -226,6 +222,7 @@ export function HouseStatementPanel({
   >(null);
   const lineEditorSectionRef = useRef<HTMLDivElement | null>(null);
   const [lineSubmitBusy, setLineSubmitBusy] = useState(false);
+  const [statementPdfOpenError, setStatementPdfOpenError] = useState<string | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -438,6 +435,7 @@ export function HouseStatementPanel({
   }
 
   function openStatementPdf(assetKey: string) {
+    setStatementPdfOpenError(null);
     setOpeningPdfKey(assetKey);
     void fetchAssetDownloadUrl(assetKey)
       .then((url) => {
@@ -451,7 +449,7 @@ export function HouseStatementPanel({
             : err instanceof Error
               ? err.message
               : "Could not open the file.";
-        window.alert(msg);
+        setStatementPdfOpenError(msg);
       })
       .finally(() => {
         setOpeningPdfKey(null);
@@ -471,6 +469,20 @@ export function HouseStatementPanel({
 
   return (
     <div>
+      {statementPdfOpenError ? (
+        <div
+          className="alert alert-danger alert-dismissible py-2 small mb-3"
+          role="alert"
+        >
+          <button
+            type="button"
+            className="btn-close"
+            aria-label="Dismiss"
+            onClick={() => setStatementPdfOpenError(null)}
+          />
+          {statementPdfOpenError}
+        </div>
+      ) : null}
       <AdminEditorSection
         title="House details"
         footer={

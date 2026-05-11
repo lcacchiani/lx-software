@@ -5,6 +5,7 @@ import {
   type CurrencyCode,
 } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
+import { parseAmount } from "../lib/formParse";
 import {
   INVESTMENT_ASSET_TYPES,
   INVESTMENT_CATEGORIES,
@@ -18,7 +19,7 @@ import {
   type InvestmentAssetType,
   type InvestmentCategory,
 } from "../lib/financeModel";
-import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
+import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import { formatDateUtc } from "../lib/formatDisplay";
 import {
   AdminDataTable,
@@ -26,14 +27,11 @@ import {
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
+  FrankfurterRatesFooterNote,
   MoneyAmount,
   TableIconButton,
+  TableSortHeaderButton,
 } from "./ui";
-
-function parseAmount(raw: string): number | null {
-  const n = Number.parseFloat(raw.trim());
-  return Number.isFinite(n) ? n : null;
-}
 
 function parseOptionalUnit(raw: string): number | undefined | null {
   const t = raw.trim();
@@ -170,46 +168,6 @@ function compareInv(
   return a.id.localeCompare(b.id);
 }
 
-type SortHeaderProps = {
-  label: string;
-  isActive: boolean;
-  direction: "asc" | "desc" | null;
-  onClick: () => void;
-  align?: "start" | "end";
-};
-
-function SortHeader({
-  label,
-  isActive,
-  direction,
-  onClick,
-  align = "start",
-}: SortHeaderProps) {
-  const iconClass =
-    direction === "asc"
-      ? "bi bi-arrow-up"
-      : direction === "desc"
-        ? "bi bi-arrow-down"
-        : "";
-  return (
-    <button
-      type="button"
-      className={`btn btn-link link-dark p-0 text-decoration-none small fw-semibold ${
-        align === "end" ? "w-100 text-end" : "text-start"
-      }`}
-      onClick={onClick}
-      aria-label={
-        isActive
-          ? `Sorted by ${label}, ${direction === "asc" ? "ascending" : "descending"}. Click to reverse.`
-          : `Sort by ${label}`
-      }
-    >
-      <span className="text-nowrap">{label}</span>
-      {iconClass ? <i className={`${iconClass} ms-1`} aria-hidden /> : null}
-    </button>
-  );
-}
-
 type FormState = {
   category: InvestmentCategory;
   assetType: InvestmentAssetType;
@@ -290,7 +248,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "cat",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Category"
             isActive={sortKey === "cat"}
             direction={dirFor("cat")}
@@ -304,7 +262,7 @@ export function FinanceInvestmentsPanel({
     cols.push({
       key: "details",
       header: (
-        <SortHeader
+        <TableSortHeaderButton
           label="Details"
           isActive={sortKey === "details"}
           direction={dirFor("details")}
@@ -318,7 +276,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "atype",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Asset type"
             isActive={sortKey === "atype"}
             direction={dirFor("atype")}
@@ -331,7 +289,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "prov",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Provider"
             isActive={sortKey === "prov"}
             direction={dirFor("prov")}
@@ -344,7 +302,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "amt",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Principal"
             isActive={sortKey === "amt"}
             direction={dirFor("amt")}
@@ -359,7 +317,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "ccy",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Currency"
             isActive={sortKey === "ccy"}
             direction={dirFor("ccy")}
@@ -372,7 +330,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "unit",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Units"
             isActive={sortKey === "unit"}
             direction={dirFor("unit")}
@@ -387,7 +345,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "currVal",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Current Value"
             isActive={sortKey === "currVal"}
             direction={dirFor("currVal")}
@@ -402,7 +360,7 @@ export function FinanceInvestmentsPanel({
       {
         key: "lastUpd",
         header: (
-          <SortHeader
+          <TableSortHeaderButton
             label="Last Update"
             isActive={sortKey === "lastUpd"}
             direction={dirFor("lastUpd")}
@@ -434,19 +392,8 @@ export function FinanceInvestmentsPanel({
   );
 
   const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
-  const needsFx = useMemo(() => {
-    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
-    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
-  }, [recordCurrencies, totalDisplayCurrency]);
-
-  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
-
-  const rateByQuoteForDisplay = useMemo((): ReadonlyMap<string, number> => {
-    if (!needsFx || !ratesQuery.isSuccess || !ratesQuery.data) {
-      return new Map();
-    }
-    return ratesQuery.data.rateByQuote;
-  }, [needsFx, ratesQuery.isSuccess, ratesQuery.data]);
+  const { needsFx, ratesQuery, rateByQuoteForDisplay, fxLoading, fxError } =
+    useFrankfurterRatesForTotals(totalDisplayCurrency, recordCurrencies);
 
   const cryptoCurrValSort = useCallback(
     (r: FinanceInvestmentRecord): number | null => {
@@ -536,9 +483,6 @@ export function FinanceInvestmentsPanel({
       return null;
     }
   }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, rateByQuoteForDisplay, totalDisplayCurrency]);
-
-  const fxLoading = needsFx && ratesQuery.isPending;
-  const fxError = needsFx && ratesQuery.isError;
 
   function resetForm() {
     setEditingId(null);
@@ -880,17 +824,12 @@ export function FinanceInvestmentsPanel({
               <td className="small" />
               <td className="small" />
               <td className="small text-muted fw-normal">
-                {fxError ? (
-                  <span className="text-danger">
-                    {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
-                  </span>
-                ) : fxLoading ? (
-                  "Loading rates…"
-                ) : needsFx && ratesQuery.isSuccess && ratesQuery.data.date ? (
-                  <>Frankfurter · {ratesQuery.data.date}</>
-                ) : (
-                  "\u2014"
-                )}
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
               </td>
               <td className="small text-end">
                 {convertedTotal !== null ? (
