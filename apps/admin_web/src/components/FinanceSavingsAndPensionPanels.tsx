@@ -368,6 +368,19 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   const fxLoading = needsFx && ratesQuery.isPending;
   const fxError = needsFx && ratesQuery.isError;
 
+  const frankfurterTotalNote =
+    fxError ? (
+      <span className="text-danger">
+        {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
+      </span>
+    ) : fxLoading ? (
+      "Loading rates…"
+    ) : needsFx && ratesQuery.isSuccess && ratesQuery.data?.date ? (
+      <>Frankfurter · {ratesQuery.data.date}</>
+    ) : (
+      "\u2014"
+    );
+
   function resetForm() {
     setEditingId(null);
     setFormError(null);
@@ -634,7 +647,9 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              {variant === "pension" ? <td className="small" /> : null}
+              {variant === "pension" ? (
+                <td className="small text-muted fw-normal">{frankfurterTotalNote}</td>
+              ) : null}
               {columnOrder === "valueFirst" ? (
                 <>
                   <td className="small text-end">
@@ -683,18 +698,14 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 </>
               )}
               {variant === "pension" ? <td className="small" /> : null}
-              <td className="small text-muted fw-normal text-end">
-                {fxError ? (
-                  <span className="text-danger">
-                    {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
-                  </span>
-                ) : fxLoading ? (
-                  "Loading rates…"
-                ) : needsFx && ratesQuery.isSuccess && ratesQuery.data?.date ? (
-                  <>Frankfurter · {ratesQuery.data.date}</>
-                ) : (
-                  "\u2014"
-                )}
+              <td
+                className={
+                  variant === "savings"
+                    ? "small text-end text-muted fw-normal"
+                    : "small text-end"
+                }
+              >
+                {variant === "savings" ? frankfurterTotalNote : null}
               </td>
             </tr>
           ) : null}
