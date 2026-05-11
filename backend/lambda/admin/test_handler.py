@@ -454,12 +454,19 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
     def test_pension_normalize_valid(self) -> None:
         body = {
             "pensionRecords": [
-                {"id": "p1", "fund": "Global Equity", "value": 120000.5, "currency": "USD"}
+                {
+                    "id": "p1",
+                    "fund": "Global Equity",
+                    "description": "DC scheme",
+                    "value": 120000.5,
+                    "currency": "USD",
+                }
             ]
         }
         out = _normalize_pension_sheet_payload(body)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["fund"], "Global Equity")
+        self.assertEqual(out[0]["description"], "DC scheme")
         self.assertEqual(out[0]["currency"], "USD")
 
     def test_savings_sanitize_drops_empty_deposit(self) -> None:

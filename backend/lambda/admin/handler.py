@@ -1069,10 +1069,17 @@ def _sanitize_pension_records_list(raw: Any) -> list[dict[str, Any]]:
         cur = _coerce_finance_currency_value(
             row.get("currency"), DEFAULT_FINANCE_CURRENCY
         )
+        desc_raw = row.get("description")
+        d = ""
+        if isinstance(desc_raw, str):
+            d = desc_raw.strip()
+            if len(d) > MAX_FINANCE_DESCRIPTION:
+                d = d[:MAX_FINANCE_DESCRIPTION]
         out.append(
             {
                 "id": rid.strip(),
                 "fund": f,
+                "description": d,
                 "value": amt_f,
                 "currency": cur,
             }
@@ -1147,6 +1154,14 @@ def _normalize_pension_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any
             raise ValueError(f"pensionRecords[{i}].fund is required")
         if len(fund.strip()) > MAX_INVESTMENT_PROVIDER_LEN:
             raise ValueError(f"pensionRecords[{i}].fund is too long")
+        desc_raw = row.get("description", "")
+        if desc_raw is None:
+            desc_raw = ""
+        if not isinstance(desc_raw, str):
+            raise ValueError(f"pensionRecords[{i}].description must be a string")
+        d = desc_raw.strip()
+        if len(d) > MAX_FINANCE_DESCRIPTION:
+            raise ValueError(f"pensionRecords[{i}].description is too long")
         amt = row.get("value")
         if isinstance(amt, Decimal):
             amt = float(amt)
@@ -1163,6 +1178,7 @@ def _normalize_pension_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any
             {
                 "id": rid.strip(),
                 "fund": fund.strip(),
+                "description": d,
                 "value": amt_f,
                 "currency": cur,
             }

@@ -193,7 +193,22 @@ describe("normalizePensionRecords", () => {
     const out = normalizePensionRecords(rows);
     expect(out).toHaveLength(1);
     expect(out[0].fund).toBe("Plan A");
+    expect(out[0].description).toBe("");
     expect(out[0].value).toBe(99.5);
+  });
+
+  it("reads description", () => {
+    const rows = [
+      {
+        id: "p",
+        fund: "Plan A",
+        description: "Employer match",
+        value: 1,
+        currency: "HKD",
+      },
+    ];
+    const out = normalizePensionRecords(rows);
+    expect(out[0].description).toBe("Employer match");
   });
 });
 
