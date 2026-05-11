@@ -35,7 +35,7 @@ function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
-/** Pension adds description and server-managed `lastUpdated` columns; savings only uses the first three. */
+/** Pension adds server-managed `lastUpdated`; both sheets include a description column between label and value. */
 type MoneyRecordsSortKey = "label" | "amt" | "ccy" | "desc" | "lastUpdated";
 
 type SortHeaderProps = {
@@ -100,6 +100,8 @@ function compareSavings(
       cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
       break;
     case "desc":
+      cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+      break;
     case "lastUpdated":
       cmp = 0;
       break;
@@ -309,8 +311,8 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
         : [labelCol, descCol, ccyCol, valueCol, lastUpdatedCol, opsCol];
     }
     return columnOrder === "valueFirst"
-      ? [labelCol, valueCol, ccyCol, opsCol]
-      : [labelCol, ccyCol, valueCol, opsCol];
+      ? [labelCol, descCol, valueCol, ccyCol, opsCol]
+      : [labelCol, descCol, ccyCol, valueCol, opsCol];
   }, [
     columnOrder,
     labelColumnHeader,
@@ -341,7 +343,9 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       const list = !q
         ? [...recs]
         : recs.filter((r) => {
-            const hay = [r.deposit, r.currency, String(r.value)].join(" ").toLowerCase();
+            const hay = [r.deposit, r.description, r.currency, String(r.value)]
+              .join(" ")
+              .toLowerCase();
             return hay.includes(q);
           });
       if (sortKey !== null) {
@@ -434,6 +438,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     if (variant === "savings") {
       const r = row as FinanceSavingsRecord;
       setNameInput(r.deposit);
+      setDescriptionInput(r.description);
       setValueStr(String(r.value));
       setFormCurrency(coerceSupportedCurrency(r.currency, GLOBAL_DEFAULT_CURRENCY));
     } else {
@@ -460,9 +465,14 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const id = editingId ?? newStatementLineId();
 
     if (variant === "savings") {
+      const descTrimmed = descriptionInput.trim();
       const row: FinanceSavingsRecord = {
         id,
         deposit: nameInput.trim(),
+        description:
+          descTrimmed.length > MAX_PENSION_DESCRIPTION_LEN
+            ? descTrimmed.slice(0, MAX_PENSION_DESCRIPTION_LEN)
+            : descTrimmed,
         value: valueNum,
         currency,
       };
@@ -541,7 +551,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
             </div>
           ) : null}
           <div className="row g-3">
-            <div className={variant === "pension" ? "col-md-3" : "col-md-4"}>
+            <div className="col-md-3">
               <label className="form-label small" htmlFor={labelInputId}>
                 {labelFormLabel}
               </label>
@@ -554,20 +564,18 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 onChange={(ev) => setNameInput(ev.target.value)}
               />
             </div>
-            {variant === "pension" ? (
-              <div className="col-md-3">
-                <label className="form-label small" htmlFor={`${sheetId}-description`}>
-                  Description
-                </label>
-                <input
-                  id={`${sheetId}-description`}
-                  type="text"
-                  className="form-control form-control-sm"
-                  value={descriptionInput}
-                  onChange={(ev) => setDescriptionInput(ev.target.value)}
-                />
-              </div>
-            ) : null}
+            <div className="col-md-3">
+              <label className="form-label small" htmlFor={`${sheetId}-description`}>
+                Description
+              </label>
+              <input
+                id={`${sheetId}-description`}
+                type="text"
+                className="form-control form-control-sm"
+                value={descriptionInput}
+                onChange={(ev) => setDescriptionInput(ev.target.value)}
+              />
+            </div>
             {columnOrder === "currencyFirst" ? (
               <div className="col-md-3">
                 <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
@@ -625,10 +633,11 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {filtered.length ? (
             filtered.map((r) => {
               const label = variant === "savings" ? (r as FinanceSavingsRecord).deposit : (r as FinancePensionRecord).fund;
-              const descCellPension =
-                variant === "pension" ? (
-                  <td className="small">{(r as FinancePensionRecord).description}</td>
-                ) : null;
+              const descriptionText =
+                variant === "savings"
+                  ? (r as FinanceSavingsRecord).description
+                  : (r as FinancePensionRecord).description;
+              const descCell = <td className="small">{descriptionText}</td>;
               const lastUpdatedCellPension =
                 variant === "pension" ? (
                   <td className="small text-nowrap">
@@ -638,7 +647,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               const cellsValueFirst = (
                 <>
                   <td className="small">{label}</td>
-                  {descCellPension}
+                  {descCell}
                   <td className="small text-end">
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
                   </td>
@@ -649,7 +658,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               const cellsCurrencyFirst = (
                 <>
                   <td className="small">{label}</td>
-                  {descCellPension}
+                  {descCell}
                   <td className="small">{r.currency}</td>
                   <td className="small text-end">
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
@@ -685,9 +694,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              {variant === "pension" ? (
-                <td className="small text-muted fw-normal">{frankfurterTotalNote}</td>
-              ) : null}
+              <td className="small text-muted fw-normal">{frankfurterTotalNote}</td>
               {columnOrder === "valueFirst" ? (
                 <>
                   <td className="small text-end">
@@ -736,15 +743,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 </>
               )}
               {variant === "pension" ? <td className="small" /> : null}
-              <td
-                className={
-                  variant === "savings"
-                    ? "small text-end text-muted fw-normal"
-                    : "small text-end"
-                }
-              >
-                {variant === "savings" ? frankfurterTotalNote : null}
-              </td>
+              <td className="small text-end" />
             </tr>
           ) : null}
         </AdminDataTable>

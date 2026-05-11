@@ -570,9 +570,23 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         out = _normalize_savings_sheet_payload(body)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["deposit"], "HSBC Time Deposit")
+        self.assertEqual(out[0]["description"], "")
         self.assertEqual(out[0]["value"], 50000.0)
 
-    def test_pension_normalize_valid(self) -> None:
+    def test_savings_normalize_with_description(self) -> None:
+        body = {
+            "savingsRecords": [
+                {
+                    "id": "s1",
+                    "deposit": "HSBC",
+                    "description": "12-month fixed",
+                    "value": 100,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_savings_sheet_payload(body)
+        self.assertEqual(out[0]["description"], "12-month fixed")
         body = {
             "pensionRecords": [
                 {
