@@ -5,6 +5,7 @@ import { useFinance } from "../hooks/useFinance";
 import {
   defaultFiscalYearIdForNowUtc,
   FISCAL_YEAR_OPTIONS,
+  formatFiscalYearIdLabel,
   type FiscalYearId,
   fiscalYearIdToStartCalendarYear,
   sumHouseStatementLinesForFiscalYear,
@@ -62,8 +63,7 @@ function HouseFiscalSummaryCard({
     [house.lines, fiscalYear],
   );
 
-  const fyStartYear = fiscalYearIdToStartCalendarYear(fiscalYear);
-  const fyEndYear = fyStartYear + 1;
+  const fyLabel = formatFiscalYearIdLabel(fiscalYear);
 
   const selectId = `fiscal-year-${houseKey}`;
 
@@ -73,14 +73,14 @@ function HouseFiscalSummaryCard({
         <h2 className="h6 mb-3">{title}</h2>
         <div className="mb-3">
           <label className="form-label small text-muted mb-1" htmlFor={selectId}>
-            Fiscal year (1 Apr {fyStartYear} – 31 Mar {fyEndYear})
+            {fyLabel}
           </label>
           <select
             id={selectId}
             className="form-select form-select-sm"
             value={fiscalYear}
             onChange={(e) => onFiscalYearChange(e.target.value as FiscalYearId)}
-            aria-label={`${title} fiscal year`}
+            aria-label={`${title}: ${fyLabel}`}
           >
             {FISCAL_YEAR_OPTIONS.map((opt) => (
               <option key={opt.id} value={opt.id}>
