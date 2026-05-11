@@ -1,4 +1,4 @@
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useMemo, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -28,6 +28,95 @@ function parseAmount(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+type LedgerSortColumnKey = "cat" | "desc" | "house" | "amt" | "ccy";
+
+function relatedHouseSortLabel(
+  record: FinanceLedgerRecord,
+  relatedHouseLabelByValue: ReadonlyMap<HouseKey, string>,
+): string {
+  if (!record.relatedHouse) return "";
+  return relatedHouseLabelByValue.get(record.relatedHouse) ?? record.relatedHouse;
+}
+
+function compareLedgerRecords(
+  a: FinanceLedgerRecord,
+  b: FinanceLedgerRecord,
+  sortKey: LedgerSortColumnKey,
+  sortDir: "asc" | "desc",
+  relatedHouseLabelByValue: ReadonlyMap<HouseKey, string>,
+): number {
+  const dir = sortDir === "asc" ? 1 : -1;
+  let cmp = 0;
+  switch (sortKey) {
+    case "cat":
+      cmp = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+      break;
+    case "desc":
+      cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+      break;
+    case "house":
+      cmp = relatedHouseSortLabel(a, relatedHouseLabelByValue).localeCompare(
+        relatedHouseSortLabel(b, relatedHouseLabelByValue),
+        undefined,
+        { sensitivity: "base" },
+      );
+      break;
+    case "amt": {
+      const ma = ledgerMonthlyAmount(a);
+      const mb = ledgerMonthlyAmount(b);
+      cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
+      break;
+    }
+    case "ccy":
+      cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+      break;
+    default:
+      break;
+  }
+  if (cmp !== 0) return dir * cmp;
+  return a.id.localeCompare(b.id);
+}
+
+type LedgerSortHeaderProps = {
+  label: string;
+  isActive: boolean;
+  direction: "asc" | "desc" | null;
+  onClick: () => void;
+  align?: "start" | "end";
+};
+
+function LedgerSortHeader({
+  label,
+  isActive,
+  direction,
+  onClick,
+  align = "start",
+}: LedgerSortHeaderProps) {
+  const iconClass =
+    direction === "asc"
+      ? "bi bi-arrow-up"
+      : direction === "desc"
+        ? "bi bi-arrow-down"
+        : "";
+  return (
+    <button
+      type="button"
+      className={`btn btn-link link-dark p-0 text-decoration-none small fw-semibold ${
+        align === "end" ? "w-100 text-end" : "text-start"
+      }`}
+      onClick={onClick}
+      aria-label={
+        isActive
+          ? `Sorted by ${label}, ${direction === "asc" ? "ascending" : "descending"}. Click to reverse.`
+          : `Sort by ${label}`
+      }
+    >
+      <span className="text-nowrap">{label}</span>
+      {iconClass ? <i className={`${iconClass} ms-1`} aria-hidden /> : null}
+    </button>
+  );
+}
+
 type LineFormState = {
   category: string;
   description: string;
@@ -36,33 +125,6 @@ type LineFormState = {
   amountPeriod: FinanceLedgerAmountPeriod;
   relatedHouse: HouseKey | "";
 };
-
-const BASE_TABLE_COLUMNS: AdminDataTableColumn[] = [
-  { key: "cat", header: "Category", className: "small" },
-  { key: "desc", header: "Description", className: "small" },
-];
-
-const RELATED_HOUSE_TABLE_COLUMN: AdminDataTableColumn = {
-  key: "house",
-  header: "Related property",
-  className: "small",
-};
-
-const AMOUNT_CCY_OPS_COLUMNS: AdminDataTableColumn[] = [
-  {
-    key: "amt",
-    header: "Monthly amount",
-    className: "small text-end",
-    headerClassName: "small text-end",
-  },
-  { key: "ccy", header: "Currency", className: "small" },
-  {
-    key: "ops",
-    header: <span className="visually-hidden">Operations</span>,
-    className: "text-end text-nowrap",
-    headerClassName: "text-end",
-  },
-];
 
 export type FinanceLedgerSheetPanelProps = {
   readonly sheetId: string;
@@ -77,8 +139,10 @@ export type FinanceLedgerSheetPanelProps = {
   readonly emptyMessage: string;
   readonly filterPlaceholder?: string;
   /**
-   * When true (default), table rows are sorted by currency, category, then description (A–Z).
-   * Set false to preserve the records array order from the API.
+   * When true (default), table rows are sorted by currency, category, related property, then
+   * description (A–Z). Set false to preserve the records array order from the API.
+   * After you sort via a column header, that single-column order takes precedence until you
+   * reload the page.
    */
   readonly sortTableRowsByCurrencyCategoryDescription?: boolean;
   /** When true, category `<select>` options are listed A–Z (default option is first alphabetically). */
@@ -105,14 +169,6 @@ export function FinanceLedgerSheetPanel({
   relatedHouseOptions,
 }: FinanceLedgerSheetPanelProps) {
   const showRelatedHouseCol = Boolean(relatedHouseOptions?.length);
-  const tableColumns = useMemo(
-    () =>
-      showRelatedHouseCol
-        ? [...BASE_TABLE_COLUMNS, RELATED_HOUSE_TABLE_COLUMN, ...AMOUNT_CCY_OPS_COLUMNS]
-        : [...BASE_TABLE_COLUMNS, ...AMOUNT_CCY_OPS_COLUMNS],
-    [showRelatedHouseCol],
-  );
-  const colSpan = tableColumns.length;
 
   const relatedHouseLabelByValue = useMemo(() => {
     const m = new Map<HouseKey, string>();
@@ -122,6 +178,116 @@ export function FinanceLedgerSheetPanel({
     }
     return m;
   }, [relatedHouseOptions]);
+
+  const [sortKey, setSortKey] = useState<LedgerSortColumnKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const onLedgerSort = useCallback((key: LedgerSortColumnKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey !== key) {
+        setSortDir("asc");
+        return key;
+      }
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return prevKey;
+    });
+  }, []);
+
+  const tableColumns = useMemo((): AdminDataTableColumn[] => {
+    const manualSort = sortKey !== null;
+    const thAria = (
+      key: LedgerSortColumnKey,
+    ): "ascending" | "descending" | "none" | "other" | undefined => {
+      if (!manualSort) return undefined;
+      if (sortKey === key) return sortDir === "asc" ? "ascending" : "descending";
+      return "none";
+    };
+    const dirFor = (key: LedgerSortColumnKey): "asc" | "desc" | null =>
+      sortKey === key ? sortDir : null;
+
+    const cols: AdminDataTableColumn[] = [
+      {
+        key: "cat",
+        header: (
+          <LedgerSortHeader
+            label="Category"
+            isActive={sortKey === "cat"}
+            direction={dirFor("cat")}
+            onClick={() => onLedgerSort("cat")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("cat"),
+      },
+      {
+        key: "desc",
+        header: (
+          <LedgerSortHeader
+            label="Description"
+            isActive={sortKey === "desc"}
+            direction={dirFor("desc")}
+            onClick={() => onLedgerSort("desc")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("desc"),
+      },
+    ];
+    if (showRelatedHouseCol) {
+      cols.push({
+        key: "house",
+        header: (
+          <LedgerSortHeader
+            label="Related property"
+            isActive={sortKey === "house"}
+            direction={dirFor("house")}
+            onClick={() => onLedgerSort("house")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("house"),
+      });
+    }
+    cols.push(
+      {
+        key: "amt",
+        header: (
+          <LedgerSortHeader
+            label="Monthly amount"
+            isActive={sortKey === "amt"}
+            direction={dirFor("amt")}
+            onClick={() => onLedgerSort("amt")}
+            align="end"
+          />
+        ),
+        className: "small text-end",
+        headerClassName: "small text-end",
+        thAriaSort: thAria("amt"),
+      },
+      {
+        key: "ccy",
+        header: (
+          <LedgerSortHeader
+            label="Currency"
+            isActive={sortKey === "ccy"}
+            direction={dirFor("ccy")}
+            onClick={() => onLedgerSort("ccy")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("ccy"),
+      },
+      {
+        key: "ops",
+        header: <span className="visually-hidden">Operations</span>,
+        className: "text-end text-nowrap",
+        headerClassName: "text-end",
+      },
+    );
+    return cols;
+  }, [showRelatedHouseCol, sortKey, sortDir, onLedgerSort]);
+  const colSpan = tableColumns.length;
+
   const formId = `${sheetId}-ledger-form`;
   const categoryOptions = useMemo(() => {
     const list = [...categories];
@@ -169,7 +335,11 @@ export function FinanceLedgerSheetPanel({
             .toLowerCase();
           return hay.includes(q);
         });
-    if (sortTableRowsByCurrencyCategoryDescription) {
+    if (sortKey !== null) {
+      list.sort((a, b) =>
+        compareLedgerRecords(a, b, sortKey, sortDir, relatedHouseLabelByValue),
+      );
+    } else if (sortTableRowsByCurrencyCategoryDescription) {
       list.sort((a, b) => {
         const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
         if (byCcy !== 0) return byCcy;
@@ -183,7 +353,14 @@ export function FinanceLedgerSheetPanel({
       });
     }
     return list;
-  }, [records, tableFilter, sortTableRowsByCurrencyCategoryDescription, relatedHouseLabelByValue]);
+  }, [
+    records,
+    tableFilter,
+    sortTableRowsByCurrencyCategoryDescription,
+    relatedHouseLabelByValue,
+    sortKey,
+    sortDir,
+  ]);
 
   const recordCurrencies = useMemo(
     () => records.map((r) => r.currency),

@@ -5,6 +5,8 @@ export type AdminDataTableColumn = {
   readonly header: ReactNode;
   readonly className?: string;
   readonly headerClassName?: string;
+  /** For sortable tables: maps to `<th aria-sort="…">` when set. */
+  readonly thAriaSort?: "ascending" | "descending" | "none" | "other";
 };
 
 export type AdminDataTableProps = {
@@ -63,6 +65,7 @@ export function AdminDataTable({
                 key={col.key}
                 scope="col"
                 className={col.headerClassName ?? col.className}
+                aria-sort={col.thAriaSort}
               >
                 {col.header}
               </th>
