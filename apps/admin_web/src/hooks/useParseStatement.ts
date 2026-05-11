@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AdminApiError, adminFetchJson } from "../lib/apiAdminClient";
+import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
   statementLineAssetKeys,
   type FinancePersistedState,
@@ -35,19 +35,6 @@ export function existingImportedStatementBasenames(
     }
   }
   return out;
-}
-
-function adminErrorJsonMessage(err: unknown): string | null {
-  if (!(err instanceof AdminApiError)) return null;
-  try {
-    const parsed = JSON.parse(err.responseBody) as { message?: unknown };
-    if (typeof parsed.message === "string" && parsed.message.trim()) {
-      return parsed.message.trim();
-    }
-  } catch {
-    /* ignore malformed JSON */
-  }
-  return null;
 }
 
 type ParseJobStartResponse = {
@@ -171,7 +158,7 @@ export function useParseStatement(house: HouseKey) {
           },
         );
       } catch (err) {
-        const apiMsg = adminErrorJsonMessage(err);
+        const apiMsg = getAdminApiErrorMessage(err);
         if (apiMsg) throw new Error(apiMsg);
         throw err;
       }

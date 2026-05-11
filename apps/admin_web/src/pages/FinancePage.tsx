@@ -18,6 +18,7 @@ export function FinancePage() {
     isError,
     isSaving,
     saveError,
+    saveErrorDetail,
   } = useFinance();
   const [tab, setTab] = useState<FinanceTab>("hillmarton");
 
@@ -38,7 +39,8 @@ export function FinancePage() {
         <>
           {saveError ? (
             <div className="alert alert-warning py-2 small mb-3" role="alert">
-              Could not save changes. Try again or refresh the page.
+              <span className="fw-semibold">Could not save changes.</span>{" "}
+              {saveErrorDetail ?? "Try again or refresh the page."}
             </div>
           ) : null}
           {isSaving ? (

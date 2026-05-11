@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { adminFetchJson } from "../lib/apiAdminClient";
+import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
   type FinanceLedgerRecord,
   type FinanceLedgerSheetKey,
@@ -120,6 +120,10 @@ export function useFinance() {
     [qc, saveLedgerSheet],
   );
 
+  const ledgerSaveErr = saveLedgerSheet.error;
+  const houseSaveErr = saveHouse.error;
+  const saveError = houseSaveErr ?? ledgerSaveErr;
+
   return {
     data: q.data ?? DEFAULT_FINANCE_STATE,
     isLoading: q.isLoading,
@@ -128,6 +132,7 @@ export function useFinance() {
     patchHouse,
     patchLedgerRecords,
     isSaving: saveHouse.isPending || saveLedgerSheet.isPending,
-    saveError: saveHouse.error ?? saveLedgerSheet.error,
+    saveError,
+    saveErrorDetail: getAdminApiErrorMessage(saveError),
   };
 }
