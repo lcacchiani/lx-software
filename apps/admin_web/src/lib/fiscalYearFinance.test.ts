@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultFiscalYearIdForNowUtc,
+  formatFiscalYearIdLabel,
   fiscalYearIdToStartCalendarYear,
   fiscalYearUtcBounds,
   sumHouseStatementLinesForFiscalYear,
@@ -19,6 +20,17 @@ describe("fiscalYearIdToStartCalendarYear", () => {
   it("parses the leading year from an id", () => {
     expect(fiscalYearIdToStartCalendarYear("2025-2026")).toBe(2025);
     expect(fiscalYearIdToStartCalendarYear("2026-2027")).toBe(2026);
+  });
+});
+
+describe("formatFiscalYearIdLabel", () => {
+  it("uses April–March range wording", () => {
+    expect(formatFiscalYearIdLabel("2025-2026")).toBe(
+      "Fiscal year (1 Apr 2025 – 31 Mar 2026)",
+    );
+    expect(formatFiscalYearIdLabel("2026-2027")).toBe(
+      "Fiscal year (1 Apr 2026 – 31 Mar 2027)",
+    );
   });
 });
 

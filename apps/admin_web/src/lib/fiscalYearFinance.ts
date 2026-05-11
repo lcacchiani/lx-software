@@ -3,12 +3,6 @@ import type { HouseStatementLine } from "./financeModel";
 /** Fiscal years selectable on the dashboard (April 1 → March 31, UTC boundaries). */
 export type FiscalYearId = "2025-2026" | "2026-2027";
 
-export const FISCAL_YEAR_OPTIONS: readonly { readonly id: FiscalYearId; readonly label: string }[] =
-  [
-    { id: "2025-2026", label: "2025 – 2026" },
-    { id: "2026-2027", label: "2026 – 2027" },
-  ];
-
 /**
  * Calendar fiscal year starting April 1 `startCalendarYear` (UTC),
  * through March 31 `startCalendarYear + 1` inclusive (`endExclusive` is April 1 next year).
@@ -27,6 +21,18 @@ export function fiscalYearIdToStartCalendarYear(id: FiscalYearId): number {
   if (!m) return 2025;
   return Number.parseInt(m[1], 10);
 }
+
+/** Human-readable label for dashboard fiscal year picker (matches option text). */
+export function formatFiscalYearIdLabel(id: FiscalYearId): string {
+  const start = fiscalYearIdToStartCalendarYear(id);
+  return `Fiscal year (1 Apr ${start} – 31 Mar ${start + 1})`;
+}
+
+export const FISCAL_YEAR_OPTIONS: readonly { readonly id: FiscalYearId; readonly label: string }[] =
+  [
+    { id: "2025-2026", label: formatFiscalYearIdLabel("2025-2026") },
+    { id: "2026-2027", label: formatFiscalYearIdLabel("2026-2027") },
+  ];
 
 /**
  * Fiscal year (1 Apr – 31 Mar, UTC) that contains `now`, limited to entries in
