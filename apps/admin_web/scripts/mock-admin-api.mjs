@@ -13,6 +13,7 @@ let financeState = {
       description: "Sample pay (mock API)",
       amount: 12000,
       currency: "HKD",
+      amountPeriod: "month",
     },
   ],
   expenseRecords: [],

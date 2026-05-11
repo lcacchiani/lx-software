@@ -6,7 +6,9 @@ import {
 } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
+  ledgerMonthlyAmount,
   newStatementLineId,
+  type FinanceLedgerAmountPeriod,
   type FinanceLedgerRecord,
 } from "../lib/financeModel";
 import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
@@ -30,6 +32,7 @@ type LineFormState = {
   description: string;
   amount: string;
   currency: string;
+  amountPeriod: FinanceLedgerAmountPeriod;
 };
 
 const TABLE_COLUMNS: AdminDataTableColumn[] = [
@@ -37,7 +40,7 @@ const TABLE_COLUMNS: AdminDataTableColumn[] = [
   { key: "desc", header: "Description", className: "small" },
   {
     key: "amt",
-    header: "Amount",
+    header: "Monthly amount",
     className: "small text-end",
     headerClassName: "small text-end",
   },
@@ -100,6 +103,7 @@ export function FinanceLedgerSheetPanel({
     description: "",
     amount: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
+    amountPeriod: "month",
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -115,7 +119,7 @@ export function FinanceLedgerSheetPanel({
     const list = !q
       ? [...records]
       : records.filter((r) => {
-          const hay = [r.category, r.description, r.currency, String(r.amount)]
+          const hay = [r.category, r.description, r.currency, r.amountPeriod, String(r.amount)]
             .join(" ")
             .toLowerCase();
           return hay.includes(q);
@@ -155,7 +159,14 @@ export function FinanceLedgerSheetPanel({
     }
     try {
       return records.reduce(
-        (sum, r) => sum + convertAmountToBase(r.amount, r.currency, totalDisplayCurrency, map),
+        (sum, r) =>
+          sum +
+          convertAmountToBase(
+            ledgerMonthlyAmount(r),
+            r.currency,
+            totalDisplayCurrency,
+            map,
+          ),
         0,
       );
     } catch {
@@ -186,6 +197,7 @@ export function FinanceLedgerSheetPanel({
       description: row.description,
       amount: String(row.amount),
       currency: row.currency,
+      amountPeriod: row.amountPeriod,
     });
   }
 
@@ -211,6 +223,7 @@ export function FinanceLedgerSheetPanel({
       description: lineForm.description.trim(),
       amount,
       currency,
+      amountPeriod: lineForm.amountPeriod,
     };
 
     onPatch((prev) => {
@@ -272,7 +285,7 @@ export function FinanceLedgerSheetPanel({
                 ))}
               </select>
             </div>
-            <div className="col-md-5">
+            <div className="col-md-3">
               <label className="form-label small" htmlFor={`${sheetId}-ledger-desc`}>
                 Description
               </label>
@@ -304,6 +317,25 @@ export function FinanceLedgerSheetPanel({
               />
             </div>
             <div className="col-md-2">
+              <label className="form-label small" htmlFor={`${sheetId}-ledger-period`}>
+                Amount is
+              </label>
+              <select
+                id={`${sheetId}-ledger-period`}
+                className="form-select form-select-sm"
+                value={lineForm.amountPeriod}
+                onChange={(ev) =>
+                  setLineForm((f) => ({
+                    ...f,
+                    amountPeriod: ev.target.value as FinanceLedgerAmountPeriod,
+                  }))
+                }
+              >
+                <option value="month">Per month</option>
+                <option value="year">Per year</option>
+              </select>
+            </div>
+            <div className="col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-ledger-ccy`}>
                 Currency
               </label>
@@ -333,7 +365,11 @@ export function FinanceLedgerSheetPanel({
                 <td className="small">{r.category}</td>
                 <td className="small">{r.description}</td>
                 <td className="small text-end">
-                  <MoneyAmount amount={r.amount} currency={r.currency} amountOnly />
+                  <MoneyAmount
+                    amount={ledgerMonthlyAmount(r)}
+                    currency={r.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-end">
