@@ -8,6 +8,8 @@ import {
   normalizeExpenseIncomeAllocationPercents,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
+  normalizePensionRecords,
+  normalizeSavingsRecords,
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
   type HouseKey,
@@ -169,6 +171,29 @@ describe("investmentDetailsDisplay", () => {
         labels,
       ),
     ).toBe("ETH");
+  });
+});
+
+describe("normalizeSavingsRecords", () => {
+  it("keeps valid rows and drops invalid", () => {
+    const rows = [
+      { id: "1", deposit: "Bank A", value: 1000, currency: "HKD" },
+      { id: "", deposit: "X", value: 1, currency: "HKD" },
+      { id: "2", deposit: "  ", value: 1, currency: "HKD" },
+    ];
+    const out = normalizeSavingsRecords(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].deposit).toBe("Bank A");
+  });
+});
+
+describe("normalizePensionRecords", () => {
+  it("keeps valid rows", () => {
+    const rows = [{ id: "p", fund: "Plan A", value: 99.5, currency: "GBP" }];
+    const out = normalizePensionRecords(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].fund).toBe("Plan A");
+    expect(out[0].value).toBe(99.5);
   });
 });
 

@@ -131,6 +131,22 @@ export type FinanceInvestmentRecord = {
   readonly cryptoCurrency?: string;
 };
 
+/** One row in the Savings sheet (DynamoDB finance sheet `savings`). */
+export type FinanceSavingsRecord = {
+  readonly id: string;
+  readonly deposit: string;
+  readonly value: number;
+  readonly currency: string;
+};
+
+/** One row in the Pension sheet (DynamoDB finance sheet `pension`). */
+export type FinancePensionRecord = {
+  readonly id: string;
+  readonly fund: string;
+  readonly value: number;
+  readonly currency: string;
+};
+
 export type FinanceLedgerSheetKey = "income" | "expenses";
 
 /** Whether `amount` is entered per calendar month or per year (yearly rows are shown ÷12 in monthly views). */
@@ -482,6 +498,8 @@ export type FinancePersistedState = {
   readonly expenseRecords: readonly FinanceLedgerRecord[];
   readonly expenseIncomeAllocationPercents: ExpenseIncomeAllocationPercents;
   readonly investmentRecords: readonly FinanceInvestmentRecord[];
+  readonly savingsRecords: readonly FinanceSavingsRecord[];
+  readonly pensionRecords: readonly FinancePensionRecord[];
 };
 
 export const DEFAULT_FLOAT: HouseFloat = {
@@ -504,6 +522,8 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   expenseRecords: [],
   expenseIncomeAllocationPercents: DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS,
   investmentRecords: [],
+  savingsRecords: [],
+  pensionRecords: [],
 };
 
 function categorySet(categories: readonly string[]): Set<string> {
@@ -606,6 +626,68 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       ...(ticker ? { ticker } : {}),
       ...(cryptoCurrency ? { cryptoCurrency } : {}),
     });
+  }
+  return out;
+}
+
+/** Coerces API payloads into savings rows; drops invalid entries. */
+export function normalizeSavingsRecords(input: unknown): FinanceSavingsRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: FinanceSavingsRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const deposit = typeof row.deposit === "string" ? row.deposit.trim() : "";
+    if (!id || !deposit) {
+      continue;
+    }
+    const amtRaw = row.value;
+    const value =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (!Number.isFinite(value) || Math.abs(value) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    out.push({ id, deposit, value, currency });
+  }
+  return out;
+}
+
+/** Coerces API payloads into pension rows; drops invalid entries. */
+export function normalizePensionRecords(input: unknown): FinancePensionRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: FinancePensionRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const fund = typeof row.fund === "string" ? row.fund.trim() : "";
+    if (!id || !fund) {
+      continue;
+    }
+    const amtRaw = row.value;
+    const value =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (!Number.isFinite(value) || Math.abs(value) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    out.push({ id, fund, value, currency });
   }
   return out;
 }

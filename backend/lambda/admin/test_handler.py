@@ -32,13 +32,17 @@ from handler import (  # noqa: E402
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
+    _normalize_pension_sheet_payload,
     _normalize_public_asset_key,
+    _normalize_savings_sheet_payload,
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _path_finance_parse_job,
     _sanitize_expense_income_allocation_percentages,
     _sanitize_investment_records_list,
     _sanitize_ledger_records_list,
+    _sanitize_pension_records_list,
+    _sanitize_savings_records_list,
     _statement_basename_already_imported,
     _utc_iso_z,
 )
@@ -427,6 +431,53 @@ class TestInvestmentSheetPayload(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             _normalize_investment_sheet_payload(body)
+
+
+class TestSavingsPensionSheetPayload(unittest.TestCase):
+    def test_savings_normalize_valid(self) -> None:
+        body = {
+            "savingsRecords": [
+                {
+                    "id": "s1",
+                    "deposit": "HSBC Time Deposit",
+                    "value": 50000,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_savings_sheet_payload(body)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["deposit"], "HSBC Time Deposit")
+        self.assertEqual(out[0]["value"], 50000.0)
+
+    def test_pension_normalize_valid(self) -> None:
+        body = {
+            "pensionRecords": [
+                {"id": "p1", "fund": "Global Equity", "value": 120000.5, "currency": "USD"}
+            ]
+        }
+        out = _normalize_pension_sheet_payload(body)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["fund"], "Global Equity")
+        self.assertEqual(out[0]["currency"], "USD")
+
+    def test_savings_sanitize_drops_empty_deposit(self) -> None:
+        raw = [
+            {"id": "a", "deposit": "", "value": 1, "currency": "HKD"},
+            {"id": "b", "deposit": "OK", "value": 2, "currency": "HKD"},
+        ]
+        out = _sanitize_savings_records_list(raw)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["id"], "b")
+
+    def test_pension_rejects_bad_currency(self) -> None:
+        body = {
+            "pensionRecords": [
+                {"id": "p1", "fund": "X", "value": 1, "currency": "XXX"},
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_pension_sheet_payload(body)
 
 
 class TestLedgerSheetPayload(unittest.TestCase):

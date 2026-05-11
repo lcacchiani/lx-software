@@ -987,7 +987,211 @@ def _load_investment_records(table: Any) -> list[dict[str, Any]]:
     nested = _from_ddb_nested(payload)
     if not isinstance(nested, dict):
         return []
-    return _sanitize_investment_records_list(nested.get("records"))
+        return _sanitize_investment_records_list(nested.get("records"))
+
+
+def _sanitize_savings_records_list(raw: Any) -> list[dict[str, Any]]:
+    """Best-effort coercion for GET responses (drops invalid rows)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        dep = row.get("deposit")
+        if not isinstance(dep, str) or not dep.strip():
+            continue
+        d = dep.strip()
+        if len(d) > MAX_INVESTMENT_PROVIDER_LEN:
+            d = d[:MAX_INVESTMENT_PROVIDER_LEN]
+        amt = row.get("value")
+        if isinstance(amt, Decimal):
+            amt_f = float(amt)
+        elif isinstance(amt, (int, float)) and not isinstance(amt, bool):
+            amt_f = float(amt)
+        elif isinstance(amt, str):
+            try:
+                amt_f = float(amt)
+            except ValueError:
+                continue
+        else:
+            continue
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            continue
+        cur = _coerce_finance_currency_value(
+            row.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "deposit": d,
+                "value": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _sanitize_pension_records_list(raw: Any) -> list[dict[str, Any]]:
+    """Best-effort coercion for GET responses (drops invalid rows)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        fund = row.get("fund")
+        if not isinstance(fund, str) or not fund.strip():
+            continue
+        f = fund.strip()
+        if len(f) > MAX_INVESTMENT_PROVIDER_LEN:
+            f = f[:MAX_INVESTMENT_PROVIDER_LEN]
+        amt = row.get("value")
+        if isinstance(amt, Decimal):
+            amt_f = float(amt)
+        elif isinstance(amt, (int, float)) and not isinstance(amt, bool):
+            amt_f = float(amt)
+        elif isinstance(amt, str):
+            try:
+                amt_f = float(amt)
+            except ValueError:
+                continue
+        else:
+            continue
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            continue
+        cur = _coerce_finance_currency_value(
+            row.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "fund": f,
+                "value": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _normalize_savings_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get("savingsRecords")
+    if not isinstance(raw, list):
+        raise ValueError("savingsRecords must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(
+            f"At most {MAX_LEDGER_RECORDS} records allowed in savingsRecords"
+        )
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"savingsRecords[{i}] must be an object")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"savingsRecords[{i}].id is required")
+        dep = row.get("deposit")
+        if not isinstance(dep, str) or not dep.strip():
+            raise ValueError(f"savingsRecords[{i}].deposit is required")
+        if len(dep.strip()) > MAX_INVESTMENT_PROVIDER_LEN:
+            raise ValueError(f"savingsRecords[{i}].deposit is too long")
+        amt = row.get("value")
+        if isinstance(amt, Decimal):
+            amt = float(amt)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            raise ValueError(f"savingsRecords[{i}].value must be a number")
+        amt_f = float(amt)
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            raise ValueError(f"savingsRecords[{i}].value out of range")
+        cur = _require_supported_currency(
+            row.get("currency", DEFAULT_FINANCE_CURRENCY),
+            f"savingsRecords[{i}].currency",
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "deposit": dep.strip(),
+                "value": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _normalize_pension_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get("pensionRecords")
+    if not isinstance(raw, list):
+        raise ValueError("pensionRecords must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(
+            f"At most {MAX_LEDGER_RECORDS} records allowed in pensionRecords"
+        )
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"pensionRecords[{i}] must be an object")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"pensionRecords[{i}].id is required")
+        fund = row.get("fund")
+        if not isinstance(fund, str) or not fund.strip():
+            raise ValueError(f"pensionRecords[{i}].fund is required")
+        if len(fund.strip()) > MAX_INVESTMENT_PROVIDER_LEN:
+            raise ValueError(f"pensionRecords[{i}].fund is too long")
+        amt = row.get("value")
+        if isinstance(amt, Decimal):
+            amt = float(amt)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            raise ValueError(f"pensionRecords[{i}].value must be a number")
+        amt_f = float(amt)
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            raise ValueError(f"pensionRecords[{i}].value out of range")
+        cur = _require_supported_currency(
+            row.get("currency", DEFAULT_FINANCE_CURRENCY),
+            f"pensionRecords[{i}].currency",
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "fund": fund.strip(),
+                "value": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _load_savings_records(table: Any) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key("savings"))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_savings_records_list(nested.get("records"))
+
+
+def _load_pension_records(table: Any) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key("pension"))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_pension_records_list(nested.get("records"))
 
 
 def _finance_ddb_key(house: str) -> dict[str, str]:
@@ -1916,6 +2120,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 "expenseRecords": exp_rows,
                 "expenseIncomeAllocationPercents": exp_pct,
                 "investmentRecords": _load_investment_records(table),
+                "savingsRecords": _load_savings_records(table),
+                "pensionRecords": _load_pension_records(table),
             },
         )
 
@@ -1976,6 +2182,32 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", "investments", event)
         return _json_response(200, {"investmentRecords": normalized})
+
+    if method == "PUT" and path == "/finance/savings":
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_savings_sheet_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        doc = {"records": normalized}
+        ddb_item = {**_finance_sheet_ddb_key("savings"), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "savings", event)
+        return _json_response(200, {"savingsRecords": normalized})
+
+    if method == "PUT" and path == "/finance/pension":
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_pension_sheet_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        doc = {"records": normalized}
+        ddb_item = {**_finance_sheet_ddb_key("pension"), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "pension", event)
+        return _json_response(200, {"pensionRecords": normalized})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"
