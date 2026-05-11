@@ -3,7 +3,10 @@ import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
+  investmentRecordCurrentValueInRowCurrency,
   investmentRecordFiatNotionalInQuoteCurrency,
+  investmentMarketSourceCurrency,
+  isInvestmentMarketPriced,
   investmentDetailsDisplay,
   ledgerMonthlyAmount,
   allocationRecordsToApiPayload,
@@ -272,6 +275,273 @@ describe("investmentRecordFiatNotionalInQuoteCurrency", () => {
         currency: "HKD",
       }),
     ).toBe(100);
+  });
+});
+
+describe("investmentMarketSourceCurrency", () => {
+  it("returns trimmed cryptoCurrency for Crypto rows", () => {
+    expect(
+      investmentMarketSourceCurrency({
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "HKD",
+        cryptoCurrency: " BTC ",
+      }),
+    ).toBe("BTC");
+  });
+
+  it("returns trimmed ticker for ETF rows", () => {
+    expect(
+      investmentMarketSourceCurrency({
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "USD",
+        ticker: " VWRA ",
+      }),
+    ).toBe("VWRA");
+  });
+
+  it("returns undefined when field is missing/empty", () => {
+    expect(
+      investmentMarketSourceCurrency({
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "USD",
+      }),
+    ).toBeUndefined();
+    expect(
+      investmentMarketSourceCurrency({
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "USD",
+        ticker: "   ",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined for non-Crypto/ETF categories", () => {
+    expect(
+      investmentMarketSourceCurrency({
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 1,
+        currency: "HKD",
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("isInvestmentMarketPriced", () => {
+  it("is true for Crypto with positive units and cryptoCurrency", () => {
+    expect(
+      isInvestmentMarketPriced({
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "HKD",
+        unit: 0.5,
+        cryptoCurrency: "BTC",
+      }),
+    ).toBe(true);
+  });
+
+  it("is true for ETF with positive units and ticker", () => {
+    expect(
+      isInvestmentMarketPriced({
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "USD",
+        unit: 10,
+        ticker: "VWRA",
+      }),
+    ).toBe(true);
+  });
+
+  it("is false without units or with non-positive units", () => {
+    expect(
+      isInvestmentMarketPriced({
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "HKD",
+        cryptoCurrency: "BTC",
+      }),
+    ).toBe(false);
+    expect(
+      isInvestmentMarketPriced({
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "USD",
+        ticker: "VWRA",
+        unit: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when ticker/cryptoCurrency is missing", () => {
+    expect(
+      isInvestmentMarketPriced({
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "USD",
+        unit: 5,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("investmentRecordCurrentValueInRowCurrency", () => {
+  it("uses unit × rate(1 ticker → row.currency) for ETF rows", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "Broker",
+        principalAmount: 4500, // not used when market priced
+        currency: "USD",
+        unit: 10,
+        ticker: "EUR",
+      },
+      (from, to) => {
+        // 1 EUR = 1.07 USD (illustrative)
+        if (from === "EUR" && to === "USD") return 1.07;
+        return undefined;
+      },
+    );
+    expect(v).toBeCloseTo(10 * 1.07, 6);
+  });
+
+  it("uses unit × rate(1 cryptoCurrency → row.currency) for Crypto rows", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "Ex",
+        principalAmount: 95000,
+        currency: "USD",
+        unit: 0.5,
+        cryptoCurrency: "BTC",
+      },
+      (from, to) => {
+        if (from === "BTC" && to === "USD") return 100000;
+        return undefined;
+      },
+    );
+    expect(v).toBe(50000);
+  });
+
+  it("returns undefined when the rate provider returns undefined", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "Ex",
+        principalAmount: 95000,
+        currency: "USD",
+        unit: 1,
+        cryptoCurrency: "BTC",
+      },
+      () => undefined,
+    );
+    expect(v).toBeUndefined();
+  });
+
+  it("returns undefined when the rate provider throws", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "Ex",
+        principalAmount: 95000,
+        currency: "USD",
+        unit: 1,
+        cryptoCurrency: "BTC",
+      },
+      () => {
+        throw new Error("missing");
+      },
+    );
+    expect(v).toBeUndefined();
+  });
+
+  it("falls back to fiat notional when row is not market priced (no units)", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "Ex",
+        principalAmount: 120000,
+        currency: "HKD",
+        cryptoCurrency: "BTC",
+      },
+      () => 999,
+    );
+    expect(v).toBe(120000);
+  });
+
+  it("falls back to fiat notional when ticker/cryptoCurrency is missing", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 5000,
+        currency: "USD",
+        unit: 10,
+      },
+      () => 999,
+    );
+    expect(v).toBe(5000);
+  });
+
+  it("uses rate identity when market source equals row currency", () => {
+    const v = investmentRecordCurrentValueInRowCurrency(
+      {
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 100,
+        currency: "USD",
+        unit: 7,
+        ticker: "USD",
+      },
+      (from, to) => (from === to ? 1 : undefined),
+    );
+    expect(v).toBe(7);
   });
 });
 

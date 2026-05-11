@@ -4,7 +4,7 @@ import {
   GLOBAL_DEFAULT_CURRENCY,
   type CurrencyCode,
 } from "../lib/currencies";
-import { convertAmountToBase } from "../lib/frankfurterRates";
+import { convertAmountToBase, convertAmountWithBase } from "../lib/frankfurterRates";
 import { parseAmount } from "../lib/formParse";
 import {
   INVESTMENT_ASSET_TYPES,
@@ -12,7 +12,10 @@ import {
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
   INVESTMENT_TICKER_MAX_LEN,
   investmentDetailsDisplay,
+  investmentMarketSourceCurrency,
+  investmentRecordCurrentValueInRowCurrency,
   investmentRecordFiatNotionalInQuoteCurrency,
+  isInvestmentMarketPriced,
   newStatementLineId,
   type FinanceInvestmentRecord,
   type HouseKey,
@@ -59,6 +62,10 @@ function formatUnitCell(unit: number | undefined): string {
 /**
  * For **sorting** by Current Value: notional in {@link displayCurrency} (Frankfurter when the
  * row currency differs). Table cells show notional in the row’s own currency instead.
+ *
+ * For market-priced Crypto/ETF rows (positive units + crypto currency / ticker), the notional
+ * in the row currency is `unit × rate(1 source → row.currency)` where the rate is fetched
+ * via Frankfurter. The result is then converted to {@link displayCurrency} for sorting.
  */
 function investmentNotionalInDisplayCurrency(
   r: FinanceInvestmentRecord,
@@ -67,7 +74,18 @@ function investmentNotionalInDisplayCurrency(
   needsFxGlobal: boolean,
   ratesFetchSucceeded: boolean,
 ): number {
-  const notional = investmentRecordFiatNotionalInQuoteCurrency(r);
+  const ratesAvailable = !needsFxGlobal || ratesFetchSucceeded;
+  const valueInRowCcy = ratesAvailable
+    ? investmentRecordCurrentValueInRowCurrency(r, (from, to) => {
+        try {
+          return convertAmountWithBase(1, from, to, displayCurrency, rateByQuote);
+        } catch {
+          return undefined;
+        }
+      })
+    : undefined;
+  const notional =
+    valueInRowCcy !== undefined ? valueInRowCcy : investmentRecordFiatNotionalInQuoteCurrency(r);
   const rowNeedsFx =
     r.currency.trim().toUpperCase() !== displayCurrency.trim().toUpperCase();
   if (!rowNeedsFx) return notional;
@@ -384,9 +402,36 @@ export function FinanceInvestmentsPanel({
     GLOBAL_DEFAULT_CURRENCY,
   );
 
-  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
+  const fxQuoteCurrencies = useMemo(() => {
+    const quotes: string[] = [];
+    for (const r of records) {
+      quotes.push(r.currency);
+      const src = investmentMarketSourceCurrency(r);
+      if (src && isInvestmentMarketPriced(r)) {
+        quotes.push(src);
+      }
+    }
+    return quotes;
+  }, [records]);
   const { needsFx, ratesQuery, rateByQuoteForDisplay, fxLoading, fxError } =
-    useFrankfurterRatesForTotals(totalDisplayCurrency, recordCurrencies);
+    useFrankfurterRatesForTotals(totalDisplayCurrency, fxQuoteCurrencies);
+
+  const oneUnitConverter = useCallback(
+    (from: string, to: string): number | undefined => {
+      try {
+        return convertAmountWithBase(
+          1,
+          from,
+          to,
+          totalDisplayCurrency,
+          rateByQuoteForDisplay,
+        );
+      } catch {
+        return undefined;
+      }
+    },
+    [totalDisplayCurrency, rateByQuoteForDisplay],
+  );
 
   const rowNotionalInDisplayCurrencyForSort = useCallback(
     (r: FinanceInvestmentRecord): number =>
@@ -483,21 +528,29 @@ export function FinanceInvestmentsPanel({
       if (!ratesQuery.data) return null;
     }
     try {
-      return records.reduce(
-        (sum, r) =>
+      return records.reduce((sum, r) => {
+        const valueInRowCcy = investmentRecordCurrentValueInRowCurrency(r, oneUnitConverter);
+        const value =
+          valueInRowCcy !== undefined
+            ? valueInRowCcy
+            : investmentRecordFiatNotionalInQuoteCurrency(r);
+        return (
           sum +
-          convertAmountToBase(
-            investmentRecordFiatNotionalInQuoteCurrency(r),
-            r.currency,
-            totalDisplayCurrency,
-            rateByQuoteForDisplay,
-          ),
-        0,
-      );
+          convertAmountToBase(value, r.currency, totalDisplayCurrency, rateByQuoteForDisplay)
+        );
+      }, 0);
     } catch {
       return null;
     }
-  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, rateByQuoteForDisplay, totalDisplayCurrency]);
+  }, [
+    records,
+    needsFx,
+    ratesQuery.isSuccess,
+    ratesQuery.data,
+    rateByQuoteForDisplay,
+    totalDisplayCurrency,
+    oneUnitConverter,
+  ]);
 
   function resetForm() {
     setEditingId(null);
@@ -832,11 +885,25 @@ export function FinanceInvestmentsPanel({
                   {r.category === "Real Estate" ? "—" : formatUnitCell(r.unit)}
                 </td>
                 <td className="small text-end">
-                  <MoneyAmount
-                    amount={investmentRecordFiatNotionalInQuoteCurrency(r)}
-                    currency={r.currency}
-                    amountOnly
-                  />
+                  {(() => {
+                    const marketPriced = isInvestmentMarketPriced(r);
+                    if (marketPriced && needsFx && ratesQuery.isPending) {
+                      return <span className="text-muted">—</span>;
+                    }
+                    if (marketPriced && needsFx && ratesQuery.isError) {
+                      return <span className="text-muted">—</span>;
+                    }
+                    const valueInRowCcy = investmentRecordCurrentValueInRowCurrency(
+                      r,
+                      oneUnitConverter,
+                    );
+                    if (valueInRowCcy === undefined) {
+                      return <span className="text-muted">—</span>;
+                    }
+                    return (
+                      <MoneyAmount amount={valueInRowCcy} currency={r.currency} amountOnly />
+                    );
+                  })()}
                 </td>
                 <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">

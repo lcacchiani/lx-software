@@ -79,3 +79,45 @@ export function convertAmountToBase(
   }
   return amount / r;
 }
+
+/**
+ * Converts `amount` from `fromCurrency` into `toCurrency` given a {@link rateByQuote}
+ * map fetched against `baseCurrency` (i.e. each entry means `1 baseCurrency = rate quote`).
+ * Handles all four cases:
+ *  - from === to: identity.
+ *  - from === base: amount * rate(to).
+ *  - to === base: amount / rate(from) (same as {@link convertAmountToBase}).
+ *  - neither equals base: amount * rate(to) / rate(from).
+ */
+export function convertAmountWithBase(
+  amount: number,
+  fromCurrency: string,
+  toCurrency: string,
+  baseCurrency: string,
+  rateByQuote: ReadonlyMap<string, number>,
+): number {
+  const from = fromCurrency.trim().toUpperCase();
+  const to = toCurrency.trim().toUpperCase();
+  const base = baseCurrency.trim().toUpperCase();
+  if (from === to) return amount;
+  if (from === base) {
+    const rTo = rateByQuote.get(to);
+    if (rTo === undefined || rTo <= 0) {
+      throw new Error(`No conversion rate for ${from} → ${to}`);
+    }
+    return amount * rTo;
+  }
+  if (to === base) {
+    const rFrom = rateByQuote.get(from);
+    if (rFrom === undefined || rFrom <= 0) {
+      throw new Error(`No conversion rate for ${from} → ${to}`);
+    }
+    return amount / rFrom;
+  }
+  const rFrom = rateByQuote.get(from);
+  const rTo = rateByQuote.get(to);
+  if (rFrom === undefined || rFrom <= 0 || rTo === undefined || rTo <= 0) {
+    throw new Error(`No conversion rate for ${from} → ${to}`);
+  }
+  return (amount * rTo) / rFrom;
+}
