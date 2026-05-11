@@ -58,7 +58,40 @@ function formatUnitCell(unit: number | undefined): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 8 }).format(unit);
 }
 
-type InvSortKey = "cat" | "details" | "atype" | "prov" | "amt" | "ccy" | "unit" | "lastUpd";
+/**
+ * Crypto current value in {@link displayCurrency}: `units ×` (spot fiat value of one coin in the
+ * record's currency), then Frankfurter FX when the row currency differs from {@link displayCurrency}.
+ * When rates are still loading, returns quote-currency notional so sorting stays stable.
+ */
+function cryptoInvestmentCurrentValueInDisplayCurrency(
+  r: FinanceInvestmentRecord,
+  displayCurrency: CurrencyCode,
+  rateByQuote: ReadonlyMap<string, number>,
+  needsFxGlobal: boolean,
+  ratesFetchSucceeded: boolean,
+): number {
+  const notional = investmentRecordFiatNotionalInQuoteCurrency(r);
+  const rowNeedsFx =
+    r.currency.trim().toUpperCase() !== displayCurrency.trim().toUpperCase();
+  if (!rowNeedsFx) return notional;
+  if (needsFxGlobal && !ratesFetchSucceeded) return notional;
+  try {
+    return convertAmountToBase(notional, r.currency, displayCurrency, rateByQuote);
+  } catch {
+    return notional;
+  }
+}
+
+type InvSortKey =
+  | "cat"
+  | "details"
+  | "atype"
+  | "prov"
+  | "amt"
+  | "ccy"
+  | "unit"
+  | "currVal"
+  | "lastUpd";
 
 function compareInv(
   a: FinanceInvestmentRecord,
@@ -66,6 +99,7 @@ function compareInv(
   sortKey: InvSortKey,
   sortDir: "asc" | "desc",
   houseLabelByValue: ReadonlyMap<HouseKey, string>,
+  cryptoCurrValSort: (r: FinanceInvestmentRecord) => number | null,
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
   let cmp = 0;
@@ -106,6 +140,20 @@ function compareInv(
         cmp = -1;
       } else {
         cmp = ua === ub ? 0 : ua < ub ? -1 : 1;
+      }
+      break;
+    }
+    case "currVal": {
+      const va = cryptoCurrValSort(a);
+      const vb = cryptoCurrValSort(b);
+      if (va === null && vb === null) {
+        cmp = 0;
+      } else if (va === null) {
+        return 1;
+      } else if (vb === null) {
+        return -1;
+      } else {
+        cmp = va === vb ? 0 : va < vb ? -1 : 1;
       }
       break;
     }
@@ -338,9 +386,18 @@ export function FinanceInvestmentsPanel({
       },
       {
         key: "currVal",
-        header: <span className="small fw-semibold">Current Value</span>,
+        header: (
+          <SortHeader
+            label="Current Value"
+            isActive={sortKey === "currVal"}
+            direction={dirFor("currVal")}
+            onClick={() => onSort("currVal")}
+            align="end"
+          />
+        ),
         className: "small text-end",
         headerClassName: "small text-end",
+        thAriaSort: thAria("currVal"),
       },
       {
         key: "lastUpd",
@@ -376,6 +433,35 @@ export function FinanceInvestmentsPanel({
     GLOBAL_DEFAULT_CURRENCY,
   );
 
+  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
+  const needsFx = useMemo(() => {
+    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
+    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
+  }, [recordCurrencies, totalDisplayCurrency]);
+
+  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
+
+  const rateByQuoteForDisplay = useMemo((): ReadonlyMap<string, number> => {
+    if (!needsFx || !ratesQuery.isSuccess || !ratesQuery.data) {
+      return new Map();
+    }
+    return ratesQuery.data.rateByQuote;
+  }, [needsFx, ratesQuery.isSuccess, ratesQuery.data]);
+
+  const cryptoCurrValSort = useCallback(
+    (r: FinanceInvestmentRecord): number | null => {
+      if (r.category !== "Crypto") return null;
+      return cryptoInvestmentCurrentValueInDisplayCurrency(
+        r,
+        totalDisplayCurrency,
+        rateByQuoteForDisplay,
+        needsFx,
+        ratesQuery.isSuccess,
+      );
+    },
+    [totalDisplayCurrency, rateByQuoteForDisplay, needsFx, ratesQuery.isSuccess],
+  );
+
   const filtered = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
     const list = !q
@@ -400,7 +486,9 @@ export function FinanceInvestmentsPanel({
           return hay.includes(q);
         });
     if (sortKey !== null) {
-      list.sort((a, b) => compareInv(a, b, sortKey, sortDir, relatedHouseLabelByValue));
+      list.sort((a, b) =>
+        compareInv(a, b, sortKey, sortDir, relatedHouseLabelByValue, cryptoCurrValSort),
+      );
     } else {
       list.sort((a, b) => {
         const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
@@ -417,22 +505,14 @@ export function FinanceInvestmentsPanel({
       });
     }
     return list;
-  }, [records, tableFilter, sortKey, sortDir, relatedHouseLabelByValue]);
-
-  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
-  const needsFx = useMemo(() => {
-    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
-    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
-  }, [recordCurrencies, totalDisplayCurrency]);
-
-  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
-
-  const rateByQuoteForDisplay = useMemo((): ReadonlyMap<string, number> => {
-    if (!needsFx || !ratesQuery.isSuccess || !ratesQuery.data) {
-      return new Map();
-    }
-    return ratesQuery.data.rateByQuote;
-  }, [needsFx, ratesQuery.isSuccess, ratesQuery.data]);
+  }, [
+    records,
+    tableFilter,
+    sortKey,
+    sortDir,
+    relatedHouseLabelByValue,
+    cryptoCurrValSort,
+  ]);
 
   const convertedTotal = useMemo(() => {
     if (records.length === 0) return null;
@@ -751,23 +831,20 @@ export function FinanceInvestmentsPanel({
                       if (needsFx && rowNeedsFx && ratesQuery.isError) {
                         return <span className="text-muted">—</span>;
                       }
-                      try {
-                        const conv = convertAmountToBase(
-                          investmentRecordFiatNotionalInQuoteCurrency(r),
-                          r.currency,
-                          totalDisplayCurrency,
-                          rateByQuoteForDisplay,
-                        );
-                        return (
-                          <MoneyAmount
-                            amount={conv}
-                            currency={totalDisplayCurrency}
-                            amountOnly
-                          />
-                        );
-                      } catch {
-                        return <span className="text-muted">—</span>;
-                      }
+                      const conv = cryptoInvestmentCurrentValueInDisplayCurrency(
+                        r,
+                        totalDisplayCurrency,
+                        rateByQuoteForDisplay,
+                        needsFx,
+                        ratesQuery.isSuccess,
+                      );
+                      return (
+                        <MoneyAmount
+                          amount={conv}
+                          currency={totalDisplayCurrency}
+                          amountOnly
+                        />
+                      );
                     })()
                   ) : (
                     <span className="text-muted">—</span>
