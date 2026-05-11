@@ -53,19 +53,16 @@ function MonthlyNetByCurrencyList({
   readonly emptyLabel: string;
 }) {
   const currencies = Object.keys(netByCurrency).sort((a, b) => a.localeCompare(b));
-  if (currencies.length === 0) {
+  const currency = currencies[0];
+  if (!currency) {
     return <span className="text-muted">{emptyLabel}</span>;
   }
+  const amount = netByCurrency[currency] ?? 0;
   return (
     <ul className="list-unstyled mb-0 small">
-      {currencies.map((currency) => {
-        const amount = netByCurrency[currency] ?? 0;
-        return (
-          <li key={currency} className={amount >= 0 ? "text-success" : "text-danger"}>
-            <MoneyAmount amount={amount} currency={currency} />
-          </li>
-        );
-      })}
+      <li className={amount >= 0 ? "text-success" : "text-danger"}>
+        <MoneyAmount amount={amount} currency={currency} />
+      </li>
     </ul>
   );
 }
