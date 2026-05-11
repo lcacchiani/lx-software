@@ -57,11 +57,10 @@ function formatUnitCell(unit: number | undefined): string {
 }
 
 /**
- * Crypto current value in {@link displayCurrency}: `units ×` (spot fiat value of one coin in the
- * record's currency), then Frankfurter FX when the row currency differs from {@link displayCurrency}.
- * When rates are still loading, returns quote-currency notional so sorting stays stable.
+ * For **sorting** by Current Value: notional in {@link displayCurrency} (Frankfurter when the
+ * row currency differs). Table cells show notional in the row’s own currency instead.
  */
-function cryptoInvestmentCurrentValueInDisplayCurrency(
+function investmentNotionalInDisplayCurrency(
   r: FinanceInvestmentRecord,
   displayCurrency: CurrencyCode,
   rateByQuote: ReadonlyMap<string, number>,
@@ -97,7 +96,7 @@ function compareInv(
   sortKey: InvSortKey,
   sortDir: "asc" | "desc",
   houseLabelByValue: ReadonlyMap<HouseKey, string>,
-  cryptoCurrValSort: (r: FinanceInvestmentRecord) => number | null,
+  rowNotionalInDisplayCurrencyForSort: (r: FinanceInvestmentRecord) => number,
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
   let cmp = 0;
@@ -142,17 +141,9 @@ function compareInv(
       break;
     }
     case "currVal": {
-      const va = cryptoCurrValSort(a);
-      const vb = cryptoCurrValSort(b);
-      if (va === null && vb === null) {
-        cmp = 0;
-      } else if (va === null) {
-        return 1;
-      } else if (vb === null) {
-        return -1;
-      } else {
-        cmp = va === vb ? 0 : va < vb ? -1 : 1;
-      }
+      const va = rowNotionalInDisplayCurrencyForSort(a);
+      const vb = rowNotionalInDisplayCurrencyForSort(b);
+      cmp = va === vb ? 0 : va < vb ? -1 : 1;
       break;
     }
     case "lastUpd": {
@@ -175,6 +166,7 @@ type FormState = {
   principal: string;
   currency: string;
   unit: string;
+  currentValue: string;
   relatedHouse: HouseKey | "";
   ticker: string;
   cryptoCurrency: string;
@@ -214,6 +206,7 @@ export function FinanceInvestmentsPanel({
     principal: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
     unit: "",
+    currentValue: "",
     relatedHouse: "",
     ticker: "",
     cryptoCurrency: "",
@@ -395,17 +388,15 @@ export function FinanceInvestmentsPanel({
   const { needsFx, ratesQuery, rateByQuoteForDisplay, fxLoading, fxError } =
     useFrankfurterRatesForTotals(totalDisplayCurrency, recordCurrencies);
 
-  const cryptoCurrValSort = useCallback(
-    (r: FinanceInvestmentRecord): number | null => {
-      if (r.category !== "Crypto") return null;
-      return cryptoInvestmentCurrentValueInDisplayCurrency(
+  const rowNotionalInDisplayCurrencyForSort = useCallback(
+    (r: FinanceInvestmentRecord): number =>
+      investmentNotionalInDisplayCurrency(
         r,
         totalDisplayCurrency,
         rateByQuoteForDisplay,
         needsFx,
         ratesQuery.isSuccess,
-      );
-    },
+      ),
     [totalDisplayCurrency, rateByQuoteForDisplay, needsFx, ratesQuery.isSuccess],
   );
 
@@ -427,6 +418,7 @@ export function FinanceInvestmentsPanel({
             r.relatedHouse ?? "",
             r.ticker ?? "",
             r.cryptoCurrency ?? "",
+            r.currentValue !== undefined ? String(r.currentValue) : "",
           ]
             .join(" ")
             .toLowerCase();
@@ -434,7 +426,7 @@ export function FinanceInvestmentsPanel({
         });
     if (sortKey !== null) {
       list.sort((a, b) =>
-        compareInv(a, b, sortKey, sortDir, relatedHouseLabelByValue, cryptoCurrValSort),
+        compareInv(a, b, sortKey, sortDir, relatedHouseLabelByValue, rowNotionalInDisplayCurrencyForSort),
       );
     } else {
       list.sort((a, b) => {
@@ -458,10 +450,33 @@ export function FinanceInvestmentsPanel({
     sortKey,
     sortDir,
     relatedHouseLabelByValue,
-    cryptoCurrValSort,
+    rowNotionalInDisplayCurrencyForSort,
   ]);
 
-  const convertedTotal = useMemo(() => {
+  const convertedPrincipalTotal = useMemo(() => {
+    if (records.length === 0) return null;
+    if (needsFx) {
+      if (!ratesQuery.isSuccess) return null;
+      if (!ratesQuery.data) return null;
+    }
+    try {
+      return records.reduce(
+        (sum, r) =>
+          sum +
+          convertAmountToBase(
+            r.principalAmount,
+            r.currency,
+            totalDisplayCurrency,
+            rateByQuoteForDisplay,
+          ),
+        0,
+      );
+    } catch {
+      return null;
+    }
+  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, rateByQuoteForDisplay, totalDisplayCurrency]);
+
+  const convertedCurrentValueTotal = useMemo(() => {
     if (records.length === 0) return null;
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
@@ -499,7 +514,16 @@ export function FinanceInvestmentsPanel({
       provider: row.provider,
       principal: String(row.principalAmount),
       currency: row.currency,
-      unit: row.unit !== undefined ? String(row.unit) : "",
+      unit:
+        row.category === "Real Estate"
+          ? ""
+          : row.unit !== undefined
+            ? String(row.unit)
+            : "",
+      currentValue:
+        row.category === "Real Estate"
+          ? String(row.currentValue ?? row.principalAmount)
+          : "",
       relatedHouse:
         row.category === "Real Estate" &&
         (row.relatedHouse === "hillmarton" || row.relatedHouse === "morrison")
@@ -521,10 +545,20 @@ export function FinanceInvestmentsPanel({
       setFormError("Principal must be a valid number.");
       return;
     }
-    const unitParsed = parseOptionalUnit(form.unit);
-    if (unitParsed === null) {
+    const unitParsed =
+      form.category === "Real Estate" ? undefined : parseOptionalUnit(form.unit);
+    if (form.category !== "Real Estate" && unitParsed === null) {
       setFormError("Units must be a valid number.");
       return;
+    }
+    let realEstateCurrentValue: number | undefined;
+    if (form.category === "Real Estate") {
+      const cv = parseAmount(form.currentValue);
+      if (cv === null) {
+        setFormError("Current value must be a valid number.");
+        return;
+      }
+      realEstateCurrentValue = cv;
     }
     if (!INVESTMENT_CATEGORIES.includes(form.category)) {
       setFormError("Pick a valid category.");
@@ -544,7 +578,14 @@ export function FinanceInvestmentsPanel({
       provider: form.provider.trim(),
       principalAmount,
       currency,
-      ...(unitParsed !== undefined ? { unit: unitParsed } : {}),
+      ...(form.category !== "Real Estate" &&
+      unitParsed !== undefined &&
+      unitParsed !== null
+        ? { unit: unitParsed }
+        : {}),
+      ...(form.category === "Real Estate" && realEstateCurrentValue !== undefined
+        ? { currentValue: realEstateCurrentValue }
+        : {}),
       ...(form.category === "Real Estate" &&
       (form.relatedHouse === "hillmarton" || form.relatedHouse === "morrison")
         ? { relatedHouse: form.relatedHouse }
@@ -609,6 +650,13 @@ export function FinanceInvestmentsPanel({
                     relatedHouse: "",
                     ticker: "",
                     cryptoCurrency: "",
+                    unit: category === "Real Estate" ? "" : f.unit,
+                    currentValue:
+                      category === "Real Estate"
+                        ? f.principal.trim() !== ""
+                          ? f.principal
+                          : ""
+                        : "",
                   }));
                 }}
               >
@@ -724,19 +772,37 @@ export function FinanceInvestmentsPanel({
                 onChange={(code) => setForm((f) => ({ ...f, currency: code }))}
               />
             </div>
-            <div className="col-12 col-md-2">
-              <label className="form-label small" htmlFor={`${sheetId}-unit`}>
-                Units
-              </label>
-              <input
-                id={`${sheetId}-unit`}
-                type="number"
-                step="any"
-                className="form-control form-control-sm"
-                value={form.unit}
-                onChange={(ev) => setForm((f) => ({ ...f, unit: ev.target.value }))}
-              />
-            </div>
+            {form.category === "Real Estate" ? (
+              <div className="col-12 col-md-2">
+                <label className="form-label small" htmlFor={`${sheetId}-curval`}>
+                  Current value
+                </label>
+                <input
+                  id={`${sheetId}-curval`}
+                  type="number"
+                  step="0.01"
+                  className="form-control form-control-sm"
+                  required
+                  value={form.currentValue}
+                  onChange={(ev) => setForm((f) => ({ ...f, currentValue: ev.target.value }))}
+                />
+              </div>
+            ) : null}
+            {form.category !== "Real Estate" ? (
+              <div className="col-12 col-md-2">
+                <label className="form-label small" htmlFor={`${sheetId}-unit`}>
+                  Units
+                </label>
+                <input
+                  id={`${sheetId}-unit`}
+                  type="number"
+                  step="any"
+                  className="form-control form-control-sm"
+                  value={form.unit}
+                  onChange={(ev) => setForm((f) => ({ ...f, unit: ev.target.value }))}
+                />
+              </div>
+            ) : null}
           </div>
         </form>
       </AdminEditorSection>
@@ -762,37 +828,15 @@ export function FinanceInvestmentsPanel({
                   <MoneyAmount amount={r.principalAmount} currency={r.currency} amountOnly />
                 </td>
                 <td className="small">{r.currency}</td>
-                <td className="small text-end">{formatUnitCell(r.unit)}</td>
                 <td className="small text-end">
-                  {r.category === "Crypto" ? (
-                    (() => {
-                      const rowNeedsFx =
-                        r.currency.trim().toUpperCase() !==
-                        totalDisplayCurrency.trim().toUpperCase();
-                      if (needsFx && rowNeedsFx && ratesQuery.isPending) {
-                        return <span className="text-muted">Loading rates…</span>;
-                      }
-                      if (needsFx && rowNeedsFx && ratesQuery.isError) {
-                        return <span className="text-muted">—</span>;
-                      }
-                      const conv = cryptoInvestmentCurrentValueInDisplayCurrency(
-                        r,
-                        totalDisplayCurrency,
-                        rateByQuoteForDisplay,
-                        needsFx,
-                        ratesQuery.isSuccess,
-                      );
-                      return (
-                        <MoneyAmount
-                          amount={conv}
-                          currency={totalDisplayCurrency}
-                          amountOnly
-                        />
-                      );
-                    })()
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
+                  {r.category === "Real Estate" ? "—" : formatUnitCell(r.unit)}
+                </td>
+                <td className="small text-end">
+                  <MoneyAmount
+                    amount={investmentRecordFiatNotionalInQuoteCurrency(r)}
+                    currency={r.currency}
+                    amountOnly
+                  />
                 </td>
                 <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
@@ -821,8 +865,6 @@ export function FinanceInvestmentsPanel({
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              <td className="small" />
-              <td className="small" />
               <td className="small text-muted fw-normal">
                 <FrankfurterRatesFooterNote
                   needsFx={needsFx}
@@ -831,16 +873,27 @@ export function FinanceInvestmentsPanel({
                   ratesQuery={ratesQuery}
                 />
               </td>
+              <td className="small" />
+              <td className="small" />
               <td className="small text-end">
-                {convertedTotal !== null ? (
-                  <MoneyAmount
-                    amount={convertedTotal}
-                    currency={totalDisplayCurrency}
-                    amountOnly
-                  />
-                ) : (
-                  <span className="text-muted">—</span>
-                )}
+                {(() => {
+                  if (needsFx && ratesQuery.isPending) {
+                    return <span className="text-muted">—</span>;
+                  }
+                  if (needsFx && ratesQuery.isError) {
+                    return <span className="text-muted">—</span>;
+                  }
+                  if (convertedPrincipalTotal !== null) {
+                    return (
+                      <MoneyAmount
+                        amount={convertedPrincipalTotal}
+                        currency={totalDisplayCurrency}
+                        amountOnly
+                      />
+                    );
+                  }
+                  return <span className="text-muted">—</span>;
+                })()}
               </td>
               <td className="small">
                 <CurrencySelect
@@ -852,7 +905,26 @@ export function FinanceInvestmentsPanel({
                 />
               </td>
               <td className="small" />
-              <td className="small" />
+              <td className="small text-end">
+                {(() => {
+                  if (needsFx && ratesQuery.isPending) {
+                    return <span className="text-muted">—</span>;
+                  }
+                  if (needsFx && ratesQuery.isError) {
+                    return <span className="text-muted">—</span>;
+                  }
+                  if (convertedCurrentValueTotal !== null) {
+                    return (
+                      <MoneyAmount
+                        amount={convertedCurrentValueTotal}
+                        currency={totalDisplayCurrency}
+                        amountOnly
+                      />
+                    );
+                  }
+                  return <span className="text-muted">—</span>;
+                })()}
+              </td>
               <td className="small" />
               <td className="small text-end" />
             </tr>
