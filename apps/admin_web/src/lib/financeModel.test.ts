@@ -12,6 +12,7 @@ import {
   normalizeSavingsRecords,
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
+  sumMonthlyFinanceLedgerAmountsGeneral,
   type HouseKey,
 } from "./financeModel";
 
@@ -495,6 +496,97 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
     );
     const r = sumMonthlyFinanceLedgerAmountsByHouse(income, [], "hillmarton");
     expect(r.incomeByCurrency.HKD).toBe(100);
+  });
+});
+
+const LEDGER_HOUSE_OPTIONS = [
+  { value: "hillmarton" as const, label: "H1" },
+  { value: "morrison" as const, label: "M1" },
+];
+
+describe("sumMonthlyFinanceLedgerAmountsGeneral", () => {
+  it("sums month-period ledger rows with no related house and excludes property-linked rows", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "General pay",
+          amount: 80,
+          currency: "HKD",
+        },
+        {
+          id: "i2",
+          category: "Rent",
+          description: "Hill rent",
+          amount: 200,
+          currency: "HKD",
+          relatedHouse: "hillmarton",
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const expenses = normalizeLedgerRecords(
+      [
+        {
+          id: "e1",
+          category: "Utility",
+          description: "General bill",
+          amount: 15,
+          currency: "HKD",
+        },
+        {
+          id: "e2",
+          category: "Insurance",
+          description: "House ins",
+          amount: 99,
+          currency: "HKD",
+          relatedHouse: "morrison",
+        },
+      ],
+      EXPENSE_CATEGORIES,
+    );
+    const r = sumMonthlyFinanceLedgerAmountsGeneral(
+      income,
+      expenses,
+      normalizeExpenseIncomeAllocationPercents({}),
+      LEDGER_HOUSE_OPTIONS,
+    );
+    expect(r.incomeByCurrency.HKD).toBe(80);
+    expect(r.expensesByCurrency.HKD).toBe(15);
+  });
+
+  it("adds derived expenses from tagged income with no related property", () => {
+    const income = normalizeLedgerRecords(
+      [
+        {
+          id: "i1",
+          category: "Salary",
+          description: "Pay",
+          amount: 500,
+          currency: "HKD",
+          isTax: true,
+          isSaving: false,
+          isInvestment: false,
+        },
+      ],
+      INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
+    );
+    const alloc = normalizeExpenseIncomeAllocationPercents({
+      taxOnIncomePercent: 10,
+      investmentOnIncomePercent: 0,
+      savingOnIncomePercent: 0,
+    });
+    const r = sumMonthlyFinanceLedgerAmountsGeneral(
+      income,
+      [],
+      alloc,
+      LEDGER_HOUSE_OPTIONS,
+    );
+    expect(r.incomeByCurrency.HKD).toBe(500);
+    expect(r.expensesByCurrency.HKD).toBeCloseTo(50, 10);
   });
 });
 

@@ -484,6 +484,54 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }
 
+/**
+ * Monthly ledger totals for income and expenses not linked to a property
+ * (`relatedHouse` unset), plus synthetic derived expense rows from tagged
+ * monthly income with no related property (same rules as the expenses sheet).
+ * Yearly (`amountPeriod: year`) rows are excluded, matching
+ * {@link sumMonthlyFinanceLedgerAmountsByHouse}.
+ */
+export function sumMonthlyFinanceLedgerAmountsGeneral(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  expenseRecords: readonly FinanceLedgerRecord[],
+  expenseAllocationPercents: ExpenseIncomeAllocationPercents,
+  relatedHouseOptions: ReadonlyArray<{ readonly value: HouseKey; readonly label: string }>,
+): FinanceLedgerAmountBuckets {
+  const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
+  const income: Record<string, number> = {};
+  const expenses: Record<string, number> = {};
+
+  for (const r of incomeRecords) {
+    if (r.amountPeriod !== "month" || isLedgerRelatedHouse(r.relatedHouse)) {
+      continue;
+    }
+    const c = r.currency;
+    income[c] = (income[c] ?? 0) + r.amount;
+  }
+  for (const r of expenseRecords) {
+    if (r.amountPeriod !== "month" || isLedgerRelatedHouse(r.relatedHouse)) {
+      continue;
+    }
+    const c = r.currency;
+    expenses[c] = (expenses[c] ?? 0) + r.amount;
+  }
+
+  const derived = buildDerivedExpenseLedgerRowsFromTaggedIncome(
+    incomeRecords,
+    alloc,
+    relatedHouseOptions,
+  );
+  for (const r of derived) {
+    if (isLedgerRelatedHouse(r.relatedHouse)) {
+      continue;
+    }
+    const c = r.currency;
+    expenses[c] = (expenses[c] ?? 0) + r.amount;
+  }
+
+  return { incomeByCurrency: income, expensesByCurrency: expenses };
+}
+
 /** Per-currency income minus expenses for {@link FinanceLedgerAmountBuckets}. */
 export function monthlyLedgerNetByCurrency(
   buckets: FinanceLedgerAmountBuckets,
