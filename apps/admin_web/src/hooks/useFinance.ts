@@ -6,7 +6,9 @@ import {
   type FinanceInvestmentRecord,
   type FinanceLedgerRecord,
   type FinanceLedgerSheetKey,
+  type FinancePensionRecord,
   type FinancePersistedState,
+  type FinanceSavingsRecord,
   type HouseFinanceData,
   type HouseKey,
   DEFAULT_FINANCE_STATE,
@@ -17,6 +19,8 @@ import {
   normalizeHouseFinanceData,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
+  normalizePensionRecords,
+  normalizeSavingsRecords,
 } from "../lib/financeModel";
 
 const LEDGER_CONFIG: Record<
@@ -41,6 +45,8 @@ async function fetchFinance(): Promise<FinancePersistedState> {
       rawObj.expenseIncomeAllocationPercents,
     ),
     investmentRecords: normalizeInvestmentRecords(rawObj.investmentRecords),
+    savingsRecords: normalizeSavingsRecords(rawObj.savingsRecords),
+    pensionRecords: normalizePensionRecords(rawObj.pensionRecords),
   };
 }
 
@@ -95,6 +101,44 @@ export function useFinance() {
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
         ...(old ?? DEFAULT_FINANCE_STATE),
         investmentRecords: records,
+      }));
+    },
+  });
+
+  const saveSavingsRecords = useMutation({
+    mutationFn: async (records: readonly FinanceSavingsRecord[]) => {
+      const res = await adminFetchJson<{ savingsRecords: FinanceSavingsRecord[] }>(
+        "/finance/savings",
+        {
+          method: "PUT",
+          body: JSON.stringify({ savingsRecords: records }),
+        },
+      );
+      return { records: normalizeSavingsRecords(res.savingsRecords) };
+    },
+    onSuccess: ({ records }) => {
+      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
+        ...(old ?? DEFAULT_FINANCE_STATE),
+        savingsRecords: records,
+      }));
+    },
+  });
+
+  const savePensionRecords = useMutation({
+    mutationFn: async (records: readonly FinancePensionRecord[]) => {
+      const res = await adminFetchJson<{ pensionRecords: FinancePensionRecord[] }>(
+        "/finance/pension",
+        {
+          method: "PUT",
+          body: JSON.stringify({ pensionRecords: records }),
+        },
+      );
+      return { records: normalizePensionRecords(res.pensionRecords) };
+    },
+    onSuccess: ({ records }) => {
+      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
+        ...(old ?? DEFAULT_FINANCE_STATE),
+        pensionRecords: records,
       }));
     },
   });
@@ -175,6 +219,26 @@ export function useFinance() {
     [qc, saveInvestmentRecords],
   );
 
+  const patchSavingsRecords = useCallback(
+    (patch: (prev: readonly FinanceSavingsRecord[]) => FinanceSavingsRecord[]) => {
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const prev = state?.savingsRecords ?? DEFAULT_FINANCE_STATE.savingsRecords;
+      const next = patch(prev);
+      saveSavingsRecords.mutate(next);
+    },
+    [qc, saveSavingsRecords],
+  );
+
+  const patchPensionRecords = useCallback(
+    (patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[]) => {
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const prev = state?.pensionRecords ?? DEFAULT_FINANCE_STATE.pensionRecords;
+      const next = patch(prev);
+      savePensionRecords.mutate(next);
+    },
+    [qc, savePensionRecords],
+  );
+
   const patchLedgerRecords = useCallback(
     (
       sheet: FinanceLedgerSheetKey,
@@ -207,7 +271,14 @@ export function useFinance() {
   const ledgerSaveErr = saveLedgerSheet.error;
   const houseSaveErr = saveHouse.error;
   const investmentSaveErr = saveInvestmentRecords.error;
-  const saveError = houseSaveErr ?? ledgerSaveErr ?? investmentSaveErr;
+  const savingsSaveErr = saveSavingsRecords.error;
+  const pensionSaveErr = savePensionRecords.error;
+  const saveError =
+    houseSaveErr ??
+    ledgerSaveErr ??
+    investmentSaveErr ??
+    savingsSaveErr ??
+    pensionSaveErr;
 
   return {
     data: q.data ?? DEFAULT_FINANCE_STATE,
@@ -217,11 +288,15 @@ export function useFinance() {
     patchHouse,
     patchLedgerRecords,
     patchInvestmentRecords,
+    patchSavingsRecords,
+    patchPensionRecords,
     patchExpenseIncomeAllocationPercents,
     isSaving:
       saveHouse.isPending ||
       saveLedgerSheet.isPending ||
-      saveInvestmentRecords.isPending,
+      saveInvestmentRecords.isPending ||
+      saveSavingsRecords.isPending ||
+      savePensionRecords.isPending,
     saveError,
     saveErrorDetail: getAdminApiErrorMessage(saveError),
   };

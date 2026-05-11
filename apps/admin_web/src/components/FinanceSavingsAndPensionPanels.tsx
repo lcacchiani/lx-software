@@ -1,0 +1,686 @@
+import { type FormEvent, useCallback, useMemo, useState } from "react";
+import {
+  coerceSupportedCurrency,
+  GLOBAL_DEFAULT_CURRENCY,
+  type CurrencyCode,
+} from "../lib/currencies";
+import { convertAmountToBase } from "../lib/frankfurterRates";
+import {
+  newStatementLineId,
+  type FinancePensionRecord,
+  type FinanceSavingsRecord,
+} from "../lib/financeModel";
+import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
+import {
+  AdminDataTable,
+  AdminDataTableEmptyRow,
+  type AdminDataTableColumn,
+  AdminEditorSection,
+  CurrencySelect,
+  MoneyAmount,
+  TableIconButton,
+} from "./ui";
+
+function parseAmount(raw: string): number | null {
+  const n = Number.parseFloat(raw.trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+type SimpleSortKey = "label" | "amt" | "ccy";
+
+type SortHeaderProps = {
+  label: string;
+  isActive: boolean;
+  direction: "asc" | "desc" | null;
+  onClick: () => void;
+  align?: "start" | "end";
+};
+
+function SortHeader({
+  label,
+  isActive,
+  direction,
+  onClick,
+  align = "start",
+}: SortHeaderProps) {
+  const iconClass =
+    direction === "asc"
+      ? "bi bi-arrow-up"
+      : direction === "desc"
+        ? "bi bi-arrow-down"
+        : "";
+  return (
+    <button
+      type="button"
+      className={`btn btn-link link-dark p-0 text-decoration-none small fw-semibold ${
+        align === "end" ? "w-100 text-end" : "text-start"
+      }`}
+      onClick={onClick}
+      aria-label={
+        isActive
+          ? `Sorted by ${label}, ${direction === "asc" ? "ascending" : "descending"}. Click to reverse.`
+          : `Sort by ${label}`
+      }
+    >
+      <span className="text-nowrap">{label}</span>
+      {iconClass ? <i className={`${iconClass} ms-1`} aria-hidden /> : null}
+    </button>
+  );
+}
+
+function compareSavings(
+  a: FinanceSavingsRecord,
+  b: FinanceSavingsRecord,
+  sortKey: SimpleSortKey,
+  sortDir: "asc" | "desc",
+): number {
+  const dir = sortDir === "asc" ? 1 : -1;
+  let cmp = 0;
+  switch (sortKey) {
+    case "label":
+      cmp = a.deposit.localeCompare(b.deposit, undefined, { sensitivity: "base" });
+      break;
+    case "amt": {
+      const ma = a.value;
+      const mb = b.value;
+      cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
+      break;
+    }
+    case "ccy":
+      cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+      break;
+    default:
+      break;
+  }
+  if (cmp !== 0) return dir * cmp;
+  return a.id.localeCompare(b.id);
+}
+
+function comparePension(
+  a: FinancePensionRecord,
+  b: FinancePensionRecord,
+  sortKey: SimpleSortKey,
+  sortDir: "asc" | "desc",
+): number {
+  const dir = sortDir === "asc" ? 1 : -1;
+  let cmp = 0;
+  switch (sortKey) {
+    case "label":
+      cmp = a.fund.localeCompare(b.fund, undefined, { sensitivity: "base" });
+      break;
+    case "amt": {
+      const ma = a.value;
+      const mb = b.value;
+      cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
+      break;
+    }
+    case "ccy":
+      cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+      break;
+    default:
+      break;
+  }
+  if (cmp !== 0) return dir * cmp;
+  return a.id.localeCompare(b.id);
+}
+
+type SimpleMoneyRecordsPanelProps =
+  | {
+      variant: "savings";
+      records: readonly FinanceSavingsRecord[];
+      onPatch: (patch: (prev: readonly FinanceSavingsRecord[]) => FinanceSavingsRecord[]) => void;
+      sheetId: string;
+      formSectionTitle: string;
+      tableSectionTitle: string;
+      labelColumnHeader: string;
+      labelFormLabel: string;
+      labelInputId: string;
+      deleteConfirmMessage: string;
+      emptyMessage: string;
+      /** Table column order: `valueFirst` = Deposit, Value, Currency; `currencyFirst` = Fund, Currency, Value */
+      columnOrder: "valueFirst" | "currencyFirst";
+    }
+  | {
+      variant: "pension";
+      records: readonly FinancePensionRecord[];
+      onPatch: (patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[]) => void;
+      sheetId: string;
+      formSectionTitle: string;
+      tableSectionTitle: string;
+      labelColumnHeader: string;
+      labelFormLabel: string;
+      labelInputId: string;
+      deleteConfirmMessage: string;
+      emptyMessage: string;
+      columnOrder: "valueFirst" | "currencyFirst";
+    };
+
+function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
+  const {
+    variant,
+    records,
+    onPatch,
+    sheetId,
+    formSectionTitle,
+    tableSectionTitle,
+    labelColumnHeader,
+    labelFormLabel,
+    labelInputId,
+    deleteConfirmMessage,
+    emptyMessage,
+    columnOrder,
+  } = props;
+
+  const [sortKey, setSortKey] = useState<SimpleSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const onSort = useCallback((key: SimpleSortKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey !== key) {
+        setSortDir("asc");
+        return key;
+      }
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return prevKey;
+    });
+  }, []);
+
+  const tableColumns = useMemo((): AdminDataTableColumn[] => {
+    const manualSort = sortKey !== null;
+    const thAria = (
+      key: SimpleSortKey,
+    ): "ascending" | "descending" | "none" | "other" | undefined => {
+      if (!manualSort) return undefined;
+      if (sortKey === key) return sortDir === "asc" ? "ascending" : "descending";
+      return "none";
+    };
+    const dirFor = (key: SimpleSortKey): "asc" | "desc" | null =>
+      sortKey === key ? sortDir : null;
+
+    const labelCol: AdminDataTableColumn = {
+      key: "label",
+      header: (
+        <SortHeader
+          label={labelColumnHeader}
+          isActive={sortKey === "label"}
+          direction={dirFor("label")}
+          onClick={() => onSort("label")}
+        />
+      ),
+      className: "small",
+      thAriaSort: thAria("label"),
+    };
+    const valueCol: AdminDataTableColumn = {
+      key: "amt",
+      header: (
+        <SortHeader
+          label="Value"
+          isActive={sortKey === "amt"}
+          direction={dirFor("amt")}
+          onClick={() => onSort("amt")}
+          align="end"
+        />
+      ),
+      className: "small text-end",
+      headerClassName: "small text-end",
+      thAriaSort: thAria("amt"),
+    };
+    const ccyCol: AdminDataTableColumn = {
+      key: "ccy",
+      header: (
+        <SortHeader
+          label="Currency"
+          isActive={sortKey === "ccy"}
+          direction={dirFor("ccy")}
+          onClick={() => onSort("ccy")}
+        />
+      ),
+      className: "small",
+      thAriaSort: thAria("ccy"),
+    };
+    const opsCol: AdminDataTableColumn = {
+      key: "ops",
+      header: <span className="visually-hidden">Operations</span>,
+      className: "text-end text-nowrap",
+      headerClassName: "text-end",
+    };
+
+    const mid =
+      columnOrder === "valueFirst" ? [labelCol, valueCol, ccyCol, opsCol] : [labelCol, ccyCol, valueCol, opsCol];
+    return mid;
+  }, [
+    columnOrder,
+    labelColumnHeader,
+    onSort,
+    sortDir,
+    sortKey,
+  ]);
+
+  const colSpan = tableColumns.length;
+  const formId = `${sheetId}-form`;
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState("");
+  const [valueStr, setValueStr] = useState("");
+  const [formCurrency, setFormCurrency] = useState(GLOBAL_DEFAULT_CURRENCY);
+  const [tableFilter, setTableFilter] = useState("");
+  const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
+    GLOBAL_DEFAULT_CURRENCY,
+  );
+
+  const filtered = useMemo(() => {
+    const q = tableFilter.trim().toLowerCase();
+    if (variant === "savings") {
+      const recs = records as readonly FinanceSavingsRecord[];
+      const list = !q
+        ? [...recs]
+        : recs.filter((r) => {
+            const hay = [r.deposit, r.currency, String(r.value)].join(" ").toLowerCase();
+            return hay.includes(q);
+          });
+      if (sortKey !== null) {
+        list.sort((a, b) => compareSavings(a, b, sortKey, sortDir));
+      } else {
+        list.sort((a, b) => {
+          const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+          if (byCcy !== 0) return byCcy;
+          return a.deposit.localeCompare(b.deposit, undefined, { sensitivity: "base" });
+        });
+      }
+      return list;
+    }
+    const recs = records as readonly FinancePensionRecord[];
+    const list = !q
+      ? [...recs]
+      : recs.filter((r) => {
+          const hay = [r.fund, r.currency, String(r.value)].join(" ").toLowerCase();
+          return hay.includes(q);
+        });
+    if (sortKey !== null) {
+      list.sort((a, b) => comparePension(a, b, sortKey, sortDir));
+    } else {
+      list.sort((a, b) => {
+        const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+        if (byCcy !== 0) return byCcy;
+        return a.fund.localeCompare(b.fund, undefined, { sensitivity: "base" });
+      });
+    }
+    return list;
+  }, [records, tableFilter, sortKey, sortDir, variant]);
+
+  const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
+  const needsFx = useMemo(() => {
+    const bases = new Set(recordCurrencies.map((c) => c.trim().toUpperCase()));
+    return bases.size > 0 && [...bases].some((c) => c !== totalDisplayCurrency);
+  }, [recordCurrencies, totalDisplayCurrency]);
+
+  const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
+
+  const convertedTotal = useMemo(() => {
+    if (records.length === 0) return null;
+    let map: ReadonlyMap<string, number> = new Map();
+    if (needsFx) {
+      if (!ratesQuery.isSuccess) return null;
+      const ratePayload = ratesQuery.data;
+      if (!ratePayload) return null;
+      map = ratePayload.rateByQuote;
+    }
+    try {
+      return records.reduce(
+        (sum, r) => sum + convertAmountToBase(r.value, r.currency, totalDisplayCurrency, map),
+        0,
+      );
+    } catch {
+      return null;
+    }
+  }, [records, needsFx, ratesQuery.isSuccess, ratesQuery.data, totalDisplayCurrency]);
+
+  const fxLoading = needsFx && ratesQuery.isPending;
+  const fxError = needsFx && ratesQuery.isError;
+
+  function resetForm() {
+    setEditingId(null);
+    setFormError(null);
+    setNameInput("");
+    setValueStr("");
+    setFormCurrency(GLOBAL_DEFAULT_CURRENCY);
+  }
+
+  function openEdit(row: FinanceSavingsRecord | FinancePensionRecord) {
+    setEditingId(row.id);
+    setFormError(null);
+    if (variant === "savings") {
+      const r = row as FinanceSavingsRecord;
+      setNameInput(r.deposit);
+      setValueStr(String(r.value));
+      setFormCurrency(coerceSupportedCurrency(r.currency, GLOBAL_DEFAULT_CURRENCY));
+    } else {
+      const r = row as FinancePensionRecord;
+      setNameInput(r.fund);
+      setValueStr(String(r.value));
+      setFormCurrency(coerceSupportedCurrency(r.currency, GLOBAL_DEFAULT_CURRENCY));
+    }
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const valueNum = parseAmount(valueStr);
+    if (!nameInput.trim()) {
+      setFormError(`${labelFormLabel} is required.`);
+      return;
+    }
+    if (valueNum === null) {
+      setFormError("Value must be a valid number.");
+      return;
+    }
+    const currency = coerceSupportedCurrency(formCurrency, GLOBAL_DEFAULT_CURRENCY);
+    const id = editingId ?? newStatementLineId();
+
+    if (variant === "savings") {
+      const row: FinanceSavingsRecord = {
+        id,
+        deposit: nameInput.trim(),
+        value: valueNum,
+        currency,
+      };
+      const save = onPatch as (
+        patch: (prev: readonly FinanceSavingsRecord[]) => FinanceSavingsRecord[],
+      ) => void;
+      save((prev) => {
+        if (editingId) {
+          return prev.map((r) => (r.id === editingId ? row : r));
+        }
+        return [...prev, row];
+      });
+    } else {
+      const row: FinancePensionRecord = {
+        id,
+        fund: nameInput.trim(),
+        value: valueNum,
+        currency,
+      };
+      const save = onPatch as (
+        patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[],
+      ) => void;
+      save((prev) => {
+        if (editingId) {
+          return prev.map((r) => (r.id === editingId ? row : r));
+        }
+        return [...prev, row];
+      });
+    }
+
+    resetForm();
+  }
+
+  function deleteRow(id: string) {
+    if (!window.confirm(deleteConfirmMessage)) return;
+    if (variant === "savings") {
+      const save = onPatch as (
+        patch: (prev: readonly FinanceSavingsRecord[]) => FinanceSavingsRecord[],
+      ) => void;
+      save((prev) => prev.filter((r) => r.id !== id));
+    } else {
+      const save = onPatch as (
+        patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[],
+      ) => void;
+      save((prev) => prev.filter((r) => r.id !== id));
+    }
+    if (editingId === id) {
+      resetForm();
+    }
+  }
+
+  return (
+    <div>
+      <AdminEditorSection
+        title={formSectionTitle}
+        footer={
+          <>
+            <button type="submit" form={formId} className="btn btn-primary btn-sm">
+              {editingId ? "Update record" : "Add record"}
+            </button>
+            <button type="button" className="btn btn-outline-secondary btn-sm" onClick={resetForm}>
+              Clear
+            </button>
+          </>
+        }
+      >
+        <form id={formId} onSubmit={submit}>
+          {formError ? (
+            <div className="alert alert-danger py-2 small" role="alert">
+              {formError}
+            </div>
+          ) : null}
+          <div className="row g-3">
+            <div className="col-md-4">
+              <label className="form-label small" htmlFor={labelInputId}>
+                {labelFormLabel}
+              </label>
+              <input
+                id={labelInputId}
+                type="text"
+                className="form-control form-control-sm"
+                required
+                value={nameInput}
+                onChange={(ev) => setNameInput(ev.target.value)}
+              />
+            </div>
+            {columnOrder === "currencyFirst" ? (
+              <div className="col-md-3">
+                <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
+                  Currency
+                </label>
+                <CurrencySelect
+                  id={`${sheetId}-ccy`}
+                  value={formCurrency}
+                  onChange={(code) =>
+                    setFormCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                  }
+                />
+              </div>
+            ) : null}
+            <div className="col-md-3">
+              <label className="form-label small" htmlFor={`${sheetId}-value`}>
+                Value
+              </label>
+              <input
+                id={`${sheetId}-value`}
+                type="number"
+                step="0.01"
+                className="form-control form-control-sm"
+                required
+                value={valueStr}
+                onChange={(ev) => setValueStr(ev.target.value)}
+              />
+            </div>
+            {columnOrder === "valueFirst" ? (
+              <div className="col-md-3">
+                <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
+                  Currency
+                </label>
+                <CurrencySelect
+                  id={`${sheetId}-ccy`}
+                  value={formCurrency}
+                  onChange={(code) =>
+                    setFormCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                  }
+                />
+              </div>
+            ) : null}
+          </div>
+        </form>
+      </AdminEditorSection>
+
+      <AdminEditorSection title={tableSectionTitle}>
+        <AdminDataTable
+          embedded
+          columns={tableColumns}
+          filterValue={tableFilter}
+          onFilterChange={setTableFilter}
+          filterPlaceholder="Filter records…"
+        >
+          {filtered.length ? (
+            filtered.map((r) => {
+              const label = variant === "savings" ? (r as FinanceSavingsRecord).deposit : (r as FinancePensionRecord).fund;
+              const cellsValueFirst = (
+                <>
+                  <td className="small">{label}</td>
+                  <td className="small text-end">
+                    <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
+                  </td>
+                  <td className="small">{r.currency}</td>
+                </>
+              );
+              const cellsCurrencyFirst = (
+                <>
+                  <td className="small">{label}</td>
+                  <td className="small">{r.currency}</td>
+                  <td className="small text-end">
+                    <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
+                  </td>
+                </>
+              );
+              return (
+                <tr key={r.id}>
+                  {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
+                  <td className="small text-end">
+                    <TableIconButton
+                      iconClassName="bi bi-pencil"
+                      ariaLabel="Edit record"
+                      onClick={() => openEdit(r)}
+                    />
+                    <TableIconButton
+                      iconClassName="bi bi-trash"
+                      ariaLabel="Delete record"
+                      variant="danger"
+                      onClick={() => deleteRow(r.id)}
+                    />
+                  </td>
+                </tr>
+              );
+            })
+          ) : (
+            <AdminDataTableEmptyRow
+              colSpan={colSpan}
+              message={records.length ? "No records match the filter." : emptyMessage}
+            />
+          )}
+          {records.length > 0 ? (
+            <tr className="table-group-divider table-secondary fw-semibold">
+              <td className="small">Total</td>
+              {columnOrder === "valueFirst" ? (
+                <>
+                  <td className="small text-end">
+                    {convertedTotal !== null ? (
+                      <MoneyAmount
+                        amount={convertedTotal}
+                        currency={totalDisplayCurrency}
+                        amountOnly
+                      />
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                  <td className="small">
+                    <CurrencySelect
+                      id={`${sheetId}-total-ccy`}
+                      className="form-select form-select-sm"
+                      value={totalDisplayCurrency}
+                      onChange={(code) => setTotalDisplayCurrency(code)}
+                      disabled={fxLoading}
+                    />
+                  </td>
+                </>
+              ) : (
+                <>
+                  <td className="small">
+                    <CurrencySelect
+                      id={`${sheetId}-total-ccy`}
+                      className="form-select form-select-sm"
+                      value={totalDisplayCurrency}
+                      onChange={(code) => setTotalDisplayCurrency(code)}
+                      disabled={fxLoading}
+                    />
+                  </td>
+                  <td className="small text-end">
+                    {convertedTotal !== null ? (
+                      <MoneyAmount
+                        amount={convertedTotal}
+                        currency={totalDisplayCurrency}
+                        amountOnly
+                      />
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                </>
+              )}
+              <td className="small text-muted fw-normal text-end">
+                {fxError ? (
+                  <span className="text-danger">
+                    {(ratesQuery.error as Error)?.message ?? "Could not load exchange rates."}
+                  </span>
+                ) : fxLoading ? (
+                  "Loading rates…"
+                ) : needsFx && ratesQuery.isSuccess && ratesQuery.data?.date ? (
+                  <>Frankfurter · {ratesQuery.data.date}</>
+                ) : (
+                  "\u2014"
+                )}
+              </td>
+            </tr>
+          ) : null}
+        </AdminDataTable>
+      </AdminEditorSection>
+    </div>
+  );
+}
+
+export function FinanceSavingsPanel(props: {
+  readonly records: readonly FinanceSavingsRecord[];
+  readonly onPatch: (
+    patch: (prev: readonly FinanceSavingsRecord[]) => FinanceSavingsRecord[],
+  ) => void;
+}) {
+  return (
+    <SimpleMoneyRecordsPanel
+      variant="savings"
+      records={props.records}
+      onPatch={props.onPatch}
+      sheetId="savings"
+      formSectionTitle="Savings record"
+      tableSectionTitle="Savings"
+      labelColumnHeader="Deposit"
+      labelFormLabel="Deposit"
+      labelInputId="savings-deposit"
+      deleteConfirmMessage="Delete this savings record?"
+      emptyMessage="No savings records yet."
+      columnOrder="valueFirst"
+    />
+  );
+}
+
+export function FinancePensionPanel(props: {
+  readonly records: readonly FinancePensionRecord[];
+  readonly onPatch: (
+    patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[],
+  ) => void;
+}) {
+  return (
+    <SimpleMoneyRecordsPanel
+      variant="pension"
+      records={props.records}
+      onPatch={props.onPatch}
+      sheetId="pension"
+      formSectionTitle="Pension record"
+      tableSectionTitle="Pension"
+      labelColumnHeader="Fund"
+      labelFormLabel="Fund"
+      labelInputId="pension-fund"
+      deleteConfirmMessage="Delete this pension record?"
+      emptyMessage="No pension records yet."
+      columnOrder="currencyFirst"
+    />
+  );
+}

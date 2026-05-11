@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FinanceInvestmentsPanel } from "../components/FinanceInvestmentsPanel";
+import { FinancePensionPanel, FinanceSavingsPanel } from "../components/FinanceSavingsAndPensionPanels";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { useFinance } from "../hooks/useFinance";
@@ -10,7 +11,14 @@ import {
   type HouseKey,
 } from "../lib/financeModel";
 
-type FinanceTab = "hillmarton" | "morrison" | "investments" | "income" | "expenses";
+type FinanceTab =
+  | "hillmarton"
+  | "morrison"
+  | "investments"
+  | "savings"
+  | "pension"
+  | "income"
+  | "expenses";
 
 const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
   readonly value: HouseKey;
@@ -26,6 +34,8 @@ export function FinancePage() {
     patchHouse,
     patchLedgerRecords,
     patchInvestmentRecords,
+    patchSavingsRecords,
+    patchPensionRecords,
     patchExpenseIncomeAllocationPercents,
     isLoading,
     isError,
@@ -39,8 +49,8 @@ export function FinancePage() {
     <div>
       <h1 className="h3 mb-3">Finance</h1>
       <p className="text-muted mb-4">
-        House statements, floats, investments, and income and expense ledgers are stored in the
-        admin API (DynamoDB).
+        House statements, floats, investments, savings, pension, and income and expense ledgers are
+        stored in the admin API (DynamoDB).
       </p>
       {isLoading ? (
         <p className="text-muted small mb-3">Loading finance data…</p>
@@ -97,6 +107,28 @@ export function FinancePage() {
             <li className="nav-item" role="presentation">
               <button
                 type="button"
+                className={`nav-link ${tab === "savings" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "savings"}
+                onClick={() => setTab("savings")}
+              >
+                Savings
+              </button>
+            </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${tab === "pension" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "pension"}
+                onClick={() => setTab("pension")}
+              >
+                Pension
+              </button>
+            </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
                 className={`nav-link ${tab === "income" ? "active" : ""}`}
                 role="tab"
                 aria-selected={tab === "income"}
@@ -139,6 +171,12 @@ export function FinancePage() {
                 onPatch={patchInvestmentRecords}
                 relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
               />
+            ) : null}
+            {tab === "savings" ? (
+              <FinanceSavingsPanel records={data.savingsRecords} onPatch={patchSavingsRecords} />
+            ) : null}
+            {tab === "pension" ? (
+              <FinancePensionPanel records={data.pensionRecords} onPatch={patchPensionRecords} />
             ) : null}
             {tab === "income" ? (
               <FinanceLedgerSheetPanel
