@@ -1,3 +1,4 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   AdminDataTable,
@@ -8,7 +9,12 @@ import {
   useAdminAssets,
   type AdminAssetMeta,
 } from "../hooks/useAdminAssets";
-import { adminFetchJson } from "../lib/apiAdminClient";
+import {
+  AdminApiError,
+  adminFetchJson,
+  deleteAdminAsset,
+  getAdminApiErrorMessage,
+} from "../lib/apiAdminClient";
 
 const HOUSE_LABEL: Record<string, string> = {
   hillmarton: "32 Hillmarton",
@@ -100,8 +106,51 @@ const ASSET_TABLE_COLUMNS = [
   { key: "uploaded", header: "Uploaded" },
   { key: "file", header: "File" },
   { key: "house", header: "House" },
-  { key: "open", header: "Open", className: "text-end" },
+  { key: "actions", header: "Actions", className: "text-end text-nowrap" },
 ] as const;
+
+function AssetDeleteButton({
+  objectKey,
+  label,
+}: {
+  readonly objectKey: string;
+  readonly label: string;
+}) {
+  const qc = useQueryClient();
+  const del = useMutation({
+    mutationFn: () => deleteAdminAsset(objectKey),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["admin", "asset-records"] });
+    },
+  });
+  const onClick = () => {
+    if (
+      !window.confirm(
+        `Delete “${label}” from storage? Any statement lines that still reference this key will need to be edited.`,
+      )
+    ) {
+      return;
+    }
+    void del.mutateAsync().catch((err: unknown) => {
+      const detail = getAdminApiErrorMessage(err);
+      window.alert(
+        detail ??
+          (err instanceof AdminApiError
+            ? `Delete failed (${err.status}).`
+            : "Could not delete the file. Try again."),
+      );
+    });
+  };
+  return (
+    <TableIconButton
+      iconClassName="bi bi-trash"
+      ariaLabel="Delete file from storage"
+      variant="danger"
+      onClick={onClick}
+      disabled={del.isPending}
+    />
+  );
+}
 
 export function AssetsPage() {
   const q = useAdminAssets();
@@ -159,14 +208,20 @@ export function AssetsPage() {
                     </td>
                     <td className="small">{houseLabel(row.house)}</td>
                     <td className="text-end">
-                      <AssetOpenLink objectKey={objectKey} />
+                      <div className="d-inline-flex align-items-center gap-1">
+                        <AssetOpenLink objectKey={objectKey} />
+                        <AssetDeleteButton
+                          objectKey={objectKey}
+                          label={displayFileName(row)}
+                        />
+                      </div>
                     </td>
                   </tr>
                 );
               })
             ) : (
               <AdminDataTableEmptyRow
-                colSpan={4}
+                colSpan={ASSET_TABLE_COLUMNS.length}
                 message={
                   rows.length
                     ? "No assets match the filter."
