@@ -84,6 +84,40 @@ describe("normalizeInvestmentRecords", () => {
     expect(out[1].relatedHouse).toBeUndefined();
   });
 
+  it("reads optional unit and lastUpdated", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "Broker",
+        principalAmount: 10,
+        currency: "USD",
+        unit: 100,
+        lastUpdated: "2026-05-01",
+      },
+    ];
+    const out = normalizeInvestmentRecords(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].unit).toBe(100);
+    expect(out[0].lastUpdated).toBe("2026-05-01");
+  });
+
+  it("drops invalid unit values", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "Broker",
+        principalAmount: 10,
+        currency: "USD",
+        unit: "not-a-number",
+      },
+    ];
+    expect(normalizeInvestmentRecords(rows)).toHaveLength(0);
+  });
+
   it("keeps ticker only for ETF and cryptoCurrency only for Crypto", () => {
     const rows = [
       {

@@ -852,7 +852,76 @@ def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
             )
             if cc:
                 item["cryptoCurrency"] = cc
+        unit_raw = row.get("unit")
+        if unit_raw is not None and not isinstance(unit_raw, bool):
+            if isinstance(unit_raw, Decimal):
+                unit_f = float(unit_raw)
+            elif isinstance(unit_raw, (int, float)):
+                unit_f = float(unit_raw)
+            elif isinstance(unit_raw, str):
+                s = unit_raw.strip()
+                if not s:
+                    unit_f = None
+                else:
+                    try:
+                        unit_f = float(s)
+                    except ValueError:
+                        unit_f = None
+            else:
+                unit_f = None
+            if unit_f is not None and unit_f == unit_f and abs(unit_f) <= 1e15:
+                item["unit"] = unit_f
+        lu_raw = row.get("lastUpdated")
+        if isinstance(lu_raw, str) and _is_calendar_date_string(lu_raw.strip()):
+            item["lastUpdated"] = lu_raw.strip()
         out.append(item)
+    return out
+
+
+def _investment_row_signature(row: dict[str, Any]) -> tuple[Any, ...]:
+    """Comparable fields for detecting edits (excludes id and lastUpdated)."""
+    u = row.get("unit")
+    if isinstance(u, Decimal):
+        u_f: float | None = float(u)
+    elif isinstance(u, (int, float)) and not isinstance(u, bool):
+        u_f = float(u)
+    else:
+        u_f = None
+    return (
+        row["category"],
+        row["assetType"],
+        row["provider"],
+        float(row["principalAmount"]),
+        row["currency"],
+        row.get("relatedHouse"),
+        row.get("ticker"),
+        row.get("cryptoCurrency"),
+        u_f,
+    )
+
+
+def _merge_investment_last_updated(
+    normalized: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+    *,
+    today_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """Attach `lastUpdated` (UTC calendar date) per row: new/changed rows get today; unchanged keep prior."""
+    today = today_iso or datetime.now(timezone.utc).date().isoformat()
+    by_id = {r["id"]: r for r in existing}
+    out: list[dict[str, Any]] = []
+    for row in normalized:
+        merged = dict(row)
+        prev = by_id.get(merged["id"])
+        if prev is None:
+            merged["lastUpdated"] = today
+        elif _investment_row_signature(prev) == _investment_row_signature(merged):
+            lu = prev.get("lastUpdated")
+            if isinstance(lu, str) and _is_calendar_date_string(lu):
+                merged["lastUpdated"] = lu
+        else:
+            merged["lastUpdated"] = today
+        out.append(merged)
     return out
 
 
@@ -974,6 +1043,26 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                 rec["cryptoCurrency"] = c_st
         elif cat == "Fixed Term Deposit":
             _reject_investment_detail_fields(allowed=frozenset())
+        unit_raw = row.get("unit")
+        if unit_raw is not None and not (isinstance(unit_raw, str) and not unit_raw.strip()):
+            if isinstance(unit_raw, bool):
+                raise ValueError(f"investmentRecords[{i}].unit must be a number")
+            if isinstance(unit_raw, Decimal):
+                uf = float(unit_raw)
+            elif isinstance(unit_raw, (int, float)):
+                uf = float(unit_raw)
+            elif isinstance(unit_raw, str):
+                try:
+                    uf = float(unit_raw.strip())
+                except ValueError as exc:
+                    raise ValueError(
+                        f"investmentRecords[{i}].unit must be a number"
+                    ) from exc
+            else:
+                raise ValueError(f"investmentRecords[{i}].unit must be a number")
+            if uf != uf or abs(uf) > 1e15:
+                raise ValueError(f"investmentRecords[{i}].unit out of range")
+            rec["unit"] = uf
         out.append(rec)
     return out
 
@@ -2240,11 +2329,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except ValueError as exc:
             return _json_response(400, {"message": str(exc)})
         table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        doc = {"records": normalized}
+        existing = _load_investment_records(table)
+        merged = _merge_investment_last_updated(normalized, existing)
+        doc = {"records": merged}
         ddb_item = {**_finance_sheet_ddb_key("investments"), **_to_ddb_nested(doc)}
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", "investments", event)
-        return _json_response(200, {"investmentRecords": normalized})
+        return _json_response(200, {"investmentRecords": merged})
 
     if method == "PUT" and path == "/finance/savings":
         body = _parse_json_body(event)
