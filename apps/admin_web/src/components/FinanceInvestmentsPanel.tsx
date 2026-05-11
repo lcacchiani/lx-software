@@ -10,6 +10,7 @@ import {
   INVESTMENT_CATEGORIES,
   newStatementLineId,
   type FinanceInvestmentRecord,
+  type HouseKey,
   type InvestmentAssetType,
   type InvestmentCategory,
 } from "../lib/financeModel";
@@ -29,19 +30,37 @@ function parseAmount(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-type InvSortKey = "cat" | "atype" | "prov" | "amt" | "ccy";
+type InvSortKey = "cat" | "house" | "atype" | "prov" | "amt" | "ccy";
+
+function relatedHouseCellLabel(
+  record: FinanceInvestmentRecord,
+  labelByValue: ReadonlyMap<HouseKey, string>,
+): string {
+  if (record.category !== "Real Estate" || !record.relatedHouse) {
+    return "";
+  }
+  return labelByValue.get(record.relatedHouse) ?? record.relatedHouse;
+}
 
 function compareInv(
   a: FinanceInvestmentRecord,
   b: FinanceInvestmentRecord,
   sortKey: InvSortKey,
   sortDir: "asc" | "desc",
+  labelByValue: ReadonlyMap<HouseKey, string>,
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
   let cmp = 0;
   switch (sortKey) {
     case "cat":
       cmp = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+      break;
+    case "house":
+      cmp = relatedHouseCellLabel(a, labelByValue).localeCompare(
+        relatedHouseCellLabel(b, labelByValue),
+        undefined,
+        { sensitivity: "base" },
+      );
       break;
     case "atype":
       cmp = a.assetType.localeCompare(b.assetType, undefined, { sensitivity: "base" });
@@ -111,6 +130,7 @@ type FormState = {
   provider: string;
   principal: string;
   currency: string;
+  relatedHouse: HouseKey | "";
 };
 
 export type FinanceInvestmentsPanelProps = {
@@ -118,17 +138,35 @@ export type FinanceInvestmentsPanelProps = {
   readonly onPatch: (
     patch: (prev: readonly FinanceInvestmentRecord[]) => FinanceInvestmentRecord[],
   ) => void;
+  readonly relatedHouseOptions: ReadonlyArray<{
+    readonly value: HouseKey;
+    readonly label: string;
+  }>;
 };
 
-export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestmentsPanelProps) {
+export function FinanceInvestmentsPanel({
+  records,
+  onPatch,
+  relatedHouseOptions,
+}: FinanceInvestmentsPanelProps) {
   const sheetId = "investments";
   const defaultCategory = INVESTMENT_CATEGORIES[0];
+  const showHouseColumn = relatedHouseOptions.length > 0;
+  const relatedHouseLabelByValue = useMemo(() => {
+    const m = new Map<HouseKey, string>();
+    for (const o of relatedHouseOptions) {
+      m.set(o.value, o.label);
+    }
+    return m;
+  }, [relatedHouseOptions]);
+
   const emptyForm = (): FormState => ({
     category: defaultCategory,
     assetType: "Fixed",
     provider: "",
     principal: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
+    relatedHouse: "",
   });
 
   const [sortKey, setSortKey] = useState<InvSortKey | null>(null);
@@ -156,7 +194,7 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
     const dirFor = (key: InvSortKey): "asc" | "desc" | null =>
       sortKey === key ? sortDir : null;
 
-    return [
+    const cols: AdminDataTableColumn[] = [
       {
         key: "cat",
         header: (
@@ -170,6 +208,23 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
         className: "small",
         thAriaSort: thAria("cat"),
       },
+    ];
+    if (showHouseColumn) {
+      cols.push({
+        key: "house",
+        header: (
+          <SortHeader
+            label="Property"
+            isActive={sortKey === "house"}
+            direction={dirFor("house")}
+            onClick={() => onSort("house")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("house"),
+      });
+    }
+    cols.push(
       {
         key: "atype",
         header: (
@@ -230,8 +285,9 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
         className: "text-end text-nowrap",
         headerClassName: "text-end",
       },
-    ];
-  }, [sortKey, sortDir, onSort]);
+    );
+    return cols;
+  }, [sortKey, sortDir, onSort, showHouseColumn]);
 
   const colSpan = tableColumns.length;
   const formId = `${sheetId}-form`;
@@ -249,30 +305,37 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
     const list = !q
       ? [...records]
       : records.filter((r) => {
+          const houseHay = relatedHouseCellLabel(r, relatedHouseLabelByValue);
           const hay = [
             r.category,
             r.assetType,
             r.provider,
             r.currency,
             String(r.principalAmount),
+            houseHay,
+            r.relatedHouse ?? "",
           ]
             .join(" ")
             .toLowerCase();
           return hay.includes(q);
         });
     if (sortKey !== null) {
-      list.sort((a, b) => compareInv(a, b, sortKey, sortDir));
+      list.sort((a, b) => compareInv(a, b, sortKey, sortDir, relatedHouseLabelByValue));
     } else {
       list.sort((a, b) => {
         const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
         if (byCcy !== 0) return byCcy;
         const byCat = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
         if (byCat !== 0) return byCat;
+        const byHouse = (a.relatedHouse ?? "").localeCompare(b.relatedHouse ?? "", undefined, {
+          sensitivity: "base",
+        });
+        if (byHouse !== 0) return byHouse;
         return a.provider.localeCompare(b.provider, undefined, { sensitivity: "base" });
       });
     }
     return list;
-  }, [records, tableFilter, sortKey, sortDir]);
+  }, [records, tableFilter, sortKey, sortDir, relatedHouseLabelByValue]);
 
   const recordCurrencies = useMemo(() => records.map((r) => r.currency), [records]);
   const needsFx = useMemo(() => {
@@ -321,6 +384,11 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
       provider: row.provider,
       principal: String(row.principalAmount),
       currency: row.currency,
+      relatedHouse:
+        row.category === "Real Estate" &&
+        (row.relatedHouse === "hillmarton" || row.relatedHouse === "morrison")
+          ? row.relatedHouse
+          : "",
     });
   }
 
@@ -351,6 +419,10 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
       provider: form.provider.trim(),
       principalAmount,
       currency,
+      ...(form.category === "Real Estate" &&
+      (form.relatedHouse === "hillmarton" || form.relatedHouse === "morrison")
+        ? { relatedHouse: form.relatedHouse }
+        : {}),
     };
 
     onPatch((prev) => {
@@ -401,9 +473,14 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
                 id={`${sheetId}-cat`}
                 className="form-select form-select-sm"
                 value={form.category}
-                onChange={(ev) =>
-                  setForm((f) => ({ ...f, category: ev.target.value as InvestmentCategory }))
-                }
+                onChange={(ev) => {
+                  const category = ev.target.value as InvestmentCategory;
+                  setForm((f) => ({
+                    ...f,
+                    category,
+                    ...(category !== "Real Estate" ? { relatedHouse: "" as const } : {}),
+                  }));
+                }}
               >
                 {INVESTMENT_CATEGORIES.map((c) => (
                   <option key={c} value={c}>
@@ -469,6 +546,33 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
               />
             </div>
           </div>
+          {form.category === "Real Estate" && showHouseColumn ? (
+            <div className="row g-3 mt-0">
+              <div className="col-md-4">
+                <label className="form-label small" htmlFor={`${sheetId}-house`}>
+                  Property <span className="text-muted fw-normal">(optional)</span>
+                </label>
+                <select
+                  id={`${sheetId}-house`}
+                  className="form-select form-select-sm"
+                  value={form.relatedHouse}
+                  onChange={(ev) =>
+                    setForm((f) => ({
+                      ...f,
+                      relatedHouse: ev.target.value as HouseKey | "",
+                    }))
+                  }
+                >
+                  <option value="">— None —</option>
+                  {relatedHouseOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
         </form>
       </AdminEditorSection>
 
@@ -484,6 +588,11 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
             filtered.map((r) => (
               <tr key={r.id}>
                 <td className="small">{r.category}</td>
+                {showHouseColumn ? (
+                  <td className="small text-muted">
+                    {relatedHouseCellLabel(r, relatedHouseLabelByValue) || "—"}
+                  </td>
+                ) : null}
                 <td className="small">{r.assetType}</td>
                 <td className="small">{r.provider}</td>
                 <td className="small text-end">
@@ -516,6 +625,7 @@ export function FinanceInvestmentsPanel({ records, onPatch }: FinanceInvestments
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
+              {showHouseColumn ? <td className="small" /> : null}
               <td className="small" />
               <td className="small text-muted fw-normal">
                 {fxError ? (
