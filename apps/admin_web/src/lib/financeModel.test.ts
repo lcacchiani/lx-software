@@ -210,6 +210,36 @@ describe("normalizePensionRecords", () => {
     const out = normalizePensionRecords(rows);
     expect(out[0].description).toBe("Employer match");
   });
+
+  it("reads valid lastUpdated calendar date", () => {
+    const rows = [
+      {
+        id: "p",
+        fund: "Plan A",
+        description: "",
+        value: 1,
+        currency: "HKD",
+        lastUpdated: "2026-04-20",
+      },
+    ];
+    const out = normalizePensionRecords(rows);
+    expect(out[0].lastUpdated).toBe("2026-04-20");
+  });
+
+  it("drops invalid lastUpdated", () => {
+    const rows = [
+      {
+        id: "p",
+        fund: "Plan A",
+        description: "",
+        value: 1,
+        currency: "HKD",
+        lastUpdated: "2026-13-40",
+      },
+    ];
+    const out = normalizePensionRecords(rows);
+    expect(out[0].lastUpdated).toBeUndefined();
+  });
 });
 
 describe("normalizeLedgerRecords", () => {

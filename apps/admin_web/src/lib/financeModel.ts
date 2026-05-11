@@ -149,6 +149,8 @@ export type FinancePensionRecord = {
   readonly description: string;
   readonly value: number;
   readonly currency: string;
+  /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
+  readonly lastUpdated?: string;
 };
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
@@ -665,6 +667,24 @@ export function normalizeSavingsRecords(input: unknown): FinanceSavingsRecord[] 
   return out;
 }
 
+function parsePensionLastUpdatedCalendar(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return undefined;
+  }
+  const ms = Date.parse(`${s}T00:00:00.000Z`);
+  if (Number.isNaN(ms)) {
+    return undefined;
+  }
+  if (new Date(ms).toISOString().slice(0, 10) !== s) {
+    return undefined;
+  }
+  return s;
+}
+
 /** Coerces API payloads into pension rows; drops invalid entries. */
 export function normalizePensionRecords(input: unknown): FinancePensionRecord[] {
   if (!Array.isArray(input)) {
@@ -695,7 +715,9 @@ export function normalizePensionRecords(input: unknown): FinancePensionRecord[] 
     if (description.length > MAX_PENSION_DESCRIPTION_LEN) {
       description = description.slice(0, MAX_PENSION_DESCRIPTION_LEN);
     }
-    out.push({ id, fund, description, value, currency });
+    const lastUpdated = parsePensionLastUpdatedCalendar(row.lastUpdated);
+    const rec: FinancePensionRecord = { id, fund, description, value, currency };
+    out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
   }
   return out;
 }
