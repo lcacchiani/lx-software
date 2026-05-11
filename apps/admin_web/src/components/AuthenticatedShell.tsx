@@ -53,6 +53,14 @@ export function AuthenticatedShell() {
             >
               Assets
             </NavLink>
+            <NavLink
+              to="/siu-tin-dei"
+              className={({ isActive }) =>
+                `nav-link rounded ${isActive ? "active fw-semibold" : ""}`
+              }
+            >
+              Siu Tin Dei
+            </NavLink>
           </nav>
         </aside>
         <main className="admin-main flex-grow-1 p-4">
