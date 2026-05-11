@@ -215,7 +215,7 @@ function TaggedIncomeAllocationSection({
       <div className="row g-3">
         <div className="col-md-4">
           <label className="form-label small" htmlFor={`${sheetId}-alloc-tax`}>
-            Tax on Income (% of Tax-tagged income)
+            % Tax on Income
           </label>
           <input
             id={`${sheetId}-alloc-tax`}
@@ -239,7 +239,7 @@ function TaggedIncomeAllocationSection({
         </div>
         <div className="col-md-4">
           <label className="form-label small" htmlFor={`${sheetId}-alloc-inv`}>
-            Investments on Income (% of Investment-tagged income)
+            % Investments on Income
           </label>
           <input
             id={`${sheetId}-alloc-inv`}
@@ -263,7 +263,7 @@ function TaggedIncomeAllocationSection({
         </div>
         <div className="col-md-4">
           <label className="form-label small" htmlFor={`${sheetId}-alloc-save`}>
-            Savings on Income (% of Saving-tagged income)
+            % Savings on Income
           </label>
           <input
             id={`${sheetId}-alloc-save`}
@@ -708,7 +708,7 @@ export function FinanceLedgerSheetPanel({
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-md-3">
+            <div className={showRelatedHouseCol ? "col-md-2" : "col-md-3"}>
               <label className="form-label small" htmlFor={`${sheetId}-ledger-cat`}>
                 Category
               </label>
@@ -727,7 +727,7 @@ export function FinanceLedgerSheetPanel({
                 ))}
               </select>
             </div>
-            <div className="col-md-3">
+            <div className={showRelatedHouseCol ? "col-md-2" : "col-md-3"}>
               <label className="form-label small" htmlFor={`${sheetId}-ledger-desc`}>
                 Description
               </label>
@@ -742,6 +742,31 @@ export function FinanceLedgerSheetPanel({
                 }
               />
             </div>
+            {showRelatedHouseCol ? (
+              <div className="col-md-2">
+                <label className="form-label small" htmlFor={`${sheetId}-ledger-house`}>
+                  Related property
+                </label>
+                <select
+                  id={`${sheetId}-ledger-house`}
+                  className="form-select form-select-sm"
+                  value={lineForm.relatedHouse}
+                  onChange={(ev) =>
+                    setLineForm((f) => ({
+                      ...f,
+                      relatedHouse: ev.target.value as HouseKey | "",
+                    }))
+                  }
+                >
+                  <option value="">— None —</option>
+                  {(relatedHouseOptions ?? []).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-ledger-amt`}>
                 Amount
@@ -815,33 +840,6 @@ export function FinanceLedgerSheetPanel({
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
-          ) : null}
-          {relatedHouseOptions?.length ? (
-            <div className="row g-3 mt-0">
-              <div className="col-md-4">
-                <label className="form-label small" htmlFor={`${sheetId}-ledger-house`}>
-                  Related property <span className="text-muted fw-normal">(optional)</span>
-                </label>
-                <select
-                  id={`${sheetId}-ledger-house`}
-                  className="form-select form-select-sm"
-                  value={lineForm.relatedHouse}
-                  onChange={(ev) =>
-                    setLineForm((f) => ({
-                      ...f,
-                      relatedHouse: ev.target.value as HouseKey | "",
-                    }))
-                  }
-                >
-                  <option value="">— None —</option>
-                  {relatedHouseOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
               </div>
             </div>
           ) : null}
