@@ -72,6 +72,7 @@ export const EXPENSE_CATEGORIES = [
   "Saving",
   "Investment",
   "Rent",
+  "Mortgage",
   "Insurance",
   "Retirement",
   "Tax",
