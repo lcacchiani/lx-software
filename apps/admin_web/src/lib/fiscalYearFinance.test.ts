@@ -5,6 +5,7 @@ import {
   fiscalYearIdToStartCalendarYear,
   fiscalYearUtcBounds,
   sumHouseStatementLinesForFiscalYear,
+  sumHouseStatementLinesForUtcMonth,
 } from "./fiscalYearFinance";
 import type { HouseStatementLine } from "./financeModel";
 
@@ -94,5 +95,36 @@ describe("sumHouseStatementLinesForFiscalYear", () => {
     const r = sumHouseStatementLinesForFiscalYear(lines, 2025);
     expect(r.incomeByCurrency.HKD).toBe(10);
     expect(r.incomeByCurrency.USD).toBe(20);
+  });
+});
+
+describe("sumHouseStatementLinesForUtcMonth", () => {
+  const mk = (
+    dateUtc: string,
+    type: "income" | "expenditure",
+    net: number,
+    currency = "HKD",
+  ): HouseStatementLine => ({
+    id: "x",
+    dateUtc,
+    type,
+    description: "t",
+    netAmount: net,
+    vat: 0,
+    currency,
+    grossAmount: net,
+  });
+
+  it("includes only lines in the reference month (UTC)", () => {
+    const ref = new Date("2026-05-11T12:00:00.000Z");
+    const lines = [
+      mk("2026-04-30T23:59:59.999Z", "income", 100),
+      mk("2026-05-01T00:00:00.000Z", "income", 10),
+      mk("2026-05-15T00:00:00.000Z", "expenditure", 3),
+      mk("2026-06-01T00:00:00.000Z", "income", 999),
+    ];
+    const r = sumHouseStatementLinesForUtcMonth(lines, ref);
+    expect(r.incomeByCurrency.HKD).toBe(10);
+    expect(r.expensesByCurrency.HKD).toBe(3);
   });
 });

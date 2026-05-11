@@ -9,6 +9,7 @@ import {
   type FiscalYearId,
   fiscalYearIdToStartCalendarYear,
   sumHouseStatementLinesForFiscalYear,
+  sumHouseStatementLinesForUtcMonth,
 } from "../lib/fiscalYearFinance";
 import type { HouseKey } from "../lib/financeModel";
 import { MoneyAmount } from "../components/ui";
@@ -41,13 +42,13 @@ function FiscalBucketList({
   );
 }
 
-function HouseFiscalSummaryCard({
-  title,
+function HouseSummaryCard({
+  houseName,
   houseKey,
   fiscalYear,
   onFiscalYearChange,
 }: {
-  readonly title: string;
+  readonly houseName: string;
   readonly houseKey: HouseKey;
   readonly fiscalYear: FiscalYearId;
   readonly onFiscalYearChange: (id: FiscalYearId) => void;
@@ -63,18 +64,25 @@ function HouseFiscalSummaryCard({
     [house.lines, fiscalYear],
   );
 
+  const monthlySums = useMemo(
+    () => sumHouseStatementLinesForUtcMonth(house.lines, new Date()),
+    [house.lines],
+  );
+
   const fyLabel = formatFiscalYearIdLabel(fiscalYear);
 
   return (
     <div className="card h-100 shadow-sm">
       <div className="card-body d-flex flex-column">
-        <h2 className="h6 mb-3">{title}</h2>
+        <h2 className="h6 mb-3">
+          <strong>{houseName}</strong>
+        </h2>
         <div className="mb-3">
           <select
             className="form-select form-select-sm"
             value={fiscalYear}
             onChange={(e) => onFiscalYearChange(e.target.value as FiscalYearId)}
-            aria-label={`${title}: ${fyLabel}`}
+            aria-label={`${houseName}: ${fyLabel}`}
           >
             {FISCAL_YEAR_OPTIONS.map((opt) => (
               <option key={opt.id} value={opt.id}>
@@ -96,6 +104,18 @@ function HouseFiscalSummaryCard({
         <p className="text-muted small mb-0 mt-3">
           Totals use net amounts from house statement lines in this period.
         </p>
+        <hr className="my-3" />
+        <p className="small text-muted mb-2">Monthly income and expenses</p>
+        <dl className="row small mb-0">
+          <dt className="col-sm-4 text-muted">Income</dt>
+          <dd className="col-sm-8">
+            <FiscalBucketList buckets={monthlySums.incomeByCurrency} emptyLabel="—" />
+          </dd>
+          <dt className="col-sm-4 text-muted pt-2">Expenses</dt>
+          <dd className="col-sm-8 pt-2">
+            <FiscalBucketList buckets={monthlySums.expensesByCurrency} emptyLabel="—" />
+          </dd>
+        </dl>
       </div>
     </div>
   );
@@ -131,7 +151,7 @@ export function DashboardPage() {
         and records.
       </p>
 
-      <h2 className="h6 text-uppercase text-muted mt-4 mb-3">House fiscal summaries</h2>
+      <h2 className="h6 text-uppercase text-muted mt-4 mb-3">House summaries</h2>
       {financeQuery.isLoading ? (
         <p className="text-muted small mb-3">Loading finance data…</p>
       ) : financeQuery.isError ? (
@@ -141,16 +161,16 @@ export function DashboardPage() {
       ) : (
         <div className="row g-3 mb-4">
           <div className="col-md-6">
-            <HouseFiscalSummaryCard
-              title="32 Hillmarton"
+            <HouseSummaryCard
+              houseName="32 Hillmarton"
               houseKey="hillmarton"
               fiscalYear={hillmartonFy}
               onFiscalYearChange={setHillmartonFy}
             />
           </div>
           <div className="col-md-6">
-            <HouseFiscalSummaryCard
-              title="The Morrison"
+            <HouseSummaryCard
+              houseName="The Morrison"
               houseKey="morrison"
               fiscalYear={morrisonFy}
               onFiscalYearChange={setMorrisonFy}
