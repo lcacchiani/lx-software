@@ -726,6 +726,13 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     this.httpApi.addRoutes({
+      path: "/finance/investments",
+      methods: [apigwv2.HttpMethod.PUT],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
       path: "/finance/{house}",
       methods: [apigwv2.HttpMethod.PUT],
       integration,

@@ -30,12 +30,14 @@ from handler import (  # noqa: E402
     _groups_include_admin,
     _is_allowed_upload_content_type,
     _normalize_finance_payload,
+    _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
     _normalize_public_asset_key,
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _path_finance_parse_job,
     _sanitize_expense_income_allocation_percentages,
+    _sanitize_investment_records_list,
     _sanitize_ledger_records_list,
     _statement_basename_already_imported,
     _utc_iso_z,
@@ -263,6 +265,66 @@ class TestFinancePayload(unittest.TestCase):
         out = _normalize_finance_payload(body)
         self.assertNotIn("sourceAssetKey", out["lines"][0])
         self.assertNotIn("sourceAssetKeys", out["lines"][0])
+
+
+class TestInvestmentSheetPayload(unittest.TestCase):
+    def test_normalize_valid(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Liquid",
+                    "provider": "Broker A",
+                    "principalAmount": 10000.5,
+                    "currency": "USD",
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["category"], "ETF")
+        self.assertEqual(out[0]["assetType"], "Liquid")
+        self.assertEqual(out[0]["principalAmount"], 10000.5)
+
+    def test_sanitize_drops_unknown_category(self) -> None:
+        raw = [
+            {
+                "id": "a",
+                "category": "Stocks",
+                "assetType": "Liquid",
+                "provider": "X",
+                "principalAmount": 1,
+                "currency": "HKD",
+            },
+            {
+                "id": "b",
+                "category": "Crypto",
+                "assetType": "Fixed",
+                "provider": "Vault",
+                "principalAmount": 2,
+                "currency": "HKD",
+            },
+        ]
+        out = _sanitize_investment_records_list(raw)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["id"], "b")
+
+    def test_invalid_asset_type_rejected(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Cash",
+                    "provider": "Broker A",
+                    "principalAmount": 1,
+                    "currency": "USD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_investment_sheet_payload(body)
 
 
 class TestLedgerSheetPayload(unittest.TestCase):

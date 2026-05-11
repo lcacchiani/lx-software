@@ -51,6 +51,11 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
         "Education",
     }
 )
+INVESTMENT_RECORD_CATEGORIES = frozenset(
+    {"Real Estate", "Fixed Term Deposit", "ETF", "Crypto"}
+)
+INVESTMENT_ASSET_TYPES = frozenset({"Fixed", "Liquid"})
+MAX_INVESTMENT_PROVIDER_LEN = 500
 MAX_LEDGER_RECORDS = 2000
 LEDGER_RECORD_AMOUNT_PERIODS = frozenset({"month", "year"})
 # Asset uploads accept any image/* type plus statement PDFs.
@@ -758,6 +763,134 @@ def _normalize_ledger_sheet_payload(
                     raise ValueError(f"{body_key}[{i}].{fk} must be a boolean")
         out.append(rec)
     return out
+
+
+def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
+    """Best-effort coercion for GET responses (drops invalid rows)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        cat = row.get("category")
+        if cat not in INVESTMENT_RECORD_CATEGORIES:
+            continue
+        at = row.get("assetType")
+        if at not in INVESTMENT_ASSET_TYPES:
+            continue
+        prov = row.get("provider")
+        if not isinstance(prov, str) or not prov.strip():
+            continue
+        p = prov.strip()
+        if len(p) > MAX_INVESTMENT_PROVIDER_LEN:
+            p = p[:MAX_INVESTMENT_PROVIDER_LEN]
+        amt = row.get("principalAmount")
+        if isinstance(amt, Decimal):
+            amt_f = float(amt)
+        elif isinstance(amt, (int, float)) and not isinstance(amt, bool):
+            amt_f = float(amt)
+        elif isinstance(amt, str):
+            try:
+                amt_f = float(amt)
+            except ValueError:
+                continue
+        else:
+            continue
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            continue
+        cur = _coerce_finance_currency_value(
+            row.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "category": cat,
+                "assetType": at,
+                "provider": p,
+                "principalAmount": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get("investmentRecords")
+    if not isinstance(raw, list):
+        raise ValueError("investmentRecords must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(
+            f"At most {MAX_LEDGER_RECORDS} records allowed in investmentRecords"
+        )
+    allowed_cat = ", ".join(sorted(INVESTMENT_RECORD_CATEGORIES))
+    allowed_at = ", ".join(sorted(INVESTMENT_ASSET_TYPES))
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"investmentRecords[{i}] must be an object")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"investmentRecords[{i}].id is required")
+        cat = row.get("category")
+        if cat not in INVESTMENT_RECORD_CATEGORIES:
+            raise ValueError(
+                f"investmentRecords[{i}].category must be one of: {allowed_cat}"
+            )
+        at = row.get("assetType")
+        if at not in INVESTMENT_ASSET_TYPES:
+            raise ValueError(
+                f"investmentRecords[{i}].assetType must be one of: {allowed_at}"
+            )
+        prov = row.get("provider")
+        if not isinstance(prov, str) or not prov.strip():
+            raise ValueError(f"investmentRecords[{i}].provider is required")
+        if len(prov.strip()) > MAX_INVESTMENT_PROVIDER_LEN:
+            raise ValueError(f"investmentRecords[{i}].provider is too long")
+        amt = row.get("principalAmount")
+        if isinstance(amt, Decimal):
+            amt = float(amt)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            raise ValueError(
+                f"investmentRecords[{i}].principalAmount must be a number"
+            )
+        amt_f = float(amt)
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            raise ValueError(
+                f"investmentRecords[{i}].principalAmount out of range"
+            )
+        cur = _require_supported_currency(
+            row.get("currency", DEFAULT_FINANCE_CURRENCY),
+            f"investmentRecords[{i}].currency",
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "category": cat,
+                "assetType": at,
+                "provider": prov.strip(),
+                "principalAmount": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
+def _load_investment_records(table: Any) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key("investments"))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_investment_records_list(nested.get("records"))
 
 
 def _finance_ddb_key(house: str) -> dict[str, str]:
@@ -1685,6 +1818,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 ),
                 "expenseRecords": exp_rows,
                 "expenseIncomeAllocationPercents": exp_pct,
+                "investmentRecords": _load_investment_records(table),
             },
         )
 
@@ -1732,6 +1866,19 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 },
             )
         return _json_response(200, {body_key: normalized})
+
+    if method == "PUT" and path == "/finance/investments":
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_investment_sheet_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        doc = {"records": normalized}
+        ddb_item = {**_finance_sheet_ddb_key("investments"), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "investments", event)
+        return _json_response(200, {"investmentRecords": normalized})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"

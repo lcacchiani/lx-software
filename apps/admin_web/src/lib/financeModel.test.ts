@@ -5,10 +5,52 @@ import {
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
   ledgerMonthlyAmount,
   normalizeExpenseIncomeAllocationPercents,
+  normalizeInvestmentRecords,
   normalizeLedgerRecords,
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
 } from "./financeModel";
+
+describe("normalizeInvestmentRecords", () => {
+  it("keeps rows with allowed category and asset type", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 500000,
+        currency: "HKD",
+      },
+      {
+        id: "2",
+        category: "Bonds",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "HKD",
+      },
+    ];
+    const out = normalizeInvestmentRecords(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].category).toBe("Real Estate");
+    expect(out[0].principalAmount).toBe(500000);
+  });
+
+  it("drops invalid asset type", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Crypto",
+        assetType: "Volatile",
+        provider: "Ex",
+        principalAmount: 100,
+        currency: "USD",
+      },
+    ];
+    expect(normalizeInvestmentRecords(rows)).toHaveLength(0);
+  });
+});
 
 describe("normalizeLedgerRecords", () => {
   it("keeps rows whose category is allowed for that sheet", () => {
