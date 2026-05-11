@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import uuid
 from typing import Any
 from urllib.parse import parse_qs, quote
 
@@ -1348,17 +1349,37 @@ def _allocated_expense_ids_for_allocations(table: Any) -> frozenset[str]:
     return frozenset(ids)
 
 
+_CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX = "__custom__"
+
+
+def _is_custom_allocation_expense_id(eid: str) -> bool:
+    if not isinstance(eid, str) or not eid.strip():
+        return False
+    s = eid.strip()
+    if not s.startswith(_CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX):
+        return False
+    rest = s[len(_CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX) :].strip()
+    if len(rest) < 32:
+        return False
+    try:
+        uuid.UUID(rest)
+    except ValueError:
+        return False
+    return True
+
+
 def _sanitize_allocation_stored_list(raw: Any) -> list[dict[str, Any]]:
-    """Best-effort coercion for persisted allocation rows (expenseId + accumulatedAmount)."""
+    """Coerce persisted allocation rows (linked expense/derived or custom)."""
     if not isinstance(raw, list):
         return []
     out: list[dict[str, Any]] = []
     for row in raw:
         if not isinstance(row, dict):
             continue
-        eid = row.get("expenseId")
-        if not isinstance(eid, str) or not eid.strip():
+        eid_raw = row.get("expenseId")
+        if not isinstance(eid_raw, str) or not eid_raw.strip():
             continue
+        eid = eid_raw.strip()
         amt = row.get("accumulatedAmount")
         if isinstance(amt, Decimal):
             amt_f = float(amt)
@@ -1373,11 +1394,32 @@ def _sanitize_allocation_stored_list(raw: Any) -> list[dict[str, Any]]:
             continue
         if abs(amt_f) > 1e15:
             continue
-        rec: dict[str, Any] = {"expenseId": eid.strip(), "accumulatedAmount": amt_f}
         lu = row.get("lastUpdated")
-        if isinstance(lu, str) and _is_calendar_date_string(lu):
-            rec["lastUpdated"] = lu
-        out.append(rec)
+        last_u: str | None = lu if isinstance(lu, str) and _is_calendar_date_string(lu) else None
+        if _is_custom_allocation_expense_id(eid):
+            desc_raw = row.get("description")
+            if not isinstance(desc_raw, str) or not desc_raw.strip():
+                continue
+            d = desc_raw.strip()
+            if len(d) > MAX_FINANCE_DESCRIPTION:
+                d = d[:MAX_FINANCE_DESCRIPTION]
+            cur = _coerce_finance_currency_value(
+                row.get("currency"), DEFAULT_FINANCE_CURRENCY
+            )
+            rec: dict[str, Any] = {
+                "expenseId": eid,
+                "description": d,
+                "currency": cur,
+                "accumulatedAmount": amt_f,
+            }
+            if last_u is not None:
+                rec["lastUpdated"] = last_u
+            out.append(rec)
+        else:
+            rec = {"expenseId": eid, "accumulatedAmount": amt_f}
+            if last_u is not None:
+                rec["lastUpdated"] = last_u
+            out.append(rec)
     return out
 
 
@@ -1393,33 +1435,64 @@ def _load_allocation_stored_records(table: Any) -> list[dict[str, Any]]:
     return _sanitize_allocation_stored_list(nested.get("records"))
 
 
-def _merge_allocation_accumulated_last_updated(
+def _custom_allocation_row_signature(row: dict[str, Any]) -> tuple[str, str, float]:
+    desc = row.get("description")
+    d = desc.strip() if isinstance(desc, str) else ""
+    cur = str(row.get("currency") or DEFAULT_FINANCE_CURRENCY)
+    return (d, cur, float(row.get("accumulatedAmount", 0.0)))
+
+
+def _merge_allocation_stored_last_updated(
     normalized: list[dict[str, Any]],
     existing: list[dict[str, Any]],
     *,
     today_iso: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Set `lastUpdated` when accumulated amount changes; keep prior date when unchanged."""
+    """Persisted shape: linked rows have expenseId + accumulatedAmount; custom rows add description + currency."""
     today = today_iso or datetime.now(timezone.utc).date().isoformat()
     by_id = {r["expenseId"]: r for r in existing}
     out: list[dict[str, Any]] = []
     for row in normalized:
         eid = row["expenseId"]
         amt = float(row["accumulatedAmount"])
-        merged: dict[str, Any] = {"expenseId": eid, "accumulatedAmount": amt}
-        prev = by_id.get(eid)
-        if prev is None:
-            if amt != 0.0:
+        if _is_custom_allocation_expense_id(eid):
+            desc = str(row.get("description", "")).strip()
+            cur = _coerce_finance_currency_value(
+                row.get("currency"), DEFAULT_FINANCE_CURRENCY
+            )
+            merged: dict[str, Any] = {
+                "expenseId": eid,
+                "description": desc,
+                "currency": cur,
+                "accumulatedAmount": amt,
+            }
+            prev = by_id.get(eid)
+            if prev is None:
                 merged["lastUpdated"] = today
-        else:
-            prev_amt = float(prev.get("accumulatedAmount", 0.0))
-            if abs(prev_amt - amt) < 1e-9:
+            elif _custom_allocation_row_signature(prev) == _custom_allocation_row_signature(
+                merged
+            ):
                 lu = prev.get("lastUpdated")
                 if isinstance(lu, str) and _is_calendar_date_string(lu):
                     merged["lastUpdated"] = lu
             else:
                 merged["lastUpdated"] = today
-        out.append(merged)
+            out.append(merged)
+        else:
+            merged = {"expenseId": eid, "accumulatedAmount": amt}
+            prev = by_id.get(eid)
+            if prev is None:
+                if amt != 0.0:
+                    merged["lastUpdated"] = today
+            else:
+                prev_amt = float(prev.get("accumulatedAmount", 0.0))
+                if abs(prev_amt - amt) < 1e-9:
+                    lu = prev.get("lastUpdated")
+                    if isinstance(lu, str) and _is_calendar_date_string(lu):
+                        merged["lastUpdated"] = lu
+                else:
+                    merged["lastUpdated"] = today
+            out.append(merged)
     return out
 
 
@@ -1436,13 +1509,10 @@ def _normalize_allocations_sheet_payload(
         raise ValueError(
             f"At most {MAX_LEDGER_RECORDS} records allowed in allocationRecords"
         )
-    if not allocated_expense_ids and raw:
-        raise ValueError(
-            "allocationRecords must be empty when there are no allocation rows "
-            "(no tagged expenses and no derived allocation lines)"
-        )
     seen: set[str] = set()
-    out: list[dict[str, Any]] = []
+    linked_out: list[dict[str, Any]] = []
+    custom_out: list[dict[str, Any]] = []
+    linked_seen: set[str] = set()
     for i, row in enumerate(raw):
         if not isinstance(row, dict):
             raise ValueError(f"allocationRecords[{i}] must be an object")
@@ -1450,10 +1520,6 @@ def _normalize_allocations_sheet_payload(
         if not isinstance(eid_raw, str) or not eid_raw.strip():
             raise ValueError(f"allocationRecords[{i}].expenseId is required")
         eid = eid_raw.strip()
-        if eid not in allocated_expense_ids:
-            raise ValueError(
-                f"allocationRecords[{i}].expenseId is not an allocated or derived allocation line"
-            )
         if eid in seen:
             raise ValueError(f"allocationRecords[{i}].expenseId is duplicated")
         seen.add(eid)
@@ -1477,10 +1543,39 @@ def _normalize_allocations_sheet_payload(
             raise ValueError(
                 f"allocationRecords[{i}].accumulatedAmount out of range"
             )
-        out.append({"expenseId": eid, "accumulatedAmount": amt_f})
-    if seen != allocated_expense_ids:
-        missing = allocated_expense_ids - seen
-        extra = seen - allocated_expense_ids
+        if _is_custom_allocation_expense_id(eid):
+            desc = row.get("description")
+            if not isinstance(desc, str) or not desc.strip():
+                raise ValueError(
+                    f"allocationRecords[{i}].description is required for custom allocations"
+                )
+            d = desc.strip()
+            if len(d) > MAX_FINANCE_DESCRIPTION:
+                raise ValueError(
+                    f"allocationRecords[{i}].description is too long"
+                )
+            cur = _require_supported_currency(
+                row.get("currency", DEFAULT_FINANCE_CURRENCY),
+                f"allocationRecords[{i}].currency",
+            )
+            custom_out.append(
+                {
+                    "expenseId": eid,
+                    "description": d,
+                    "currency": cur,
+                    "accumulatedAmount": amt_f,
+                }
+            )
+        else:
+            if eid not in allocated_expense_ids:
+                raise ValueError(
+                    f"allocationRecords[{i}].expenseId is not an allocated or derived allocation line"
+                )
+            linked_seen.add(eid)
+            linked_out.append({"expenseId": eid, "accumulatedAmount": amt_f})
+    if linked_seen != allocated_expense_ids:
+        missing = allocated_expense_ids - linked_seen
+        extra = linked_seen - allocated_expense_ids
         parts: list[str] = []
         if missing:
             parts.append(f"missing expenseIds: {', '.join(sorted(missing))}")
@@ -1491,7 +1586,7 @@ def _normalize_allocations_sheet_payload(
             "and derived allocation line"
             + (f" ({'; '.join(parts)})" if parts else "")
         )
-    return out
+    return linked_out + custom_out
 
 
 def _build_allocation_records_for_response(
@@ -1500,11 +1595,11 @@ def _build_allocation_records_for_response(
     income_rows: list[dict[str, Any]],
     expense_allocation_percents: dict[str, float],
 ) -> list[dict[str, Any]]:
-    """Merge tagged expenses and derived allocation lines with persisted accumulated amounts."""
+    """Merge tagged expenses, derived lines, and custom allocation rows."""
     by_stored = {r["expenseId"]: r for r in stored}
     out: list[dict[str, Any]] = []
 
-    def append_allocation_row(er: dict[str, Any]) -> None:
+    def append_linked_allocation_row(er: dict[str, Any]) -> None:
         eid = str(er["id"])
         st = by_stored.get(eid, {})
         acc = float(st.get("accumulatedAmount", 0.0))
@@ -1516,6 +1611,7 @@ def _build_allocation_records_for_response(
             "monthlyAmount": _ledger_row_monthly_amount(er),
             "accumulatedAmount": acc,
             "currency": er["currency"],
+            "isCustomAllocation": False,
         }
         if last_u is not None:
             row_out["lastUpdated"] = last_u
@@ -1524,12 +1620,36 @@ def _build_allocation_records_for_response(
     for er in expense_rows:
         if not er.get("isAllocate"):
             continue
-        append_allocation_row(er)
+        append_linked_allocation_row(er)
     derived = _derived_expense_rows_from_tagged_income(
         income_rows, expense_allocation_percents
     )
     for er in derived:
-        append_allocation_row(er)
+        append_linked_allocation_row(er)
+    for st in stored:
+        eid = str(st.get("expenseId", ""))
+        if not _is_custom_allocation_expense_id(eid):
+            continue
+        desc = st.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            continue
+        cur = _coerce_finance_currency_value(
+            st.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        acc = float(st.get("accumulatedAmount", 0.0))
+        lu = st.get("lastUpdated")
+        last_u: str | None = lu if isinstance(lu, str) and _is_calendar_date_string(lu) else None
+        row_out: dict[str, Any] = {
+            "expenseId": eid,
+            "description": desc.strip(),
+            "monthlyAmount": 0.0,
+            "accumulatedAmount": acc,
+            "currency": cur,
+            "isCustomAllocation": True,
+        }
+        if last_u is not None:
+            row_out["lastUpdated"] = last_u
+        out.append(row_out)
     out.sort(key=lambda r: (str(r["description"]).lower(), str(r["expenseId"])))
     return out
 
@@ -2754,7 +2874,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except ValueError as exc:
             return _json_response(400, {"message": str(exc)})
         existing = _load_allocation_stored_records(table)
-        merged_stored = _merge_allocation_accumulated_last_updated(normalized, existing)
+        merged_stored = _merge_allocation_stored_last_updated(normalized, existing)
         doc = {"records": merged_stored}
         ddb_item = {**_finance_sheet_ddb_key("allocations"), **_to_ddb_nested(doc)}
         table.put_item(Item=ddb_item)

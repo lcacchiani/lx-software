@@ -173,13 +173,45 @@ export type FinancePensionRecord = {
 export type FinanceAllocationRecord = {
   readonly expenseId: string;
   readonly description: string;
-  /** Monthly equivalent of the expense amount (yearly amounts are ÷12). */
+  /** Monthly equivalent from the expense ledger; always 0 for custom allocations. */
   readonly monthlyAmount: number;
   readonly accumulatedAmount: number;
   readonly currency: string;
   /** UTC calendar date `YYYY-MM-DD` when accumulated amount last changed (set by admin API). */
   readonly lastUpdated?: string;
+  /** User-defined allocation line (editable description/currency; no monthly budget). */
+  readonly isCustomAllocation?: boolean;
 };
+
+/** Prefix for custom allocation row ids (aligned with admin Lambda). */
+export const CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX = "__custom__";
+
+export function newCustomAllocationExpenseId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return `${CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX}${crypto.randomUUID()}`;
+  }
+  return `${CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX}line-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+/** Shapes the PUT body: linked rows omit description/currency; custom rows include them. */
+export function allocationRecordsToApiPayload(
+  records: readonly FinanceAllocationRecord[],
+): unknown[] {
+  return records.map((r) => {
+    const isCustom =
+      r.isCustomAllocation === true ||
+      r.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
+    if (isCustom) {
+      return {
+        expenseId: r.expenseId,
+        description: r.description,
+        currency: r.currency,
+        accumulatedAmount: r.accumulatedAmount,
+      };
+    }
+    return { expenseId: r.expenseId, accumulatedAmount: r.accumulatedAmount };
+  });
+}
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
 
@@ -949,15 +981,23 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
     if (!expenseId || !description) {
       continue;
     }
+    const isCustomAllocation =
+      row.isCustomAllocation === true ||
+      expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
     const monthlyRaw = row.monthlyAmount;
-    const monthlyAmount =
-      typeof monthlyRaw === "number"
-        ? monthlyRaw
-        : typeof monthlyRaw === "string"
-          ? Number.parseFloat(monthlyRaw)
-          : Number.NaN;
-    if (!Number.isFinite(monthlyAmount) || Math.abs(monthlyAmount) > 1e15) {
-      continue;
+    let monthlyAmount: number;
+    if (isCustomAllocation) {
+      monthlyAmount = 0;
+    } else {
+      monthlyAmount =
+        typeof monthlyRaw === "number"
+          ? monthlyRaw
+          : typeof monthlyRaw === "string"
+            ? Number.parseFloat(monthlyRaw)
+            : Number.NaN;
+      if (!Number.isFinite(monthlyAmount) || Math.abs(monthlyAmount) > 1e15) {
+        continue;
+      }
     }
     const accRaw = row.accumulatedAmount;
     const accumulatedAmount =
@@ -978,6 +1018,7 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
       monthlyAmount,
       accumulatedAmount,
       currency,
+      ...(isCustomAllocation ? { isCustomAllocation: true as const } : {}),
     };
     out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
   }

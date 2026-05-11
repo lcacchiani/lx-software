@@ -6,6 +6,8 @@ import {
   investmentRecordFiatNotionalInQuoteCurrency,
   investmentDetailsDisplay,
   ledgerMonthlyAmount,
+  allocationRecordsToApiPayload,
+  normalizeAllocationRecords,
   normalizeExpenseIncomeAllocationPercents,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
@@ -840,6 +842,72 @@ describe("buildDerivedExpenseLedgerRowsFromTaggedIncome", () => {
     const unalloc = rows.find((r) => r.description.includes("no related property"));
     expect(unalloc?.category).toBe("Tax");
     expect(unalloc?.amount).toBeCloseTo(60, 10);
+  });
+});
+
+describe("allocationRecordsToApiPayload", () => {
+  it("sends description and currency only for custom allocations", () => {
+    const body = allocationRecordsToApiPayload([
+      {
+        expenseId: "e1",
+        description: "From expense",
+        monthlyAmount: 100,
+        accumulatedAmount: 5,
+        currency: "HKD",
+      },
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000001",
+        description: "Manual",
+        monthlyAmount: 0,
+        accumulatedAmount: 10,
+        currency: "USD",
+        isCustomAllocation: true,
+      },
+    ]);
+    expect(body).toEqual([
+      { expenseId: "e1", accumulatedAmount: 5 },
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000001",
+        description: "Manual",
+        currency: "USD",
+        accumulatedAmount: 10,
+      },
+    ]);
+  });
+
+  it("treats __custom__ id as custom even without flag", () => {
+    const body = allocationRecordsToApiPayload([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000099",
+        description: "Legacy",
+        monthlyAmount: 0,
+        accumulatedAmount: 3,
+        currency: "EUR",
+      },
+    ]);
+    expect(body).toEqual([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000099",
+        description: "Legacy",
+        currency: "EUR",
+        accumulatedAmount: 3,
+      },
+    ]);
+  });
+
+  it("normalizes custom allocation monthly to zero", () => {
+    const out = normalizeAllocationRecords([
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000002",
+        description: "X",
+        monthlyAmount: 99,
+        accumulatedAmount: 1,
+        currency: "HKD",
+        isCustomAllocation: true,
+      },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].monthlyAmount).toBe(0);
   });
 });
 

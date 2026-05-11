@@ -3,6 +3,7 @@
 import sys
 import types
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -32,7 +33,7 @@ from handler import (  # noqa: E402
     _is_allowed_upload_content_type,
     _build_allocation_records_for_response,
     _derived_expense_rows_from_tagged_income,
-    _merge_allocation_accumulated_last_updated,
+    _merge_allocation_stored_last_updated,
     _merge_investment_last_updated,
     _merge_pension_last_updated,
     _normalize_allocations_sheet_payload,
@@ -1044,16 +1045,63 @@ class TestLedgerSheetPayload(unittest.TestCase):
                 frozenset({"a"}),
             )
 
+    def test_normalize_allocations_custom_only(self) -> None:
+        eid = f"__custom__{uuid.uuid4()}"
+        body = {
+            "allocationRecords": [
+                {
+                    "expenseId": eid,
+                    "description": "Slush fund",
+                    "currency": "HKD",
+                    "accumulatedAmount": 50,
+                }
+            ]
+        }
+        out = _normalize_allocations_sheet_payload(body, frozenset())
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["description"], "Slush fund")
+        self.assertEqual(out[0]["currency"], "HKD")
+
+    def test_normalize_allocations_rejects_bad_custom_id(self) -> None:
+        body = {
+            "allocationRecords": [
+                {
+                    "expenseId": "__custom__not-a-uuid",
+                    "description": "x",
+                    "currency": "HKD",
+                    "accumulatedAmount": 1,
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_allocations_sheet_payload(body, frozenset())
+
+    def test_normalize_allocations_mixed_linked_and_custom(self) -> None:
+        eid = f"__custom__{uuid.uuid4()}"
+        body = {
+            "allocationRecords": [
+                {"expenseId": "a", "accumulatedAmount": 0},
+                {
+                    "expenseId": eid,
+                    "description": "Extra",
+                    "currency": "USD",
+                    "accumulatedAmount": 10,
+                },
+            ]
+        }
+        out = _normalize_allocations_sheet_payload(body, frozenset({"a"}))
+        self.assertEqual(len(out), 2)
+
     def test_merge_allocation_updates_last_updated_on_amount_change(self) -> None:
         existing = [{"expenseId": "a", "accumulatedAmount": 1.0, "lastUpdated": "2026-01-01"}]
         normalized = [{"expenseId": "a", "accumulatedAmount": 2.0}]
-        out = _merge_allocation_accumulated_last_updated(
+        out = _merge_allocation_stored_last_updated(
             normalized, existing, today_iso="2026-02-02"
         )
         self.assertEqual(out[0]["lastUpdated"], "2026-02-02")
 
     def test_merge_allocation_keeps_last_updated_when_amount_unchanged(self) -> None:
-        out = _merge_allocation_accumulated_last_updated(
+        out = _merge_allocation_stored_last_updated(
             [{"expenseId": "a", "accumulatedAmount": 2.0}],
             [{"expenseId": "a", "accumulatedAmount": 2.0, "lastUpdated": "2026-01-01"}],
             today_iso="2026-02-02",
