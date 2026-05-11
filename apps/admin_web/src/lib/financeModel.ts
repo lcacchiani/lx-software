@@ -199,6 +199,10 @@ const DERIVED_EXPENSE_FROM_TAGGED_INCOME_SPECS: readonly DerivedExpenseFromTagge
   },
 ];
 
+function isLedgerRelatedHouse(relatedHouse: HouseKey | undefined): relatedHouse is HouseKey {
+  return relatedHouse === "hillmarton" || relatedHouse === "morrison";
+}
+
 function sumMonthlyTaggedIncomeByHouseAndCurrency(
   incomeRecords: readonly FinanceLedgerRecord[],
   houseKey: HouseKey,
@@ -218,10 +222,46 @@ function sumMonthlyTaggedIncomeByHouseAndCurrency(
   return out;
 }
 
+/** Monthly income (any category) linked to a house — used to split unallocated derived expenses. */
+function sumMonthlyIncomeByHouseAndCurrency(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  houseKey: HouseKey,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of incomeRecords) {
+    if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) {
+      continue;
+    }
+    const c = r.currency;
+    out[c] = (out[c] ?? 0) + r.amount;
+  }
+  return out;
+}
+
+/** Tagged monthly income rows with no (or invalid) related property — still counts toward derived rows. */
+function sumMonthlyTaggedIncomeWithoutRelatedHouseByCurrency(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  flag: "isTax" | "isSaving" | "isInvestment",
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of incomeRecords) {
+    if (r.amountPeriod !== "month" || !r[flag]) {
+      continue;
+    }
+    if (isLedgerRelatedHouse(r.relatedHouse)) {
+      continue;
+    }
+    const c = r.currency;
+    out[c] = (out[c] ?? 0) + ledgerMonthlyAmount(r);
+  }
+  return out;
+}
+
 /**
  * Synthetic expense rows from allocation rates × monthly income flagged on the income sheet
  * (Tax / Investment / Saving), one row per property and currency where the tagged base is
- * positive and the rate is greater than zero.
+ * positive and the rate is greater than zero, plus rows for tagged income with no related
+ * property.
  */
 export function buildDerivedExpenseLedgerRowsFromTaggedIncome(
   incomeRecords: readonly FinanceLedgerRecord[],
@@ -264,6 +304,34 @@ export function buildDerivedExpenseLedgerRowsFromTaggedIncome(
       }
     }
   }
+  for (const spec of DERIVED_EXPENSE_FROM_TAGGED_INCOME_SPECS) {
+    const pct = percents[spec.percentKey];
+    if (pct <= 0) {
+      continue;
+    }
+    const byCcy = sumMonthlyTaggedIncomeWithoutRelatedHouseByCurrency(
+      incomeRecords,
+      spec.incomeFlag,
+    );
+    for (const [currency, base] of Object.entries(byCcy)) {
+      if (base <= 0) {
+        continue;
+      }
+      const amount = base * (pct / 100);
+      if (!Number.isFinite(amount) || amount === 0) {
+        continue;
+      }
+      out.push({
+        id: `__derived__${spec.idSegment}__unallocated__${currency}`,
+        category: spec.category,
+        description: `${spec.title} (no related property)`,
+        amount,
+        currency,
+        amountPeriod: "month",
+        isDerivedFromTaggedIncome: true,
+      });
+    }
+  }
   return out;
 }
 
@@ -287,6 +355,9 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
   const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
   const income: Record<string, number> = {};
   const expenses: Record<string, number> = {};
+
+  const incomeHiByCcy = sumMonthlyIncomeByHouseAndCurrency(incomeRecords, "hillmarton");
+  const incomeMoByCcy = sumMonthlyIncomeByHouseAndCurrency(incomeRecords, "morrison");
 
   for (const r of incomeRecords) {
     if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) continue;
@@ -319,9 +390,38 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
     }
   };
 
+  const addUnallocatedDerivedForFlag = (
+    flag: "isTax" | "isSaving" | "isInvestment",
+    pct: number,
+  ): void => {
+    if (pct <= 0) {
+      return;
+    }
+    const unallocByCcy = sumMonthlyTaggedIncomeWithoutRelatedHouseByCurrency(
+      incomeRecords,
+      flag,
+    );
+    for (const [c, base] of Object.entries(unallocByCcy)) {
+      if (base <= 0) {
+        continue;
+      }
+      const amt = base * (pct / 100);
+      const wHi = incomeHiByCcy[c] ?? 0;
+      const wMo = incomeMoByCcy[c] ?? 0;
+      const wSelf = houseKey === "hillmarton" ? wHi : wMo;
+      const wTot = wHi + wMo;
+      const share = wTot > 0 ? wSelf / wTot : 0.5;
+      expenses[c] = (expenses[c] ?? 0) + amt * share;
+    }
+  };
+
   addDerivedForFlag("isTax", alloc.taxOnIncomePercent);
   addDerivedForFlag("isInvestment", alloc.investmentOnIncomePercent);
   addDerivedForFlag("isSaving", alloc.savingOnIncomePercent);
+
+  addUnallocatedDerivedForFlag("isTax", alloc.taxOnIncomePercent);
+  addUnallocatedDerivedForFlag("isInvestment", alloc.investmentOnIncomePercent);
+  addUnallocatedDerivedForFlag("isSaving", alloc.savingOnIncomePercent);
 
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }
