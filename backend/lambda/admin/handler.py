@@ -1496,11 +1496,28 @@ def _sanitize_allocation_stored_list(raw: Any) -> list[dict[str, Any]]:
                 "currency": cur,
                 "accumulatedAmount": amt_f,
             }
+            if row.get("isIncome") is True:
+                rec["isIncome"] = True
+                aim = row.get("allocationIncomeMonthly")
+                aim_f: float | None = None
+                if isinstance(aim, Decimal):
+                    aim_f = float(aim)
+                elif isinstance(aim, (int, float)) and not isinstance(aim, bool):
+                    aim_f = float(aim)
+                elif isinstance(aim, str):
+                    try:
+                        aim_f = float(aim)
+                    except ValueError:
+                        aim_f = None
+                if aim_f is not None and aim_f == aim_f and abs(aim_f) <= 1e15:
+                    rec["allocationIncomeMonthly"] = aim_f
             if last_u is not None:
                 rec["lastUpdated"] = last_u
             out.append(rec)
         else:
             rec = {"expenseId": eid, "accumulatedAmount": amt_f}
+            if row.get("isIncome") is True:
+                rec["isIncome"] = True
             if last_u is not None:
                 rec["lastUpdated"] = last_u
             out.append(rec)
@@ -1519,11 +1536,24 @@ def _load_allocation_stored_records(table: Any) -> list[dict[str, Any]]:
     return _sanitize_allocation_stored_list(nested.get("records"))
 
 
-def _custom_allocation_row_signature(row: dict[str, Any]) -> tuple[str, str, float]:
+def _custom_allocation_row_signature(row: dict[str, Any]) -> tuple[Any, ...]:
     desc = row.get("description")
     d = desc.strip() if isinstance(desc, str) else ""
     cur = str(row.get("currency") or DEFAULT_FINANCE_CURRENCY)
-    return (d, cur, float(row.get("accumulatedAmount", 0.0)))
+    inc = row.get("isIncome") is True
+    aim: float | None = None
+    if inc:
+        raw = row.get("allocationIncomeMonthly")
+        if isinstance(raw, Decimal):
+            aim = float(raw)
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            aim = float(raw)
+        elif isinstance(raw, str):
+            try:
+                aim = float(raw)
+            except ValueError:
+                aim = None
+    return (d, cur, float(row.get("accumulatedAmount", 0.0)), inc, aim)
 
 
 def _merge_allocation_stored_last_updated(
@@ -1550,6 +1580,18 @@ def _merge_allocation_stored_last_updated(
                 "currency": cur,
                 "accumulatedAmount": amt,
             }
+            if row.get("isIncome") is True:
+                merged["isIncome"] = True
+                aim_raw = row.get("allocationIncomeMonthly")
+                if isinstance(aim_raw, Decimal):
+                    merged["allocationIncomeMonthly"] = float(aim_raw)
+                elif isinstance(aim_raw, (int, float)) and not isinstance(aim_raw, bool):
+                    merged["allocationIncomeMonthly"] = float(aim_raw)
+                elif isinstance(aim_raw, str):
+                    try:
+                        merged["allocationIncomeMonthly"] = float(aim_raw)
+                    except ValueError:
+                        pass
             prev = by_id.get(eid)
             if prev is None:
                 merged["lastUpdated"] = today
@@ -1564,13 +1606,19 @@ def _merge_allocation_stored_last_updated(
             out.append(merged)
         else:
             merged = {"expenseId": eid, "accumulatedAmount": amt}
+            if row.get("isIncome") is True:
+                merged["isIncome"] = True
             prev = by_id.get(eid)
+            prev_inc = prev.get("isIncome") is True if prev else False
+            new_inc = merged.get("isIncome") is True
             if prev is None:
-                if amt != 0.0:
+                if amt != 0.0 or new_inc:
                     merged["lastUpdated"] = today
             else:
                 prev_amt = float(prev.get("accumulatedAmount", 0.0))
-                if abs(prev_amt - amt) < 1e-9:
+                amt_same = abs(prev_amt - amt) < 1e-9
+                inc_same = prev_inc == new_inc
+                if amt_same and inc_same:
                     lu = prev.get("lastUpdated")
                     if isinstance(lu, str) and _is_calendar_date_string(lu):
                         merged["lastUpdated"] = lu
@@ -1642,21 +1690,51 @@ def _normalize_allocations_sheet_payload(
                 row.get("currency", DEFAULT_FINANCE_CURRENCY),
                 f"allocationRecords[{i}].currency",
             )
-            custom_out.append(
-                {
-                    "expenseId": eid,
-                    "description": d,
-                    "currency": cur,
-                    "accumulatedAmount": amt_f,
-                }
-            )
+            is_inc = row.get("isIncome") is True
+            rec_c: dict[str, Any] = {
+                "expenseId": eid,
+                "description": d,
+                "currency": cur,
+                "accumulatedAmount": amt_f,
+            }
+            if is_inc:
+                aim_raw = row.get("allocationIncomeMonthly")
+                if isinstance(aim_raw, Decimal):
+                    aim_f = float(aim_raw)
+                elif isinstance(aim_raw, (int, float)) and not isinstance(aim_raw, bool):
+                    aim_f = float(aim_raw)
+                elif isinstance(aim_raw, str):
+                    try:
+                        aim_f = float(aim_raw)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"allocationRecords[{i}].allocationIncomeMonthly must be a number"
+                        ) from exc
+                else:
+                    raise ValueError(
+                        f"allocationRecords[{i}].allocationIncomeMonthly is required when isIncome is true"
+                    )
+                if aim_f != aim_f or abs(aim_f) > 1e15:
+                    raise ValueError(
+                        f"allocationRecords[{i}].allocationIncomeMonthly out of range"
+                    )
+                if aim_f <= 0:
+                    raise ValueError(
+                        f"allocationRecords[{i}].allocationIncomeMonthly must be positive when isIncome is true"
+                    )
+                rec_c["isIncome"] = True
+                rec_c["allocationIncomeMonthly"] = aim_f
+            custom_out.append(rec_c)
         else:
             if eid not in allocated_expense_ids:
                 raise ValueError(
                     f"allocationRecords[{i}].expenseId is not an allocated or derived allocation line"
                 )
             linked_seen.add(eid)
-            linked_out.append({"expenseId": eid, "accumulatedAmount": amt_f})
+            rec_l: dict[str, Any] = {"expenseId": eid, "accumulatedAmount": amt_f}
+            if row.get("isIncome") is True:
+                rec_l["isIncome"] = True
+            linked_out.append(rec_l)
     if linked_seen != allocated_expense_ids:
         missing = allocated_expense_ids - linked_seen
         extra = linked_seen - allocated_expense_ids
@@ -1697,6 +1775,11 @@ def _build_allocation_records_for_response(
             "currency": er["currency"],
             "isCustomAllocation": False,
         }
+        rh = er.get("relatedHouse")
+        if rh in FINANCE_HOUSE_KEYS:
+            row_out["relatedHouse"] = rh
+        if st.get("isIncome") is True:
+            row_out["isIncome"] = True
         if last_u is not None:
             row_out["lastUpdated"] = last_u
         out.append(row_out)
@@ -1723,6 +1806,21 @@ def _build_allocation_records_for_response(
         acc = float(st.get("accumulatedAmount", 0.0))
         lu = st.get("lastUpdated")
         last_u: str | None = lu if isinstance(lu, str) and _is_calendar_date_string(lu) else None
+        is_inc = st.get("isIncome") is True
+        aim = 0.0
+        if is_inc:
+            raw_aim = st.get("allocationIncomeMonthly")
+            if isinstance(raw_aim, Decimal):
+                aim = float(raw_aim)
+            elif isinstance(raw_aim, (int, float)) and not isinstance(raw_aim, bool):
+                aim = float(raw_aim)
+            elif isinstance(raw_aim, str):
+                try:
+                    aim = float(raw_aim)
+                except ValueError:
+                    aim = 0.0
+            else:
+                aim = 0.0
         row_out: dict[str, Any] = {
             "expenseId": eid,
             "description": desc.strip(),
@@ -1731,6 +1829,9 @@ def _build_allocation_records_for_response(
             "currency": cur,
             "isCustomAllocation": True,
         }
+        if is_inc:
+            row_out["isIncome"] = True
+            row_out["allocationIncomeMonthly"] = aim
         if last_u is not None:
             row_out["lastUpdated"] = last_u
         out.append(row_out)

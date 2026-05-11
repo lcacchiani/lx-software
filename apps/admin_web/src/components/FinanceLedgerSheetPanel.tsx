@@ -12,10 +12,12 @@ import {
   newStatementLineId,
   type ExpenseIncomeAllocationPercents,
   type ExpenseLedgerFlagField,
+  type FinanceAllocationRecord,
   type FinanceLedgerAmountPeriod,
   type FinanceLedgerRecord,
   type HouseKey,
   type IncomeLedgerFlagField,
+  syntheticIncomeLedgerRowsFromAllocations,
 } from "../lib/financeModel";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
@@ -135,6 +137,8 @@ export type FinanceLedgerSheetPanelProps = {
   ) => void;
   /** Expenses sheet: income ledger rows used to compute derived expense amounts. */
   readonly incomeRecordsForDerivedExpenses?: readonly FinanceLedgerRecord[];
+  /** Income sheet: allocation rows tagged as income (synthetic income lines; not persisted on income). */
+  readonly allocationRecordsForSyntheticIncome?: readonly FinanceAllocationRecord[];
 };
 
 function incomeLedgerFlagLabels(
@@ -285,6 +289,7 @@ export function FinanceLedgerSheetPanel({
   expenseIncomeAllocationPercents,
   onPatchExpenseIncomeAllocationPercents,
   incomeRecordsForDerivedExpenses,
+  allocationRecordsForSyntheticIncome,
 }: FinanceLedgerSheetPanelProps) {
   const showRelatedHouseCol = Boolean(relatedHouseOptions?.length);
   const showIncomeFlagsCol = Boolean(incomeFlagFields?.length);
@@ -308,6 +313,12 @@ export function FinanceLedgerSheetPanel({
     );
 
   const tableSourceRecords = useMemo((): readonly FinanceLedgerRecord[] => {
+    if (sheetId === "income" && allocationRecordsForSyntheticIncome?.length) {
+      const synthetic = syntheticIncomeLedgerRowsFromAllocations(
+        allocationRecordsForSyntheticIncome,
+      );
+      return [...synthetic, ...records];
+    }
     if (
       sheetId !== "expenses" ||
       !expenseIncomeAllocationPercents ||
@@ -325,6 +336,7 @@ export function FinanceLedgerSheetPanel({
   }, [
     sheetId,
     records,
+    allocationRecordsForSyntheticIncome,
     expenseIncomeAllocationPercents,
     incomeRecordsForDerivedExpenses,
     relatedHouseOptions,
@@ -488,6 +500,7 @@ export function FinanceLedgerSheetPanel({
           const flagHay = incomeLedgerFlagLabels(r, incomeFlagFields).toLowerCase();
           const expenseFlagHay = expenseLedgerFlagLabels(r, expenseFlagFields).toLowerCase();
           const derivedAllocHay = r.isDerivedFromTaggedIncome ? "allocate" : "";
+          const derivedIncHay = r.isDerivedFromAllocation ? "income allocation" : "";
           const hay = [
             r.category,
             r.description,
@@ -498,6 +511,7 @@ export function FinanceLedgerSheetPanel({
             flagHay,
             expenseFlagHay,
             derivedAllocHay,
+            derivedIncHay,
           ]
             .join(" ")
             .toLowerCase();
@@ -584,7 +598,7 @@ export function FinanceLedgerSheetPanel({
   }
 
   function openEdit(row: FinanceLedgerRecord) {
-    if (row.isDerivedFromTaggedIncome) {
+    if (row.isDerivedFromTaggedIncome || row.isDerivedFromAllocation) {
       return;
     }
     setEditingId(row.id);
@@ -651,7 +665,7 @@ export function FinanceLedgerSheetPanel({
 
   function deleteRow(id: string) {
     const row = tableSourceRecords.find((r) => r.id === id);
-    if (row?.isDerivedFromTaggedIncome) {
+    if (row?.isDerivedFromTaggedIncome || row?.isDerivedFromAllocation) {
       return;
     }
     if (!window.confirm(deleteConfirmMessage)) return;
@@ -875,7 +889,11 @@ export function FinanceLedgerSheetPanel({
                 {showIncomeFlagsCol || showExpenseFlagsCol ? (
                   <td className="small text-muted">
                     {showIncomeFlagsCol ? (
-                      incomeLedgerFlagLabels(r, incomeFlagFields) || "—"
+                      r.isDerivedFromAllocation ? (
+                        "Income"
+                      ) : (
+                        incomeLedgerFlagLabels(r, incomeFlagFields) || "—"
+                      )
                     ) : r.isDerivedFromTaggedIncome ? (
                       "Allocate"
                     ) : (
@@ -901,6 +919,8 @@ export function FinanceLedgerSheetPanel({
                 <td className="small text-end">
                   {r.isDerivedFromTaggedIncome ? (
                     <span className="text-muted small">Derived</span>
+                  ) : r.isDerivedFromAllocation ? (
+                    <span className="text-muted small">Allocation</span>
                   ) : (
                     <>
                       <TableIconButton

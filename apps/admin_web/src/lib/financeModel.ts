@@ -178,7 +178,10 @@ export type FinancePensionRecord = {
 export type FinanceAllocationRecord = {
   readonly expenseId: string;
   readonly description: string;
-  /** Monthly amount from the expense ledger for linked rows (yearly ÷12); always 0 for custom allocations. */
+  /**
+   * Linked rows: monthly amount from the expense ledger (yearly ÷12).
+   * Custom rows: always 0 (use {@link allocationRecordIncomeMonthlyValue} when tagged as income).
+   */
   readonly monthlyAmount: number;
   readonly accumulatedAmount: number;
   readonly currency: string;
@@ -186,6 +189,15 @@ export type FinanceAllocationRecord = {
   readonly lastUpdated?: string;
   /** User-defined allocation line (editable description/currency; no monthly budget). */
   readonly isCustomAllocation?: boolean;
+  /**
+   * When true, a synthetic income line appears on the Income tab (and in general monthly totals).
+   * Custom rows require {@link allocationIncomeMonthly}; linked rows use {@link monthlyAmount}.
+   */
+  readonly isIncome?: boolean;
+  /** Custom allocations only: per-month income when `isIncome` (persisted by admin API). */
+  readonly allocationIncomeMonthly?: number;
+  /** Linked rows only: copied from the source expense when present. */
+  readonly relatedHouse?: HouseKey;
 };
 
 /** Prefix for custom allocation row ids (aligned with admin Lambda). */
@@ -207,15 +219,74 @@ export function allocationRecordsToApiPayload(
       r.isCustomAllocation === true ||
       r.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
     if (isCustom) {
-      return {
+      const body: Record<string, unknown> = {
         expenseId: r.expenseId,
         description: r.description,
         currency: r.currency,
         accumulatedAmount: r.accumulatedAmount,
       };
+      if (r.isIncome === true) {
+        body.isIncome = true;
+        const m = r.allocationIncomeMonthly;
+        if (typeof m === "number" && Number.isFinite(m)) {
+          body.allocationIncomeMonthly = m;
+        }
+      }
+      return body;
     }
-    return { expenseId: r.expenseId, accumulatedAmount: r.accumulatedAmount };
+    const linked: Record<string, unknown> = {
+      expenseId: r.expenseId,
+      accumulatedAmount: r.accumulatedAmount,
+    };
+    if (r.isIncome === true) {
+      linked.isIncome = true;
+    }
+    return linked;
   });
+}
+
+/** Monthly income implied by an allocation tagged {@link FinanceAllocationRecord.isIncome}. */
+export function allocationRecordIncomeMonthlyValue(record: FinanceAllocationRecord): number {
+  if (record.isIncome !== true) {
+    return 0;
+  }
+  const isCustom =
+    record.isCustomAllocation === true ||
+    record.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
+  if (isCustom) {
+    const v = record.allocationIncomeMonthly;
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  }
+  const v = record.monthlyAmount;
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Synthetic income ledger rows for the Income tab (not persisted on the income sheet;
+ * edit tags and amounts on the Allocations tab).
+ */
+export function syntheticIncomeLedgerRowsFromAllocations(
+  allocationRecords: readonly FinanceAllocationRecord[],
+): FinanceLedgerRecord[] {
+  const category = INCOME_CATEGORIES[0];
+  const out: FinanceLedgerRecord[] = [];
+  for (const a of allocationRecords) {
+    const monthly = allocationRecordIncomeMonthlyValue(a);
+    if (!Number.isFinite(monthly) || monthly <= 0) {
+      continue;
+    }
+    out.push({
+      id: `__alloc_income__${a.expenseId}`,
+      category,
+      description: `${a.description} (allocation income)`,
+      amount: monthly,
+      currency: a.currency,
+      amountPeriod: "month",
+      ...(a.relatedHouse ? { relatedHouse: a.relatedHouse } : {}),
+      isDerivedFromAllocation: true,
+    });
+  }
+  return out;
 }
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
@@ -245,6 +316,11 @@ export type FinanceLedgerRecord = {
    * (never persisted on the expense sheet).
    */
   readonly isDerivedFromTaggedIncome?: boolean;
+  /**
+   * Client-only: income rows mirrored from allocations tagged as income (never persisted on the
+   * income sheet).
+   */
+  readonly isDerivedFromAllocation?: boolean;
 };
 
 /** Monthly equivalent for ledger tables that show a per-month column. */
@@ -458,12 +534,16 @@ export type FinanceLedgerAmountBuckets = {
  * Derived tax / investment / saving expense slices apply only to monthly income
  * rows **linked to this house**. Tagged income with no related property is not
  * attributed here (see synthetic rows from {@link buildDerivedExpenseLedgerRowsFromTaggedIncome}).
+ *
+ * When `allocationRecords` is set, allocations tagged as income with the same
+ * `relatedHouse` add to the income side (mirrors the Income tab).
  */
 export function sumMonthlyFinanceLedgerAmountsByHouse(
   incomeRecords: readonly FinanceLedgerRecord[],
   expenseRecords: readonly FinanceLedgerRecord[],
   houseKey: HouseKey,
   expenseAllocationPercents?: ExpenseIncomeAllocationPercents,
+  allocationRecords?: readonly FinanceAllocationRecord[],
 ): FinanceLedgerAmountBuckets {
   const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
   const income: Record<string, number> = {};
@@ -473,6 +553,15 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
     if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) continue;
     const c = r.currency;
     income[c] = (income[c] ?? 0) + r.amount;
+  }
+  if (allocationRecords?.length) {
+    for (const a of allocationRecords) {
+      if (a.relatedHouse !== houseKey) continue;
+      const m = allocationRecordIncomeMonthlyValue(a);
+      if (!Number.isFinite(m) || m <= 0) continue;
+      const c = a.currency;
+      income[c] = (income[c] ?? 0) + m;
+    }
   }
   for (const r of expenseRecords) {
     if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) continue;
@@ -513,12 +602,16 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
  * monthly income with no related property (same rules as the expenses sheet).
  * Yearly (`amountPeriod: year`) rows are excluded, matching
  * {@link sumMonthlyFinanceLedgerAmountsByHouse}.
+ *
+ * When `allocationRecords` is set, allocations tagged as income with no related
+ * property add to the general income side.
  */
 export function sumMonthlyFinanceLedgerAmountsGeneral(
   incomeRecords: readonly FinanceLedgerRecord[],
   expenseRecords: readonly FinanceLedgerRecord[],
   expenseAllocationPercents: ExpenseIncomeAllocationPercents,
   relatedHouseOptions: ReadonlyArray<{ readonly value: HouseKey; readonly label: string }>,
+  allocationRecords?: readonly FinanceAllocationRecord[],
 ): FinanceLedgerAmountBuckets {
   const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
   const income: Record<string, number> = {};
@@ -530,6 +623,15 @@ export function sumMonthlyFinanceLedgerAmountsGeneral(
     }
     const c = r.currency;
     income[c] = (income[c] ?? 0) + r.amount;
+  }
+  if (allocationRecords?.length) {
+    for (const a of allocationRecords) {
+      if (isLedgerRelatedHouse(a.relatedHouse)) continue;
+      const m = allocationRecordIncomeMonthlyValue(a);
+      if (!Number.isFinite(m) || m <= 0) continue;
+      const c = a.currency;
+      income[c] = (income[c] ?? 0) + m;
+    }
   }
   for (const r of expenseRecords) {
     if (r.amountPeriod !== "month" || isLedgerRelatedHouse(r.relatedHouse)) {
@@ -1105,6 +1207,10 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
     const isCustomAllocation =
       row.isCustomAllocation === true ||
       expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
+    const isIncome = row.isIncome === true;
+    const rhRaw = row.relatedHouse;
+    const relatedHouse: HouseKey | undefined =
+      rhRaw === "hillmarton" || rhRaw === "morrison" ? rhRaw : undefined;
     const monthlyRaw = row.monthlyAmount;
     let monthlyAmount: number;
     if (isCustomAllocation) {
@@ -1133,6 +1239,21 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
     const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
+
+    let allocationIncomeMonthly: number | undefined;
+    if (isCustomAllocation && isIncome) {
+      const incRaw = row.allocationIncomeMonthly ?? row.monthlyAmount;
+      const inc =
+        typeof incRaw === "number"
+          ? incRaw
+          : typeof incRaw === "string"
+            ? Number.parseFloat(incRaw)
+            : Number.NaN;
+      if (Number.isFinite(inc) && Math.abs(inc) <= 1e15) {
+        allocationIncomeMonthly = inc;
+      }
+    }
+
     const rec: FinanceAllocationRecord = {
       expenseId,
       description,
@@ -1140,6 +1261,9 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
       accumulatedAmount,
       currency,
       ...(isCustomAllocation ? { isCustomAllocation: true as const } : {}),
+      ...(isIncome ? { isIncome: true as const } : {}),
+      ...(allocationIncomeMonthly !== undefined ? { allocationIncomeMonthly } : {}),
+      ...(relatedHouse ? { relatedHouse } : {}),
     };
     out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
   }
