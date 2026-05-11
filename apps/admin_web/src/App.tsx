@@ -7,6 +7,7 @@ import { AssetsPage } from "./pages/AssetsPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FinancePage } from "./pages/FinancePage";
+import { SiuTinDeiPage } from "./pages/SiuTinDeiPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,6 +30,7 @@ export function App() {
                 <Route index element={<DashboardPage />} />
                 <Route path="assets" element={<AssetsPage />} />
                 <Route path="finance" element={<FinancePage />} />
+                <Route path="siu-tin-dei" element={<SiuTinDeiPage />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
