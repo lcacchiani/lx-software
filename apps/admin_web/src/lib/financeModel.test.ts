@@ -93,9 +93,31 @@ describe("normalizeLedgerRecords", () => {
         relatedHouse: "hillmarton",
       },
     ];
-    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES);
+    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES, { includeIncomeFlags: true });
     expect(out[0].relatedHouse).toBe("hillmarton");
     expect(out[0].amountPeriod).toBe("month");
+    expect(out[0].isTax).toBe(false);
+    expect(out[0].isSaving).toBe(false);
+    expect(out[0].isInvestment).toBe(false);
+  });
+
+  it("normalizes income classification flags when enabled", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Salary",
+        description: "Pay",
+        amount: 100,
+        currency: "HKD",
+        isTax: true,
+        isSaving: 1,
+        isInvestment: false,
+      },
+    ];
+    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES, { includeIncomeFlags: true });
+    expect(out[0].isTax).toBe(true);
+    expect(out[0].isSaving).toBe(false);
+    expect(out[0].isInvestment).toBe(false);
   });
 
   it("drops invalid relatedHouse values", () => {
@@ -151,6 +173,7 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
         },
       ],
       INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
     );
     const expenses = normalizeLedgerRecords(
       [
@@ -193,6 +216,7 @@ describe("sumMonthlyFinanceLedgerAmountsByHouse", () => {
         },
       ],
       INCOME_CATEGORIES,
+      { includeIncomeFlags: true },
     );
     const r = sumMonthlyFinanceLedgerAmountsByHouse(income, [], "hillmarton");
     expect(r.incomeByCurrency.HKD).toBe(100);

@@ -66,6 +66,18 @@ export type HouseFinanceData = {
 /** Income tab categories (aligned with admin Lambda validation). */
 export const INCOME_CATEGORIES = ["Salary", "Rent"] as const;
 
+/** Optional income ledger toggles (stored on income sheet rows only). */
+export type IncomeLedgerFlagField = "isTax" | "isSaving" | "isInvestment";
+
+export const INCOME_LEDGER_FLAG_FIELDS: ReadonlyArray<{
+  readonly field: IncomeLedgerFlagField;
+  readonly label: string;
+}> = [
+  { field: "isTax", label: "Tax" },
+  { field: "isSaving", label: "Saving" },
+  { field: "isInvestment", label: "Investment" },
+];
+
 /** Expense tab categories (aligned with admin Lambda validation). */
 export const EXPENSE_CATEGORIES = [
   "Utility",
@@ -77,6 +89,8 @@ export const EXPENSE_CATEGORIES = [
   "Retirement",
   "Tax",
   "Amenities",
+  "Helper",
+  "Education",
 ] as const;
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
@@ -97,6 +111,10 @@ export type FinanceLedgerRecord = {
   readonly amountPeriod: FinanceLedgerAmountPeriod;
   /** Optional link to a house (same keys as finance house tabs). */
   readonly relatedHouse?: HouseKey;
+  /** Income ledger only: classification toggles (stored by admin API for income sheet). */
+  readonly isTax?: boolean;
+  readonly isSaving?: boolean;
+  readonly isInvestment?: boolean;
 };
 
 /** Monthly equivalent for ledger tables that show a per-month column. */
@@ -168,15 +186,27 @@ function categorySet(categories: readonly string[]): Set<string> {
   return new Set(categories);
 }
 
+export type NormalizeLedgerRecordsOptions = {
+  /** When true, reads `isTax` / `isSaving` / `isInvestment` for income rows (defaults false). */
+  readonly includeIncomeFlags?: boolean;
+};
+
+function parseIncomeLedgerFlag(row: Record<string, unknown>, key: string): boolean {
+  const v = row[key];
+  return v === true;
+}
+
 /** Coerces API payloads into ledger rows; drops entries with unknown categories. */
 export function normalizeLedgerRecords(
   input: unknown,
   allowedCategories: readonly string[],
+  options?: NormalizeLedgerRecordsOptions,
 ): FinanceLedgerRecord[] {
   if (!Array.isArray(input)) {
     return [];
   }
   const allowed = categorySet(allowedCategories);
+  const includeIncomeFlags = options?.includeIncomeFlags === true;
   const out: FinanceLedgerRecord[] = [];
   for (const raw of input) {
     if (!raw || typeof raw !== "object") continue;
@@ -205,7 +235,7 @@ export function normalizeLedgerRecords(
     const rh = row.relatedHouse;
     const relatedHouse: HouseKey | undefined =
       rh === "hillmarton" || rh === "morrison" ? rh : undefined;
-    out.push({
+    const base: FinanceLedgerRecord = {
       id,
       category,
       description,
@@ -213,7 +243,17 @@ export function normalizeLedgerRecords(
       currency,
       amountPeriod,
       ...(relatedHouse ? { relatedHouse } : {}),
-    });
+    };
+    if (includeIncomeFlags) {
+      out.push({
+        ...base,
+        isTax: parseIncomeLedgerFlag(row, "isTax"),
+        isSaving: parseIncomeLedgerFlag(row, "isSaving"),
+        isInvestment: parseIncomeLedgerFlag(row, "isInvestment"),
+      });
+    } else {
+      out.push(base);
+    }
   }
   return out;
 }

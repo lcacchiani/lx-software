@@ -28,7 +28,9 @@ async function fetchFinance(): Promise<FinancePersistedState> {
   return {
     hillmarton: normalizeHouseFinanceData(raw.hillmarton),
     morrison: normalizeHouseFinanceData(raw.morrison),
-    incomeRecords: normalizeLedgerRecords(rawObj.incomeRecords, INCOME_CATEGORIES),
+    incomeRecords: normalizeLedgerRecords(rawObj.incomeRecords, INCOME_CATEGORIES, {
+      includeIncomeFlags: true,
+    }),
     expenseRecords: normalizeLedgerRecords(rawObj.expenseRecords, EXPENSE_CATEGORIES),
   };
 }
@@ -84,7 +86,13 @@ export function useFinance() {
       );
       const list = res[bodyKey];
       const categories = sheet === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
-      return { sheet, bodyKey, records: normalizeLedgerRecords(list, categories) };
+      return {
+        sheet,
+        bodyKey,
+        records: normalizeLedgerRecords(list, categories, {
+          includeIncomeFlags: sheet === "income",
+        }),
+      };
     },
     onSuccess: ({ bodyKey, records }) => {
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
