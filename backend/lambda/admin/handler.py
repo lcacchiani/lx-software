@@ -805,16 +805,19 @@ def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
         cur = _coerce_finance_currency_value(
             row.get("currency"), DEFAULT_FINANCE_CURRENCY
         )
-        out.append(
-            {
-                "id": rid.strip(),
-                "category": cat,
-                "assetType": at,
-                "provider": p,
-                "principalAmount": amt_f,
-                "currency": cur,
-            }
-        )
+        item: dict[str, Any] = {
+            "id": rid.strip(),
+            "category": cat,
+            "assetType": at,
+            "provider": p,
+            "principalAmount": amt_f,
+            "currency": cur,
+        }
+        if cat == "Real Estate":
+            rh = row.get("relatedHouse")
+            if rh in FINANCE_HOUSE_KEYS:
+                item["relatedHouse"] = rh
+        out.append(item)
     return out
 
 
@@ -868,16 +871,30 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
             row.get("currency", DEFAULT_FINANCE_CURRENCY),
             f"investmentRecords[{i}].currency",
         )
-        out.append(
-            {
-                "id": rid.strip(),
-                "category": cat,
-                "assetType": at,
-                "provider": prov.strip(),
-                "principalAmount": amt_f,
-                "currency": cur,
-            }
-        )
+        rec: dict[str, Any] = {
+            "id": rid.strip(),
+            "category": cat,
+            "assetType": at,
+            "provider": prov.strip(),
+            "principalAmount": amt_f,
+            "currency": cur,
+        }
+        house_raw = row.get("relatedHouse")
+        if cat == "Real Estate":
+            if house_raw is not None and str(house_raw).strip() != "":
+                if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
+                    houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
+                    raise ValueError(
+                        f"investmentRecords[{i}].relatedHouse must be one of: {houses}"
+                    )
+                rec["relatedHouse"] = house_raw
+        else:
+            if house_raw is not None and str(house_raw).strip() != "":
+                raise ValueError(
+                    f"investmentRecords[{i}].relatedHouse is only allowed when "
+                    "category is Real Estate"
+                )
+        out.append(rec)
     return out
 
 

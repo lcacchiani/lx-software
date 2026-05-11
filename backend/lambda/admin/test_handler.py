@@ -326,6 +326,40 @@ class TestInvestmentSheetPayload(unittest.TestCase):
         with self.assertRaises(ValueError):
             _normalize_investment_sheet_payload(body)
 
+    def test_real_estate_related_house(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "Real Estate",
+                    "assetType": "Fixed",
+                    "provider": "Bank",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "relatedHouse": "hillmarton",
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertEqual(out[0]["relatedHouse"], "hillmarton")
+
+    def test_related_house_rejected_for_non_real_estate(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Liquid",
+                    "provider": "X",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "relatedHouse": "morrison",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_investment_sheet_payload(body)
+
 
 class TestLedgerSheetPayload(unittest.TestCase):
     def test_income_valid(self) -> None:

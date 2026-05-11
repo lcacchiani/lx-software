@@ -137,6 +137,7 @@ export function FinancePage() {
               <FinanceInvestmentsPanel
                 records={data.investmentRecords}
                 onPatch={patchInvestmentRecords}
+                relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
               />
             ) : null}
             {tab === "income" ? (

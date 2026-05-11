@@ -50,6 +50,33 @@ describe("normalizeInvestmentRecords", () => {
     ];
     expect(normalizeInvestmentRecords(rows)).toHaveLength(0);
   });
+
+  it("keeps relatedHouse only for Real Estate with a valid house key", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 100,
+        currency: "HKD",
+        relatedHouse: "morrison",
+      },
+      {
+        id: "2",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "X",
+        principalAmount: 1,
+        currency: "HKD",
+        relatedHouse: "morrison",
+      },
+    ];
+    const out = normalizeInvestmentRecords(rows);
+    expect(out).toHaveLength(2);
+    expect(out[0].relatedHouse).toBe("morrison");
+    expect(out[1].relatedHouse).toBeUndefined();
+  });
 });
 
 describe("normalizeLedgerRecords", () => {

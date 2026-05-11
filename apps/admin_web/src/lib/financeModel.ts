@@ -107,6 +107,8 @@ export const INVESTMENT_ASSET_TYPES = ["Fixed", "Liquid"] as const;
 
 export type InvestmentAssetType = (typeof INVESTMENT_ASSET_TYPES)[number];
 
+export type HouseKey = "hillmarton" | "morrison";
+
 /** One row in the Investments sheet (DynamoDB finance sheet `investments`). */
 export type FinanceInvestmentRecord = {
   readonly id: string;
@@ -116,11 +118,11 @@ export type FinanceInvestmentRecord = {
   readonly provider: string;
   /** Amount originally invested (principal). */
   readonly principalAmount: number;
+  /** When category is Real Estate, optional link to a house (same keys as finance house tabs). */
+  readonly relatedHouse?: HouseKey;
 };
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
-
-export type HouseKey = "hillmarton" | "morrison";
 
 /** Whether `amount` is entered per calendar month or per year (yearly rows are shown ÷12 in monthly views). */
 export type FinanceLedgerAmountPeriod = "month" | "year";
@@ -441,6 +443,9 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
     }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    const rh = row.relatedHouse;
+    const relatedHouse: HouseKey | undefined =
+      category === "Real Estate" && (rh === "hillmarton" || rh === "morrison") ? rh : undefined;
     out.push({
       id,
       category,
@@ -448,6 +453,7 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       assetType,
       provider,
       principalAmount,
+      ...(relatedHouse ? { relatedHouse } : {}),
     });
   }
   return out;
