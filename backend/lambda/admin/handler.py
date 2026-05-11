@@ -11,7 +11,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs, quote
@@ -1035,6 +1035,51 @@ def _sanitize_savings_records_list(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _is_calendar_date_string(s: str) -> bool:
+    """True if `s` is a valid ISO calendar date `YYYY-MM-DD`."""
+    if not isinstance(s, str) or len(s) != 10:
+        return False
+    try:
+        date.fromisoformat(s)
+    except ValueError:
+        return False
+    return True
+
+
+def _pension_row_signature(row: dict[str, Any]) -> tuple[str, str, float, str]:
+    return (
+        row["fund"],
+        row["description"],
+        float(row["value"]),
+        row["currency"],
+    )
+
+
+def _merge_pension_last_updated(
+    normalized: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+    *,
+    today_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """Attach `lastUpdated` (UTC calendar date) per row: new/changed rows get today; unchanged keep prior."""
+    today = today_iso or datetime.now(timezone.utc).date().isoformat()
+    by_id = {r["id"]: r for r in existing}
+    out: list[dict[str, Any]] = []
+    for row in normalized:
+        merged = dict(row)
+        prev = by_id.get(merged["id"])
+        if prev is None:
+            merged["lastUpdated"] = today
+        elif _pension_row_signature(prev) == _pension_row_signature(merged):
+            lu = prev.get("lastUpdated")
+            if isinstance(lu, str) and _is_calendar_date_string(lu):
+                merged["lastUpdated"] = lu
+        else:
+            merged["lastUpdated"] = today
+        out.append(merged)
+    return out
+
+
 def _sanitize_pension_records_list(raw: Any) -> list[dict[str, Any]]:
     """Best-effort coercion for GET responses (drops invalid rows)."""
     if not isinstance(raw, list):
@@ -1075,15 +1120,17 @@ def _sanitize_pension_records_list(raw: Any) -> list[dict[str, Any]]:
             d = desc_raw.strip()
             if len(d) > MAX_FINANCE_DESCRIPTION:
                 d = d[:MAX_FINANCE_DESCRIPTION]
-        out.append(
-            {
-                "id": rid.strip(),
-                "fund": f,
-                "description": d,
-                "value": amt_f,
-                "currency": cur,
-            }
-        )
+        entry: dict[str, Any] = {
+            "id": rid.strip(),
+            "fund": f,
+            "description": d,
+            "value": amt_f,
+            "currency": cur,
+        }
+        lu_raw = row.get("lastUpdated")
+        if isinstance(lu_raw, str) and _is_calendar_date_string(lu_raw.strip()):
+            entry["lastUpdated"] = lu_raw.strip()
+        out.append(entry)
     return out
 
 
@@ -2219,11 +2266,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except ValueError as exc:
             return _json_response(400, {"message": str(exc)})
         table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        doc = {"records": normalized}
+        existing = _load_pension_records(table)
+        merged = _merge_pension_last_updated(normalized, existing)
+        doc = {"records": merged}
         ddb_item = {**_finance_sheet_ddb_key("pension"), **_to_ddb_nested(doc)}
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", "pension", event)
-        return _json_response(200, {"pensionRecords": normalized})
+        return _json_response(200, {"pensionRecords": merged})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"

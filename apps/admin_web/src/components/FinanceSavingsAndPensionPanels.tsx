@@ -4,6 +4,7 @@ import {
   GLOBAL_DEFAULT_CURRENCY,
   type CurrencyCode,
 } from "../lib/currencies";
+import { formatDateUtc } from "../lib/formatDisplay";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   MAX_PENSION_DESCRIPTION_LEN,
@@ -25,6 +26,13 @@ import {
 function parseAmount(raw: string): number | null {
   const n = Number.parseFloat(raw.trim());
   return Number.isFinite(n) ? n : null;
+}
+
+function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
+  if (!lastUpdated) {
+    return "—";
+  }
+  return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
 type SimpleSortKey = "label" | "amt" | "ccy";
@@ -251,10 +259,16 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       className: "small",
     };
 
+    const lastUpdatedCol: AdminDataTableColumn = {
+      key: "lastUpdated",
+      header: <span className="small fw-semibold">Last Update</span>,
+      className: "small text-nowrap",
+    };
+
     if (variant === "pension") {
       return columnOrder === "valueFirst"
-        ? [labelCol, descCol, valueCol, ccyCol, opsCol]
-        : [labelCol, descCol, ccyCol, valueCol, opsCol];
+        ? [labelCol, descCol, valueCol, ccyCol, lastUpdatedCol, opsCol]
+        : [labelCol, descCol, ccyCol, valueCol, lastUpdatedCol, opsCol];
     }
     return columnOrder === "valueFirst"
       ? [labelCol, valueCol, ccyCol, opsCol]
@@ -307,7 +321,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const list = !q
       ? [...recs]
       : recs.filter((r) => {
-          const hay = [r.fund, r.description, r.currency, String(r.value)]
+          const hay = [r.fund, r.description, r.currency, String(r.value), r.lastUpdated ?? ""]
             .join(" ")
             .toLowerCase();
           return hay.includes(q);
@@ -564,6 +578,12 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 variant === "pension" ? (
                   <td className="small">{(r as FinancePensionRecord).description}</td>
                 ) : null;
+              const lastUpdatedCellPension =
+                variant === "pension" ? (
+                  <td className="small text-nowrap">
+                    {pensionLastUpdatedDisplay((r as FinancePensionRecord).lastUpdated)}
+                  </td>
+                ) : null;
               const cellsValueFirst = (
                 <>
                   <td className="small">{label}</td>
@@ -572,6 +592,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
                   </td>
                   <td className="small">{r.currency}</td>
+                  {lastUpdatedCellPension}
                 </>
               );
               const cellsCurrencyFirst = (
@@ -582,6 +603,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                   <td className="small text-end">
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
                   </td>
+                  {lastUpdatedCellPension}
                 </>
               );
               return (
@@ -660,6 +682,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                   </td>
                 </>
               )}
+              {variant === "pension" ? <td className="small" /> : null}
               <td className="small text-muted fw-normal text-end">
                 {fxError ? (
                   <span className="text-danger">

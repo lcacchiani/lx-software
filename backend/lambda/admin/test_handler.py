@@ -29,6 +29,7 @@ from handler import (  # noqa: E402
     INCOME_RECORD_CATEGORIES,
     _groups_include_admin,
     _is_allowed_upload_content_type,
+    _merge_pension_last_updated,
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
@@ -486,6 +487,119 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             _normalize_pension_sheet_payload(body)
+
+    def test_pension_sanitize_keeps_last_updated(self) -> None:
+        raw = [
+            {
+                "id": "p1",
+                "fund": "Plan",
+                "description": "x",
+                "value": 1,
+                "currency": "HKD",
+                "lastUpdated": "2024-06-15",
+            }
+        ]
+        out = _sanitize_pension_records_list(raw)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["lastUpdated"], "2024-06-15")
+
+    def test_pension_sanitize_drops_invalid_last_updated(self) -> None:
+        raw = [
+            {
+                "id": "p1",
+                "fund": "Plan",
+                "description": "",
+                "value": 1,
+                "currency": "HKD",
+                "lastUpdated": "not-a-date",
+            }
+        ]
+        out = _sanitize_pension_records_list(raw)
+        self.assertEqual(len(out), 1)
+        self.assertNotIn("lastUpdated", out[0])
+
+
+class TestMergePensionLastUpdated(unittest.TestCase):
+    def test_new_id_gets_today(self) -> None:
+        normalized = [
+            {
+                "id": "n1",
+                "fund": "F",
+                "description": "",
+                "value": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        out = _merge_pension_last_updated(normalized, [], today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_unchanged_preserves_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "p1",
+                "fund": "F",
+                "description": "d",
+                "value": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "p1",
+                "fund": "F",
+                "description": "d",
+                "value": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_pension_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2025-03-01")
+
+    def test_unchanged_legacy_omits_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "p1",
+                "fund": "F",
+                "description": "",
+                "value": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "p1",
+                "fund": "F",
+                "description": "",
+                "value": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        out = _merge_pension_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertNotIn("lastUpdated", out[0])
+
+    def test_changed_row_gets_today(self) -> None:
+        normalized = [
+            {
+                "id": "p1",
+                "fund": "F",
+                "description": "new",
+                "value": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "p1",
+                "fund": "F",
+                "description": "old",
+                "value": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_pension_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
 
 
 class TestLoadInvestmentRecords(unittest.TestCase):
