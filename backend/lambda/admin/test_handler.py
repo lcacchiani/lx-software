@@ -469,6 +469,57 @@ class TestInvestmentSheetPayload(unittest.TestCase):
         with self.assertRaises(ValueError):
             _normalize_investment_sheet_payload(body)
 
+    def test_real_estate_current_value_persisted(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "Real Estate",
+                    "assetType": "Fixed",
+                    "provider": "B",
+                    "principalAmount": 100,
+                    "currency": "HKD",
+                    "currentValue": 2_000_000,
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertEqual(out[0]["currentValue"], 2_000_000.0)
+
+    def test_real_estate_ignores_unit(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "Real Estate",
+                    "assetType": "Fixed",
+                    "provider": "B",
+                    "principalAmount": 100,
+                    "currency": "HKD",
+                    "unit": 3,
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertNotIn("unit", out[0])
+
+    def test_current_value_rejected_for_etf(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Liquid",
+                    "provider": "X",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "currentValue": 5,
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_investment_sheet_payload(body)
+
 
 class TestMergeInvestmentLastUpdated(unittest.TestCase):
     def test_new_id_gets_today(self) -> None:
