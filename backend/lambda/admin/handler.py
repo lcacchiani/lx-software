@@ -174,6 +174,59 @@ def _asset_download_presigned_response(
     return _json_response(200, {"url": url, "expiresIn": 300})
 
 
+def _asset_delete_response(
+    event: dict[str, Any],
+    user_sub: str | None,
+    raw_key: Any,
+) -> dict[str, Any]:
+    """Remove a confirmed asset object from S3 and delete its META row.
+
+    Same key rules and confirmation requirement as download URLs: only
+    ``uploads/*`` or validated ``inbound/*`` keys with an existing ``ASSET#``
+    META record may be deleted.
+    """
+    norm = _normalize_public_asset_key(raw_key)
+    if norm is None:
+        return _json_response(400, {"message": "key is required"})
+    table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    ddb_key = {"pk": f"ASSET#{norm}", "sk": "META"}
+    meta = table.get_item(Key=ddb_key)
+    if "Item" not in meta:
+        _log_event(
+            "warning",
+            tag="asset_delete_rejected",
+            reason="not_confirmed",
+            sub=user_sub,
+            key=norm[:512],
+            request_id=_request_id(event),
+        )
+        return _json_response(404, {"message": "Asset not found"})
+    bucket = os.environ["ASSETS_BUCKET_NAME"]
+    try:
+        _s3.delete_object(Bucket=bucket, Key=norm)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        _log_event(
+            "warning",
+            tag="asset_delete_s3_error",
+            sub=user_sub,
+            key=norm[:512],
+            s3_error_code=code,
+            request_id=_request_id(event),
+        )
+        raise
+    table.delete_item(Key=ddb_key)
+    _log_event(
+        "info",
+        tag="asset_delete_ok",
+        sub=user_sub,
+        key=norm[:512],
+        request_id=_request_id(event),
+    )
+    _audit(user_sub, "ASSET_DELETE", norm, event)
+    return _json_response(200, {"ok": True, "key": norm})
+
+
 def _json_response(
     status_code: int, payload: dict[str, Any] | list[Any] | str
 ) -> dict[str, Any]:
@@ -1411,6 +1464,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if method == "POST" and path == "/assets/download-url":
         body = _parse_json_body(event)
         return _asset_download_presigned_response(event, user_sub, body.get("key"))
+
+    if method == "POST" and path == "/assets/delete":
+        body = _parse_json_body(event)
+        return _asset_delete_response(event, user_sub, body.get("key"))
 
     if method == "GET" and path == "/records":
         qs = event.get("rawQueryString") or ""

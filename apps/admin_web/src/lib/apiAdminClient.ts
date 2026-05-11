@@ -89,3 +89,11 @@ export async function fetchAssetDownloadUrl(key: string): Promise<string> {
   });
   return data.url;
 }
+
+/** Deletes a confirmed asset from S3 and removes its DynamoDB META row. */
+export async function deleteAdminAsset(key: string): Promise<void> {
+  await adminFetchJson<{ ok: boolean }>("/assets/delete", {
+    method: "POST",
+    body: JSON.stringify({ key }),
+  });
+}
