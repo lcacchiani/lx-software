@@ -29,6 +29,7 @@ from handler import (  # noqa: E402
     INCOME_RECORD_CATEGORIES,
     _groups_include_admin,
     _is_allowed_upload_content_type,
+    _merge_investment_last_updated,
     _merge_pension_last_updated,
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
@@ -433,6 +434,125 @@ class TestInvestmentSheetPayload(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             _normalize_investment_sheet_payload(body)
+
+    def test_unit_optional_and_persisted(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Liquid",
+                    "provider": "X",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "unit": 42.5,
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertEqual(out[0]["unit"], 42.5)
+
+    def test_invalid_unit_rejected(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Liquid",
+                    "provider": "X",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "unit": "x",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_investment_sheet_payload(body)
+
+
+class TestMergeInvestmentLastUpdated(unittest.TestCase):
+    def test_new_id_gets_today(self) -> None:
+        normalized = [
+            {
+                "id": "n1",
+                "category": "ETF",
+                "assetType": "Liquid",
+                "provider": "P",
+                "principalAmount": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        out = _merge_investment_last_updated(normalized, [], today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_unchanged_preserves_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "i1",
+                "category": "ETF",
+                "assetType": "Liquid",
+                "provider": "P",
+                "principalAmount": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                **normalized[0],
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_investment_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2025-03-01")
+
+    def test_changed_row_gets_today(self) -> None:
+        normalized = [
+            {
+                "id": "i1",
+                "category": "ETF",
+                "assetType": "Liquid",
+                "provider": "P",
+                "principalAmount": 2.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "i1",
+                "category": "ETF",
+                "assetType": "Liquid",
+                "provider": "P",
+                "principalAmount": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_investment_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_unchanged_legacy_omits_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "i1",
+                "category": "ETF",
+                "assetType": "Liquid",
+                "provider": "P",
+                "principalAmount": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "i1",
+                "category": "ETF",
+                "assetType": "Liquid",
+                "provider": "P",
+                "principalAmount": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        out = _merge_investment_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertNotIn("lastUpdated", out[0])
 
 
 class TestSavingsPensionSheetPayload(unittest.TestCase):

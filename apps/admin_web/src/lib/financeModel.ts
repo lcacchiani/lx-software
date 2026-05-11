@@ -123,12 +123,16 @@ export type FinanceInvestmentRecord = {
   readonly provider: string;
   /** Amount originally invested (principal). */
   readonly principalAmount: number;
+  /** Optional quantity (e.g. shares, coins, lots). */
+  readonly unit?: number;
   /** When category is Real Estate, optional link to a house (same keys as finance house tabs). */
   readonly relatedHouse?: HouseKey;
   /** When category is ETF, optional ticker symbol or name. */
   readonly ticker?: string;
   /** When category is Crypto, optional asset name (e.g. coin); UI label “Crypto currency”. */
   readonly cryptoCurrency?: string;
+  /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
+  readonly lastUpdated?: string;
 };
 
 /** One row in the Savings sheet (DynamoDB finance sheet `savings`). */
@@ -676,6 +680,23 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       category === "Crypto"
         ? trimInvestmentDetailString(row.cryptoCurrency, INVESTMENT_CRYPTO_CURRENCY_MAX_LEN)
         : undefined;
+    const unitRaw = row.unit;
+    let unit: number | undefined;
+    if (unitRaw === undefined || unitRaw === null || unitRaw === "") {
+      unit = undefined;
+    } else {
+      const n =
+        typeof unitRaw === "number"
+          ? unitRaw
+          : typeof unitRaw === "string"
+            ? Number.parseFloat(unitRaw)
+            : Number.NaN;
+      if (!Number.isFinite(n) || Math.abs(n) > 1e15) {
+        continue;
+      }
+      unit = n;
+    }
+    const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
     out.push({
       id,
       category,
@@ -683,9 +704,11 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       assetType,
       provider,
       principalAmount,
+      ...(unit !== undefined ? { unit } : {}),
       ...(relatedHouse ? { relatedHouse } : {}),
       ...(ticker ? { ticker } : {}),
       ...(cryptoCurrency ? { cryptoCurrency } : {}),
+      ...(lastUpdated !== undefined ? { lastUpdated } : {}),
     });
   }
   return out;
@@ -722,7 +745,8 @@ export function normalizeSavingsRecords(input: unknown): FinanceSavingsRecord[] 
   return out;
 }
 
-function parsePensionLastUpdatedCalendar(raw: unknown): string | undefined {
+/** Valid `YYYY-MM-DD` calendar date in UTC (used for pension and investment `lastUpdated`). */
+export function parseOptionalFinanceCalendarDateUtc(raw: unknown): string | undefined {
   if (typeof raw !== "string") {
     return undefined;
   }
@@ -770,7 +794,7 @@ export function normalizePensionRecords(input: unknown): FinancePensionRecord[] 
     if (description.length > MAX_PENSION_DESCRIPTION_LEN) {
       description = description.slice(0, MAX_PENSION_DESCRIPTION_LEN);
     }
-    const lastUpdated = parsePensionLastUpdatedCalendar(row.lastUpdated);
+    const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
     const rec: FinancePensionRecord = { id, fund, description, value, currency };
     out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
   }

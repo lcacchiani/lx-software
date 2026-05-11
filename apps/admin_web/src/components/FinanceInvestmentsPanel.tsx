@@ -18,6 +18,7 @@ import {
   type InvestmentCategory,
 } from "../lib/financeModel";
 import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
+import { formatDateUtc } from "../lib/formatDisplay";
 import {
   AdminDataTable,
   AdminDataTableEmptyRow,
@@ -33,7 +34,30 @@ function parseAmount(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-type InvSortKey = "cat" | "details" | "atype" | "prov" | "amt" | "ccy";
+function parseOptionalUnit(raw: string): number | undefined | null {
+  const t = raw.trim();
+  if (!t) {
+    return undefined;
+  }
+  const n = Number.parseFloat(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function investmentLastUpdatedDisplay(lastUpdated: string | undefined): string {
+  if (!lastUpdated) {
+    return "—";
+  }
+  return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
+}
+
+function formatUnitCell(unit: number | undefined): string {
+  if (unit === undefined) {
+    return "—";
+  }
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 8 }).format(unit);
+}
+
+type InvSortKey = "cat" | "details" | "atype" | "prov" | "amt" | "ccy" | "unit" | "lastUpd";
 
 function compareInv(
   a: FinanceInvestmentRecord,
@@ -70,6 +94,26 @@ function compareInv(
     case "ccy":
       cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
       break;
+    case "unit": {
+      const ua = a.unit;
+      const ub = b.unit;
+      if (ua === undefined && ub === undefined) {
+        cmp = 0;
+      } else if (ua === undefined) {
+        cmp = 1;
+      } else if (ub === undefined) {
+        cmp = -1;
+      } else {
+        cmp = ua === ub ? 0 : ua < ub ? -1 : 1;
+      }
+      break;
+    }
+    case "lastUpd": {
+      const sa = a.lastUpdated ?? "";
+      const sb = b.lastUpdated ?? "";
+      cmp = sa.localeCompare(sb, undefined, { sensitivity: "base" });
+      break;
+    }
     default:
       break;
   }
@@ -123,6 +167,7 @@ type FormState = {
   provider: string;
   principal: string;
   currency: string;
+  unit: string;
   relatedHouse: HouseKey | "";
   ticker: string;
   cryptoCurrency: string;
@@ -161,6 +206,7 @@ export function FinanceInvestmentsPanel({
     provider: "",
     principal: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
+    unit: "",
     relatedHouse: "",
     ticker: "",
     cryptoCurrency: "",
@@ -275,6 +321,34 @@ export function FinanceInvestmentsPanel({
         thAriaSort: thAria("ccy"),
       },
       {
+        key: "unit",
+        header: (
+          <SortHeader
+            label="Unit"
+            isActive={sortKey === "unit"}
+            direction={dirFor("unit")}
+            onClick={() => onSort("unit")}
+            align="end"
+          />
+        ),
+        className: "small text-end",
+        headerClassName: "small text-end",
+        thAriaSort: thAria("unit"),
+      },
+      {
+        key: "lastUpd",
+        header: (
+          <SortHeader
+            label="Last Update"
+            isActive={sortKey === "lastUpd"}
+            direction={dirFor("lastUpd")}
+            onClick={() => onSort("lastUpd")}
+          />
+        ),
+        className: "small text-nowrap",
+        thAriaSort: thAria("lastUpd"),
+      },
+      {
         key: "ops",
         header: <span className="visually-hidden">Operations</span>,
         className: "text-end text-nowrap",
@@ -307,6 +381,8 @@ export function FinanceInvestmentsPanel({
             r.provider,
             r.currency,
             String(r.principalAmount),
+            r.unit !== undefined ? String(r.unit) : "",
+            r.lastUpdated ?? "",
             detailsHay,
             r.relatedHouse ?? "",
             r.ticker ?? "",
@@ -383,6 +459,7 @@ export function FinanceInvestmentsPanel({
       provider: row.provider,
       principal: String(row.principalAmount),
       currency: row.currency,
+      unit: row.unit !== undefined ? String(row.unit) : "",
       relatedHouse:
         row.category === "Real Estate" &&
         (row.relatedHouse === "hillmarton" || row.relatedHouse === "morrison")
@@ -404,6 +481,11 @@ export function FinanceInvestmentsPanel({
       setFormError("Principal must be a valid number.");
       return;
     }
+    const unitParsed = parseOptionalUnit(form.unit);
+    if (unitParsed === null) {
+      setFormError("Unit must be a valid number.");
+      return;
+    }
     if (!INVESTMENT_CATEGORIES.includes(form.category)) {
       setFormError("Pick a valid category.");
       return;
@@ -422,6 +504,7 @@ export function FinanceInvestmentsPanel({
       provider: form.provider.trim(),
       principalAmount,
       currency,
+      ...(unitParsed !== undefined ? { unit: unitParsed } : {}),
       ...(form.category === "Real Estate" &&
       (form.relatedHouse === "hillmarton" || form.relatedHouse === "morrison")
         ? { relatedHouse: form.relatedHouse }
@@ -470,7 +553,7 @@ export function FinanceInvestmentsPanel({
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-md-3">
+            <div className="col-12 col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-cat`}>
                 Category
               </label>
@@ -496,7 +579,56 @@ export function FinanceInvestmentsPanel({
                 ))}
               </select>
             </div>
-            <div className="col-md-2">
+            {(form.category === "Real Estate" && hasHouseOptions) ||
+            form.category === "ETF" ||
+            form.category === "Crypto" ? (
+              <div className="col-12 col-md-2">
+                <label className="form-label small" htmlFor={`${sheetId}-details`}>
+                  Details
+                </label>
+                {form.category === "Real Estate" ? (
+                  <select
+                    id={`${sheetId}-details`}
+                    className="form-select form-select-sm"
+                    value={form.relatedHouse}
+                    onChange={(ev) =>
+                      setForm((f) => ({
+                        ...f,
+                        relatedHouse: ev.target.value as HouseKey | "",
+                      }))
+                    }
+                  >
+                    <option value="">— None —</option>
+                    {relatedHouseOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : form.category === "ETF" ? (
+                  <input
+                    id={`${sheetId}-details`}
+                    type="text"
+                    className="form-control form-control-sm"
+                    maxLength={INVESTMENT_TICKER_MAX_LEN}
+                    value={form.ticker}
+                    onChange={(ev) => setForm((f) => ({ ...f, ticker: ev.target.value }))}
+                  />
+                ) : (
+                  <input
+                    id={`${sheetId}-details`}
+                    type="text"
+                    className="form-control form-control-sm"
+                    maxLength={INVESTMENT_CRYPTO_CURRENCY_MAX_LEN}
+                    value={form.cryptoCurrency}
+                    onChange={(ev) =>
+                      setForm((f) => ({ ...f, cryptoCurrency: ev.target.value }))
+                    }
+                  />
+                )}
+              </div>
+            ) : null}
+            <div className="col-12 col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-atype`}>
                 Asset type
               </label>
@@ -515,7 +647,20 @@ export function FinanceInvestmentsPanel({
                 ))}
               </select>
             </div>
-            <div className="col-md-2">
+            <div className="col-12 col-md-2">
+              <label className="form-label small" htmlFor={`${sheetId}-prov`}>
+                Provider
+              </label>
+              <input
+                id={`${sheetId}-prov`}
+                type="text"
+                className="form-control form-control-sm"
+                required
+                value={form.provider}
+                onChange={(ev) => setForm((f) => ({ ...f, provider: ev.target.value }))}
+              />
+            </div>
+            <div className="col-12 col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-principal`}>
                 Principal
               </label>
@@ -529,7 +674,7 @@ export function FinanceInvestmentsPanel({
                 onChange={(ev) => setForm((f) => ({ ...f, principal: ev.target.value }))}
               />
             </div>
-            <div className="col-md-2">
+            <div className="col-12 col-md-2">
               <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                 Currency
               </label>
@@ -539,83 +684,20 @@ export function FinanceInvestmentsPanel({
                 onChange={(code) => setForm((f) => ({ ...f, currency: code }))}
               />
             </div>
-            <div className="col-md-3">
-              <label className="form-label small" htmlFor={`${sheetId}-prov`}>
-                Provider
+            <div className="col-12 col-md-2">
+              <label className="form-label small" htmlFor={`${sheetId}-unit`}>
+                Unit
               </label>
               <input
-                id={`${sheetId}-prov`}
-                type="text"
+                id={`${sheetId}-unit`}
+                type="number"
+                step="any"
                 className="form-control form-control-sm"
-                required
-                value={form.provider}
-                onChange={(ev) => setForm((f) => ({ ...f, provider: ev.target.value }))}
+                value={form.unit}
+                onChange={(ev) => setForm((f) => ({ ...f, unit: ev.target.value }))}
               />
             </div>
           </div>
-          {form.category === "Real Estate" && hasHouseOptions ? (
-            <div className="row g-3 mt-0">
-              <div className="col-md-4">
-                <label className="form-label small" htmlFor={`${sheetId}-house`}>
-                  Property <span className="text-muted fw-normal">(optional)</span>
-                </label>
-                <select
-                  id={`${sheetId}-house`}
-                  className="form-select form-select-sm"
-                  value={form.relatedHouse}
-                  onChange={(ev) =>
-                    setForm((f) => ({
-                      ...f,
-                      relatedHouse: ev.target.value as HouseKey | "",
-                    }))
-                  }
-                >
-                  <option value="">— None —</option>
-                  {relatedHouseOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ) : null}
-          {form.category === "ETF" ? (
-            <div className="row g-3 mt-0">
-              <div className="col-md-4">
-                <label className="form-label small" htmlFor={`${sheetId}-ticker`}>
-                  Ticker
-                </label>
-                <input
-                  id={`${sheetId}-ticker`}
-                  type="text"
-                  className="form-control form-control-sm"
-                  maxLength={INVESTMENT_TICKER_MAX_LEN}
-                  value={form.ticker}
-                  onChange={(ev) => setForm((f) => ({ ...f, ticker: ev.target.value }))}
-                />
-              </div>
-            </div>
-          ) : null}
-          {form.category === "Crypto" ? (
-            <div className="row g-3 mt-0">
-              <div className="col-md-4">
-                <label className="form-label small" htmlFor={`${sheetId}-crypto-ccy`}>
-                  Crypto Currency
-                </label>
-                <input
-                  id={`${sheetId}-crypto-ccy`}
-                  type="text"
-                  className="form-control form-control-sm"
-                  maxLength={INVESTMENT_CRYPTO_CURRENCY_MAX_LEN}
-                  value={form.cryptoCurrency}
-                  onChange={(ev) =>
-                    setForm((f) => ({ ...f, cryptoCurrency: ev.target.value }))
-                  }
-                />
-              </div>
-            </div>
-          ) : null}
         </form>
       </AdminEditorSection>
 
@@ -640,6 +722,8 @@ export function FinanceInvestmentsPanel({
                   <MoneyAmount amount={r.principalAmount} currency={r.currency} amountOnly />
                 </td>
                 <td className="small">{r.currency}</td>
+                <td className="small text-end text-muted">{formatUnitCell(r.unit)}</td>
+                <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
@@ -701,6 +785,8 @@ export function FinanceInvestmentsPanel({
                   disabled={fxLoading}
                 />
               </td>
+              <td className="small" />
+              <td className="small" />
               <td className="small text-end" />
             </tr>
           ) : null}
