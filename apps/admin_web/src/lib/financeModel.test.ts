@@ -3,12 +3,14 @@ import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
+  investmentDetailsDisplay,
   ledgerMonthlyAmount,
   normalizeExpenseIncomeAllocationPercents,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
+  type HouseKey,
 } from "./financeModel";
 
 describe("normalizeInvestmentRecords", () => {
@@ -76,6 +78,97 @@ describe("normalizeInvestmentRecords", () => {
     expect(out).toHaveLength(2);
     expect(out[0].relatedHouse).toBe("morrison");
     expect(out[1].relatedHouse).toBeUndefined();
+  });
+
+  it("keeps ticker only for ETF and cryptoCurrency only for Crypto", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "ETF",
+        assetType: "Liquid",
+        provider: "Broker",
+        principalAmount: 10,
+        currency: "USD",
+        ticker: "VWRA",
+      },
+      {
+        id: "2",
+        category: "Crypto",
+        assetType: "Liquid",
+        provider: "Ex",
+        principalAmount: 1,
+        currency: "USD",
+        cryptoCurrency: "BTC",
+      },
+      {
+        id: "3",
+        category: "Real Estate",
+        assetType: "Fixed",
+        provider: "Bank",
+        principalAmount: 1,
+        currency: "HKD",
+        ticker: "IGNORE",
+      },
+    ];
+    const out = normalizeInvestmentRecords(rows);
+    expect(out[0].ticker).toBe("VWRA");
+    expect(out[1].cryptoCurrency).toBe("BTC");
+    expect(out[2].ticker).toBeUndefined();
+  });
+});
+
+describe("investmentDetailsDisplay", () => {
+  const labels = new Map<HouseKey, string>([
+    ["hillmarton", "H1"],
+    ["morrison", "M1"],
+  ]);
+
+  it("shows house label for Real Estate", () => {
+    expect(
+      investmentDetailsDisplay(
+        {
+          id: "1",
+          category: "Real Estate",
+          assetType: "Fixed",
+          provider: "B",
+          principalAmount: 1,
+          currency: "HKD",
+          relatedHouse: "morrison",
+        },
+        labels,
+      ),
+    ).toBe("M1");
+  });
+
+  it("shows ticker for ETF and crypto label for Crypto", () => {
+    expect(
+      investmentDetailsDisplay(
+        {
+          id: "1",
+          category: "ETF",
+          assetType: "Liquid",
+          provider: "B",
+          principalAmount: 1,
+          currency: "USD",
+          ticker: "VXUS",
+        },
+        labels,
+      ),
+    ).toBe("VXUS");
+    expect(
+      investmentDetailsDisplay(
+        {
+          id: "2",
+          category: "Crypto",
+          assetType: "Liquid",
+          provider: "B",
+          principalAmount: 1,
+          currency: "USD",
+          cryptoCurrency: "ETH",
+        },
+        labels,
+      ),
+    ).toBe("ETH");
   });
 });
 

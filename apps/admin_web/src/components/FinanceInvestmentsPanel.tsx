@@ -8,6 +8,9 @@ import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   INVESTMENT_ASSET_TYPES,
   INVESTMENT_CATEGORIES,
+  INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
+  INVESTMENT_TICKER_MAX_LEN,
+  investmentDetailsDisplay,
   newStatementLineId,
   type FinanceInvestmentRecord,
   type HouseKey,
@@ -30,24 +33,14 @@ function parseAmount(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-type InvSortKey = "cat" | "house" | "atype" | "prov" | "amt" | "ccy";
-
-function relatedHouseCellLabel(
-  record: FinanceInvestmentRecord,
-  labelByValue: ReadonlyMap<HouseKey, string>,
-): string {
-  if (record.category !== "Real Estate" || !record.relatedHouse) {
-    return "";
-  }
-  return labelByValue.get(record.relatedHouse) ?? record.relatedHouse;
-}
+type InvSortKey = "cat" | "details" | "atype" | "prov" | "amt" | "ccy";
 
 function compareInv(
   a: FinanceInvestmentRecord,
   b: FinanceInvestmentRecord,
   sortKey: InvSortKey,
   sortDir: "asc" | "desc",
-  labelByValue: ReadonlyMap<HouseKey, string>,
+  houseLabelByValue: ReadonlyMap<HouseKey, string>,
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
   let cmp = 0;
@@ -55,9 +48,9 @@ function compareInv(
     case "cat":
       cmp = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
       break;
-    case "house":
-      cmp = relatedHouseCellLabel(a, labelByValue).localeCompare(
-        relatedHouseCellLabel(b, labelByValue),
+    case "details":
+      cmp = investmentDetailsDisplay(a, houseLabelByValue).localeCompare(
+        investmentDetailsDisplay(b, houseLabelByValue),
         undefined,
         { sensitivity: "base" },
       );
@@ -131,6 +124,8 @@ type FormState = {
   principal: string;
   currency: string;
   relatedHouse: HouseKey | "";
+  ticker: string;
+  cryptoCurrency: string;
 };
 
 export type FinanceInvestmentsPanelProps = {
@@ -151,7 +146,7 @@ export function FinanceInvestmentsPanel({
 }: FinanceInvestmentsPanelProps) {
   const sheetId = "investments";
   const defaultCategory = INVESTMENT_CATEGORIES[0];
-  const showHouseColumn = relatedHouseOptions.length > 0;
+  const hasHouseOptions = relatedHouseOptions.length > 0;
   const relatedHouseLabelByValue = useMemo(() => {
     const m = new Map<HouseKey, string>();
     for (const o of relatedHouseOptions) {
@@ -167,6 +162,8 @@ export function FinanceInvestmentsPanel({
     principal: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
     relatedHouse: "",
+    ticker: "",
+    cryptoCurrency: "",
   });
 
   const [sortKey, setSortKey] = useState<InvSortKey | null>(null);
@@ -209,21 +206,19 @@ export function FinanceInvestmentsPanel({
         thAriaSort: thAria("cat"),
       },
     ];
-    if (showHouseColumn) {
-      cols.push({
-        key: "house",
-        header: (
-          <SortHeader
-            label="Property"
-            isActive={sortKey === "house"}
-            direction={dirFor("house")}
-            onClick={() => onSort("house")}
-          />
-        ),
-        className: "small",
-        thAriaSort: thAria("house"),
-      });
-    }
+    cols.push({
+      key: "details",
+      header: (
+        <SortHeader
+          label="Details"
+          isActive={sortKey === "details"}
+          direction={dirFor("details")}
+          onClick={() => onSort("details")}
+        />
+      ),
+      className: "small",
+      thAriaSort: thAria("details"),
+    });
     cols.push(
       {
         key: "atype",
@@ -287,7 +282,7 @@ export function FinanceInvestmentsPanel({
       },
     );
     return cols;
-  }, [sortKey, sortDir, onSort, showHouseColumn]);
+  }, [sortKey, sortDir, onSort]);
 
   const colSpan = tableColumns.length;
   const formId = `${sheetId}-form`;
@@ -305,15 +300,17 @@ export function FinanceInvestmentsPanel({
     const list = !q
       ? [...records]
       : records.filter((r) => {
-          const houseHay = relatedHouseCellLabel(r, relatedHouseLabelByValue);
+          const detailsHay = investmentDetailsDisplay(r, relatedHouseLabelByValue);
           const hay = [
             r.category,
             r.assetType,
             r.provider,
             r.currency,
             String(r.principalAmount),
-            houseHay,
+            detailsHay,
             r.relatedHouse ?? "",
+            r.ticker ?? "",
+            r.cryptoCurrency ?? "",
           ]
             .join(" ")
             .toLowerCase();
@@ -327,10 +324,12 @@ export function FinanceInvestmentsPanel({
         if (byCcy !== 0) return byCcy;
         const byCat = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
         if (byCat !== 0) return byCat;
-        const byHouse = (a.relatedHouse ?? "").localeCompare(b.relatedHouse ?? "", undefined, {
-          sensitivity: "base",
-        });
-        if (byHouse !== 0) return byHouse;
+        const byDetails = investmentDetailsDisplay(a, relatedHouseLabelByValue).localeCompare(
+          investmentDetailsDisplay(b, relatedHouseLabelByValue),
+          undefined,
+          { sensitivity: "base" },
+        );
+        if (byDetails !== 0) return byDetails;
         return a.provider.localeCompare(b.provider, undefined, { sensitivity: "base" });
       });
     }
@@ -389,6 +388,8 @@ export function FinanceInvestmentsPanel({
         (row.relatedHouse === "hillmarton" || row.relatedHouse === "morrison")
           ? row.relatedHouse
           : "",
+      ticker: row.category === "ETF" ? (row.ticker ?? "") : "",
+      cryptoCurrency: row.category === "Crypto" ? (row.cryptoCurrency ?? "") : "",
     });
   }
 
@@ -412,6 +413,8 @@ export function FinanceInvestmentsPanel({
       return;
     }
     const currency = coerceSupportedCurrency(form.currency, GLOBAL_DEFAULT_CURRENCY);
+    const tickerTrim = form.ticker.trim();
+    const cryptoTrim = form.cryptoCurrency.trim();
     const row: FinanceInvestmentRecord = {
       id: editingId ?? newStatementLineId(),
       category: form.category,
@@ -423,6 +426,8 @@ export function FinanceInvestmentsPanel({
       (form.relatedHouse === "hillmarton" || form.relatedHouse === "morrison")
         ? { relatedHouse: form.relatedHouse }
         : {}),
+      ...(form.category === "ETF" && tickerTrim ? { ticker: tickerTrim } : {}),
+      ...(form.category === "Crypto" && cryptoTrim ? { cryptoCurrency: cryptoTrim } : {}),
     };
 
     onPatch((prev) => {
@@ -478,7 +483,9 @@ export function FinanceInvestmentsPanel({
                   setForm((f) => ({
                     ...f,
                     category,
-                    ...(category !== "Real Estate" ? { relatedHouse: "" as const } : {}),
+                    relatedHouse: "",
+                    ticker: "",
+                    cryptoCurrency: "",
                   }));
                 }}
               >
@@ -546,7 +553,7 @@ export function FinanceInvestmentsPanel({
               />
             </div>
           </div>
-          {form.category === "Real Estate" && showHouseColumn ? (
+          {form.category === "Real Estate" && hasHouseOptions ? (
             <div className="row g-3 mt-0">
               <div className="col-md-4">
                 <label className="form-label small" htmlFor={`${sheetId}-house`}>
@@ -573,6 +580,42 @@ export function FinanceInvestmentsPanel({
               </div>
             </div>
           ) : null}
+          {form.category === "ETF" ? (
+            <div className="row g-3 mt-0">
+              <div className="col-md-4">
+                <label className="form-label small" htmlFor={`${sheetId}-ticker`}>
+                  Ticker
+                </label>
+                <input
+                  id={`${sheetId}-ticker`}
+                  type="text"
+                  className="form-control form-control-sm"
+                  maxLength={INVESTMENT_TICKER_MAX_LEN}
+                  value={form.ticker}
+                  onChange={(ev) => setForm((f) => ({ ...f, ticker: ev.target.value }))}
+                />
+              </div>
+            </div>
+          ) : null}
+          {form.category === "Crypto" ? (
+            <div className="row g-3 mt-0">
+              <div className="col-md-4">
+                <label className="form-label small" htmlFor={`${sheetId}-crypto-ccy`}>
+                  Crypto Currency
+                </label>
+                <input
+                  id={`${sheetId}-crypto-ccy`}
+                  type="text"
+                  className="form-control form-control-sm"
+                  maxLength={INVESTMENT_CRYPTO_CURRENCY_MAX_LEN}
+                  value={form.cryptoCurrency}
+                  onChange={(ev) =>
+                    setForm((f) => ({ ...f, cryptoCurrency: ev.target.value }))
+                  }
+                />
+              </div>
+            </div>
+          ) : null}
         </form>
       </AdminEditorSection>
 
@@ -588,11 +631,9 @@ export function FinanceInvestmentsPanel({
             filtered.map((r) => (
               <tr key={r.id}>
                 <td className="small">{r.category}</td>
-                {showHouseColumn ? (
-                  <td className="small text-muted">
-                    {relatedHouseCellLabel(r, relatedHouseLabelByValue) || "—"}
-                  </td>
-                ) : null}
+                <td className="small text-muted">
+                  {investmentDetailsDisplay(r, relatedHouseLabelByValue) || "—"}
+                </td>
                 <td className="small">{r.assetType}</td>
                 <td className="small">{r.provider}</td>
                 <td className="small text-end">
@@ -625,7 +666,7 @@ export function FinanceInvestmentsPanel({
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              {showHouseColumn ? <td className="small" /> : null}
+              <td className="small" />
               <td className="small" />
               <td className="small text-muted fw-normal">
                 {fxError ? (

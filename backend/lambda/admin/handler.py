@@ -56,6 +56,8 @@ INVESTMENT_RECORD_CATEGORIES = frozenset(
 )
 INVESTMENT_ASSET_TYPES = frozenset({"Fixed", "Liquid"})
 MAX_INVESTMENT_PROVIDER_LEN = 500
+MAX_INVESTMENT_TICKER_LEN = 64
+MAX_INVESTMENT_CRYPTO_CURRENCY_LEN = 120
 MAX_LEDGER_RECORDS = 2000
 LEDGER_RECORD_AMOUNT_PERIODS = frozenset({"month", "year"})
 # Asset uploads accept any image/* type plus statement PDFs.
@@ -765,6 +767,27 @@ def _normalize_ledger_sheet_payload(
     return out
 
 
+def _investment_non_empty_strip(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        s = str(raw).strip()
+    elif isinstance(raw, str):
+        s = raw.strip()
+    else:
+        return None
+    return s if s else None
+
+
+def _sanitize_investment_detail_str(raw: Any, max_len: int) -> str | None:
+    s = _investment_non_empty_strip(raw)
+    if s is None:
+        return None
+    if len(s) > max_len:
+        return s[:max_len]
+    return s
+
+
 def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
     """Best-effort coercion for GET responses (drops invalid rows)."""
     if not isinstance(raw, list):
@@ -817,6 +840,18 @@ def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
             rh = row.get("relatedHouse")
             if rh in FINANCE_HOUSE_KEYS:
                 item["relatedHouse"] = rh
+        elif cat == "ETF":
+            tk = _sanitize_investment_detail_str(
+                row.get("ticker"), MAX_INVESTMENT_TICKER_LEN
+            )
+            if tk:
+                item["ticker"] = tk
+        elif cat == "Crypto":
+            cc = _sanitize_investment_detail_str(
+                row.get("cryptoCurrency"), MAX_INVESTMENT_CRYPTO_CURRENCY_LEN
+            )
+            if cc:
+                item["cryptoCurrency"] = cc
         out.append(item)
     return out
 
@@ -880,7 +915,32 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
             "currency": cur,
         }
         house_raw = row.get("relatedHouse")
+        ticker_raw = row.get("ticker")
+        crypto_raw = row.get("cryptoCurrency")
+
+        def _reject_investment_detail_fields(*, allowed: frozenset[str]) -> None:
+            checks: tuple[tuple[str, Any], ...] = (
+                ("relatedHouse", house_raw),
+                ("ticker", ticker_raw),
+                ("cryptoCurrency", crypto_raw),
+            )
+            for field, raw in checks:
+                if field in allowed:
+                    continue
+                if field == "relatedHouse":
+                    if house_raw is not None and str(house_raw).strip() != "":
+                        raise ValueError(
+                            f"investmentRecords[{i}].relatedHouse is only allowed when "
+                            "category is Real Estate"
+                        )
+                elif _investment_non_empty_strip(raw) is not None:
+                    raise ValueError(
+                        f"investmentRecords[{i}].{field} is only allowed when category "
+                        "uses this field"
+                    )
+
         if cat == "Real Estate":
+            _reject_investment_detail_fields(allowed=frozenset({"relatedHouse"}))
             if house_raw is not None and str(house_raw).strip() != "":
                 if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
                     houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
@@ -888,12 +948,32 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                         f"investmentRecords[{i}].relatedHouse must be one of: {houses}"
                     )
                 rec["relatedHouse"] = house_raw
-        else:
-            if house_raw is not None and str(house_raw).strip() != "":
-                raise ValueError(
-                    f"investmentRecords[{i}].relatedHouse is only allowed when "
-                    "category is Real Estate"
-                )
+        elif cat == "ETF":
+            _reject_investment_detail_fields(allowed=frozenset({"ticker"}))
+            if ticker_raw is not None and str(ticker_raw).strip() != "":
+                if not isinstance(ticker_raw, str):
+                    raise ValueError(
+                        f"investmentRecords[{i}].ticker must be a string"
+                    )
+                t_st = ticker_raw.strip()
+                if len(t_st) > MAX_INVESTMENT_TICKER_LEN:
+                    raise ValueError(f"investmentRecords[{i}].ticker is too long")
+                rec["ticker"] = t_st
+        elif cat == "Crypto":
+            _reject_investment_detail_fields(allowed=frozenset({"cryptoCurrency"}))
+            if crypto_raw is not None and str(crypto_raw).strip() != "":
+                if not isinstance(crypto_raw, str):
+                    raise ValueError(
+                        f"investmentRecords[{i}].cryptoCurrency must be a string"
+                    )
+                c_st = crypto_raw.strip()
+                if len(c_st) > MAX_INVESTMENT_CRYPTO_CURRENCY_LEN:
+                    raise ValueError(
+                        f"investmentRecords[{i}].cryptoCurrency is too long"
+                    )
+                rec["cryptoCurrency"] = c_st
+        elif cat == "Fixed Term Deposit":
+            _reject_investment_detail_fields(allowed=frozenset())
         out.append(rec)
     return out
 

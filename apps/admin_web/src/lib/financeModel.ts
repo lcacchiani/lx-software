@@ -109,6 +109,11 @@ export type InvestmentAssetType = (typeof INVESTMENT_ASSET_TYPES)[number];
 
 export type HouseKey = "hillmarton" | "morrison";
 
+/** Max length for ETF ticker text (aligned with admin Lambda). */
+export const INVESTMENT_TICKER_MAX_LEN = 64;
+/** Max length for crypto “currency” name text (aligned with admin Lambda). */
+export const INVESTMENT_CRYPTO_CURRENCY_MAX_LEN = 120;
+
 /** One row in the Investments sheet (DynamoDB finance sheet `investments`). */
 export type FinanceInvestmentRecord = {
   readonly id: string;
@@ -120,6 +125,10 @@ export type FinanceInvestmentRecord = {
   readonly principalAmount: number;
   /** When category is Real Estate, optional link to a house (same keys as finance house tabs). */
   readonly relatedHouse?: HouseKey;
+  /** When category is ETF, optional ticker symbol or name. */
+  readonly ticker?: string;
+  /** When category is Crypto, optional asset name (e.g. coin); UI label “Crypto currency”. */
+  readonly cryptoCurrency?: string;
 };
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
@@ -507,6 +516,38 @@ function isInvestmentAssetType(v: unknown): v is InvestmentAssetType {
   return v === "Fixed" || v === "Liquid";
 }
 
+function trimInvestmentDetailString(raw: unknown, maxLen: number): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const t = raw.trim();
+  if (!t) {
+    return undefined;
+  }
+  return t.length > maxLen ? t.slice(0, maxLen) : t;
+}
+
+/** Value shown in the Investments “Details” column (property, ticker, or crypto label). */
+export function investmentDetailsDisplay(
+  record: FinanceInvestmentRecord,
+  houseLabelByValue: ReadonlyMap<HouseKey, string>,
+): string {
+  switch (record.category) {
+    case "Real Estate": {
+      if (!record.relatedHouse) {
+        return "";
+      }
+      return houseLabelByValue.get(record.relatedHouse) ?? record.relatedHouse;
+    }
+    case "ETF":
+      return record.ticker?.trim() ?? "";
+    case "Crypto":
+      return record.cryptoCurrency?.trim() ?? "";
+    default:
+      return "";
+  }
+}
+
 /** Coerces API payloads into investment rows; drops invalid entries. */
 export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRecord[] {
   if (!Array.isArray(input)) {
@@ -546,6 +587,14 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
     const rh = row.relatedHouse;
     const relatedHouse: HouseKey | undefined =
       category === "Real Estate" && (rh === "hillmarton" || rh === "morrison") ? rh : undefined;
+    const ticker =
+      category === "ETF"
+        ? trimInvestmentDetailString(row.ticker, INVESTMENT_TICKER_MAX_LEN)
+        : undefined;
+    const cryptoCurrency =
+      category === "Crypto"
+        ? trimInvestmentDetailString(row.cryptoCurrency, INVESTMENT_CRYPTO_CURRENCY_MAX_LEN)
+        : undefined;
     out.push({
       id,
       category,
@@ -554,6 +603,8 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       provider,
       principalAmount,
       ...(relatedHouse ? { relatedHouse } : {}),
+      ...(ticker ? { ticker } : {}),
+      ...(cryptoCurrency ? { cryptoCurrency } : {}),
     });
   }
   return out;

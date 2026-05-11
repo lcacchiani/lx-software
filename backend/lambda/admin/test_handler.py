@@ -360,6 +360,74 @@ class TestInvestmentSheetPayload(unittest.TestCase):
         with self.assertRaises(ValueError):
             _normalize_investment_sheet_payload(body)
 
+    def test_etf_ticker_persisted(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "ETF",
+                    "assetType": "Liquid",
+                    "provider": "X",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "ticker": "VWRA",
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertEqual(out[0]["ticker"], "VWRA")
+
+    def test_crypto_currency_persisted(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "Crypto",
+                    "assetType": "Liquid",
+                    "provider": "X",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "cryptoCurrency": "Bitcoin",
+                }
+            ]
+        }
+        out = _normalize_investment_sheet_payload(body)
+        self.assertEqual(out[0]["cryptoCurrency"], "Bitcoin")
+
+    def test_real_estate_rejects_ticker(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "Real Estate",
+                    "assetType": "Fixed",
+                    "provider": "B",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "ticker": "X",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_investment_sheet_payload(body)
+
+    def test_fixed_term_deposit_rejects_detail_fields(self) -> None:
+        body = {
+            "investmentRecords": [
+                {
+                    "id": "x1",
+                    "category": "Fixed Term Deposit",
+                    "assetType": "Fixed",
+                    "provider": "B",
+                    "principalAmount": 1,
+                    "currency": "HKD",
+                    "cryptoCurrency": "BTC",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_investment_sheet_payload(body)
+
 
 class TestLedgerSheetPayload(unittest.TestCase):
     def test_income_valid(self) -> None:
