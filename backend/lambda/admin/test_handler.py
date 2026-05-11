@@ -284,6 +284,46 @@ class TestLedgerSheetPayload(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["category"], "Rent")
         self.assertEqual(out[0]["amount"], 500.5)
+        self.assertEqual(out[0]["amountPeriod"], "month")
+
+    def test_income_amount_period_year(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Rent",
+                    "description": "Annual",
+                    "amount": 12000,
+                    "currency": "GBP",
+                    "amountPeriod": "year",
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="incomeRecords",
+            categories=INCOME_RECORD_CATEGORIES,
+        )
+        self.assertEqual(out[0]["amountPeriod"], "year")
+
+    def test_income_invalid_amount_period(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Rent",
+                    "description": "x",
+                    "amount": 1,
+                    "currency": "HKD",
+                    "amountPeriod": "weekly",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_ledger_sheet_payload(
+                body, body_key="incomeRecords", categories=INCOME_RECORD_CATEGORIES
+            )
+        self.assertIn("amountPeriod", str(ctx.exception))
 
     def test_income_invalid_category(self) -> None:
         body = {
@@ -327,6 +367,7 @@ class TestLedgerSheetPayload(unittest.TestCase):
         )
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["category"], "Utility")
+        self.assertEqual(out[0]["amountPeriod"], "month")
 
 
 class TestUploadContentTypeAllowList(unittest.TestCase):

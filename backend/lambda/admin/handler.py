@@ -49,6 +49,7 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
     }
 )
 MAX_LEDGER_RECORDS = 2000
+LEDGER_RECORD_AMOUNT_PERIODS = frozenset({"month", "year"})
 # Asset uploads accept any image/* type plus statement PDFs.
 ALLOWED_UPLOAD_CONTENT_TYPES = frozenset({"application/pdf"})
 _s3 = boto3.client("s3")
@@ -568,6 +569,12 @@ def _sanitize_ledger_records_list(
         d = desc.strip()
         if len(d) > MAX_FINANCE_DESCRIPTION:
             d = d[:MAX_FINANCE_DESCRIPTION]
+        period_raw = row.get("amountPeriod")
+        period = (
+            "year"
+            if period_raw == "year"
+            else "month"
+        )
         out.append(
             {
                 "id": rid.strip(),
@@ -575,6 +582,7 @@ def _sanitize_ledger_records_list(
                 "description": d,
                 "amount": amt_f,
                 "currency": cur,
+                "amountPeriod": period,
             }
         )
     return out
@@ -620,6 +628,13 @@ def _normalize_ledger_sheet_payload(
             row.get("currency", DEFAULT_FINANCE_CURRENCY),
             f"{body_key}[{i}].currency",
         )
+        period_raw = row.get("amountPeriod", "month")
+        if period_raw not in LEDGER_RECORD_AMOUNT_PERIODS:
+            allowed_p = ", ".join(sorted(LEDGER_RECORD_AMOUNT_PERIODS))
+            raise ValueError(
+                f"{body_key}[{i}].amountPeriod must be one of: {allowed_p}"
+            )
+        period = str(period_raw)
         out.append(
             {
                 "id": rid.strip(),
@@ -627,6 +642,7 @@ def _normalize_ledger_sheet_payload(
                 "description": desc.strip(),
                 "amount": float(amt),
                 "currency": cur,
+                "amountPeriod": period,
             }
         )
     return out
