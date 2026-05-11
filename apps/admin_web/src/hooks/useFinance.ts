@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
+  type FinanceInvestmentRecord,
   type FinanceLedgerRecord,
   type FinanceLedgerSheetKey,
   type FinancePersistedState,
@@ -11,6 +12,7 @@ import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
   normalizeHouseFinanceData,
+  normalizeInvestmentRecords,
   normalizeLedgerRecords,
 } from "../lib/financeModel";
 
@@ -32,6 +34,7 @@ async function fetchFinance(): Promise<FinancePersistedState> {
       includeIncomeFlags: true,
     }),
     expenseRecords: normalizeLedgerRecords(rawObj.expenseRecords, EXPENSE_CATEGORIES),
+    investmentRecords: normalizeInvestmentRecords(rawObj.investmentRecords),
   };
 }
 
@@ -64,6 +67,28 @@ export function useFinance() {
       qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
         ...(old ?? DEFAULT_FINANCE_STATE),
         [house]: data,
+      }));
+    },
+  });
+
+  const saveInvestmentRecords = useMutation({
+    mutationFn: async (records: readonly FinanceInvestmentRecord[]) => {
+      const res = await adminFetchJson<{ investmentRecords: FinanceInvestmentRecord[] }>(
+        "/finance/investments",
+        {
+          method: "PUT",
+          body: JSON.stringify({ investmentRecords: records }),
+        },
+      );
+      const list = res.investmentRecords;
+      return {
+        records: normalizeInvestmentRecords(list),
+      };
+    },
+    onSuccess: ({ records }) => {
+      qc.setQueryData<FinancePersistedState>(["finance"], (old) => ({
+        ...(old ?? DEFAULT_FINANCE_STATE),
+        investmentRecords: records,
       }));
     },
   });
@@ -112,6 +137,20 @@ export function useFinance() {
     [qc, saveHouse],
   );
 
+  const patchInvestmentRecords = useCallback(
+    (
+      patch: (
+        prev: readonly FinanceInvestmentRecord[],
+      ) => readonly FinanceInvestmentRecord[],
+    ) => {
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const prev = state?.investmentRecords ?? DEFAULT_FINANCE_STATE.investmentRecords;
+      const next = patch(prev);
+      saveInvestmentRecords.mutate(next);
+    },
+    [qc, saveInvestmentRecords],
+  );
+
   const patchLedgerRecords = useCallback(
     (
       sheet: FinanceLedgerSheetKey,
@@ -130,7 +169,8 @@ export function useFinance() {
 
   const ledgerSaveErr = saveLedgerSheet.error;
   const houseSaveErr = saveHouse.error;
-  const saveError = houseSaveErr ?? ledgerSaveErr;
+  const investmentSaveErr = saveInvestmentRecords.error;
+  const saveError = houseSaveErr ?? ledgerSaveErr ?? investmentSaveErr;
 
   return {
     data: q.data ?? DEFAULT_FINANCE_STATE,
@@ -139,7 +179,9 @@ export function useFinance() {
     error: q.error,
     patchHouse,
     patchLedgerRecords,
-    isSaving: saveHouse.isPending || saveLedgerSheet.isPending,
+    patchInvestmentRecords,
+    isSaving:
+      saveHouse.isPending || saveLedgerSheet.isPending || saveInvestmentRecords.isPending,
     saveError,
     saveErrorDetail: getAdminApiErrorMessage(saveError),
   };

@@ -93,6 +93,31 @@ export const EXPENSE_CATEGORIES = [
   "Education",
 ] as const;
 
+/** Investment holdings tab (aligned with admin Lambda validation). */
+export const INVESTMENT_CATEGORIES = [
+  "Real Estate",
+  "Fixed Term Deposit",
+  "ETF",
+  "Crypto",
+] as const;
+
+export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
+
+export const INVESTMENT_ASSET_TYPES = ["Fixed", "Liquid"] as const;
+
+export type InvestmentAssetType = (typeof INVESTMENT_ASSET_TYPES)[number];
+
+/** One row in the Investments sheet (DynamoDB finance sheet `investments`). */
+export type FinanceInvestmentRecord = {
+  readonly id: string;
+  readonly category: InvestmentCategory;
+  readonly currency: string;
+  readonly assetType: InvestmentAssetType;
+  readonly provider: string;
+  /** Amount originally invested (principal). */
+  readonly principalAmount: number;
+};
+
 export type FinanceLedgerSheetKey = "income" | "expenses";
 
 export type HouseKey = "hillmarton" | "morrison";
@@ -173,6 +198,7 @@ export type FinancePersistedState = {
   readonly morrison: HouseFinanceData;
   readonly incomeRecords: readonly FinanceLedgerRecord[];
   readonly expenseRecords: readonly FinanceLedgerRecord[];
+  readonly investmentRecords: readonly FinanceInvestmentRecord[];
 };
 
 export const DEFAULT_FLOAT: HouseFloat = {
@@ -193,10 +219,65 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   morrison: emptyHouse(),
   incomeRecords: [],
   expenseRecords: [],
+  investmentRecords: [],
 };
 
 function categorySet(categories: readonly string[]): Set<string> {
   return new Set(categories);
+}
+
+const INVESTMENT_CATEGORY_SET = categorySet(INVESTMENT_CATEGORIES);
+
+function isInvestmentAssetType(v: unknown): v is InvestmentAssetType {
+  return v === "Fixed" || v === "Liquid";
+}
+
+/** Coerces API payloads into investment rows; drops invalid entries. */
+export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: FinanceInvestmentRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const categoryRaw = typeof row.category === "string" ? row.category : "";
+    if (!id || !INVESTMENT_CATEGORY_SET.has(categoryRaw)) {
+      continue;
+    }
+    const category = categoryRaw as InvestmentCategory;
+    if (!isInvestmentAssetType(row.assetType)) {
+      continue;
+    }
+    const assetType = row.assetType;
+    const provider =
+      typeof row.provider === "string" ? row.provider.trim() : "";
+    if (!provider) {
+      continue;
+    }
+    const amtRaw = row.principalAmount;
+    const principalAmount =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (!Number.isFinite(principalAmount) || Math.abs(principalAmount) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    out.push({
+      id,
+      category,
+      currency,
+      assetType,
+      provider,
+      principalAmount,
+    });
+  }
+  return out;
 }
 
 export type NormalizeLedgerRecordsOptions = {
