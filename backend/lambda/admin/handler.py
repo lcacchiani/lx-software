@@ -47,6 +47,8 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
         "Retirement",
         "Tax",
         "Amenities",
+        "Helper",
+        "Education",
     }
 )
 MAX_LEDGER_RECORDS = 2000
@@ -585,7 +587,7 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sanitize_ledger_records_list(
-    raw: Any, categories: frozenset[str]
+    raw: Any, categories: frozenset[str], *, include_income_flags: bool = False
 ) -> list[dict[str, Any]]:
     """Best-effort coercion for GET responses (drops invalid rows)."""
     if not isinstance(raw, list):
@@ -636,6 +638,9 @@ def _sanitize_ledger_records_list(
         rh = row.get("relatedHouse")
         if rh in FINANCE_HOUSE_KEYS:
             rec["relatedHouse"] = rh
+        if include_income_flags:
+            for fk in ("isTax", "isSaving", "isInvestment"):
+                rec[fk] = row.get(fk) is True
         out.append(rec)
     return out
 
@@ -703,6 +708,15 @@ def _normalize_ledger_sheet_payload(
                     f"{body_key}[{i}].relatedHouse must be one of: {houses}"
                 )
             rec["relatedHouse"] = house_raw
+        if body_key == "incomeRecords":
+            for fk in ("isTax", "isSaving", "isInvestment"):
+                v = row.get(fk)
+                if v is None:
+                    rec[fk] = False
+                elif isinstance(v, bool):
+                    rec[fk] = v
+                else:
+                    raise ValueError(f"{body_key}[{i}].{fk} must be a boolean")
         out.append(rec)
     return out
 
@@ -876,7 +890,11 @@ def _load_finance_sheet(
     nested = _from_ddb_nested(payload)
     if not isinstance(nested, dict):
         return []
-    return _sanitize_ledger_records_list(nested.get("records"), categories)
+    return _sanitize_ledger_records_list(
+        nested.get("records"),
+        categories,
+        include_income_flags=(sheet_slug == "income"),
+    )
 
 
 def _path_finance_house(event: dict[str, Any], path: str) -> str | None:

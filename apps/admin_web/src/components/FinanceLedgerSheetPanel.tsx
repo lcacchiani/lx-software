@@ -11,6 +11,7 @@ import {
   type FinanceLedgerAmountPeriod,
   type FinanceLedgerRecord,
   type HouseKey,
+  type IncomeLedgerFlagField,
 } from "../lib/financeModel";
 import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
 import {
@@ -124,6 +125,9 @@ type LineFormState = {
   currency: string;
   amountPeriod: FinanceLedgerAmountPeriod;
   relatedHouse: HouseKey | "";
+  isTax: boolean;
+  isSaving: boolean;
+  isInvestment: boolean;
 };
 
 export type FinanceLedgerSheetPanelProps = {
@@ -152,7 +156,24 @@ export type FinanceLedgerSheetPanelProps = {
     readonly value: HouseKey;
     readonly label: string;
   }>;
+  /** Income sheet only: Tax / Saving / Investment toggles stored on each row. */
+  readonly incomeFlagFields?: ReadonlyArray<{
+    readonly field: IncomeLedgerFlagField;
+    readonly label: string;
+  }>;
 };
+
+function incomeLedgerFlagLabels(
+  record: FinanceLedgerRecord,
+  defs: FinanceLedgerSheetPanelProps["incomeFlagFields"],
+): string {
+  if (!defs?.length) return "";
+  const parts: string[] = [];
+  for (const { field, label } of defs) {
+    if (record[field]) parts.push(label);
+  }
+  return parts.join(", ");
+}
 
 export function FinanceLedgerSheetPanel({
   sheetId,
@@ -167,8 +188,10 @@ export function FinanceLedgerSheetPanel({
   sortTableRowsByCurrencyCategoryDescription = true,
   alphabetizeCategoryDropdown = false,
   relatedHouseOptions,
+  incomeFlagFields,
 }: FinanceLedgerSheetPanelProps) {
   const showRelatedHouseCol = Boolean(relatedHouseOptions?.length);
+  const showIncomeFlagsCol = Boolean(incomeFlagFields?.length);
 
   const relatedHouseLabelByValue = useMemo(() => {
     const m = new Map<HouseKey, string>();
@@ -233,6 +256,13 @@ export function FinanceLedgerSheetPanel({
         thAriaSort: thAria("desc"),
       },
     ];
+    if (showIncomeFlagsCol) {
+      cols.push({
+        key: "flags",
+        header: <span className="small fw-semibold">Tags</span>,
+        className: "small",
+      });
+    }
     if (showRelatedHouseCol) {
       cols.push({
         key: "house",
@@ -285,7 +315,7 @@ export function FinanceLedgerSheetPanel({
       },
     );
     return cols;
-  }, [showRelatedHouseCol, sortKey, sortDir, onLedgerSort]);
+  }, [showRelatedHouseCol, showIncomeFlagsCol, sortKey, sortDir, onLedgerSort]);
   const colSpan = tableColumns.length;
 
   const formId = `${sheetId}-ledger-form`;
@@ -304,6 +334,9 @@ export function FinanceLedgerSheetPanel({
     currency: GLOBAL_DEFAULT_CURRENCY,
     amountPeriod: "month",
     relatedHouse: "",
+    isTax: false,
+    isSaving: false,
+    isInvestment: false,
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -323,6 +356,7 @@ export function FinanceLedgerSheetPanel({
             r.relatedHouse && relatedHouseLabelByValue.get(r.relatedHouse)
               ? relatedHouseLabelByValue.get(r.relatedHouse)
               : r.relatedHouse ?? "";
+          const flagHay = incomeLedgerFlagLabels(r, incomeFlagFields).toLowerCase();
           const hay = [
             r.category,
             r.description,
@@ -330,6 +364,7 @@ export function FinanceLedgerSheetPanel({
             r.amountPeriod,
             String(r.amount),
             houseHay ?? "",
+            flagHay,
           ]
             .join(" ")
             .toLowerCase();
@@ -360,6 +395,7 @@ export function FinanceLedgerSheetPanel({
     relatedHouseLabelByValue,
     sortKey,
     sortDir,
+    incomeFlagFields,
   ]);
 
   const recordCurrencies = useMemo(
@@ -425,6 +461,9 @@ export function FinanceLedgerSheetPanel({
       currency: row.currency,
       amountPeriod: row.amountPeriod,
       relatedHouse: row.relatedHouse ?? "",
+      isTax: row.isTax === true,
+      isSaving: row.isSaving === true,
+      isInvestment: row.isInvestment === true,
     });
   }
 
@@ -453,6 +492,13 @@ export function FinanceLedgerSheetPanel({
       amountPeriod: lineForm.amountPeriod,
       ...(lineForm.relatedHouse === "hillmarton" || lineForm.relatedHouse === "morrison"
         ? { relatedHouse: lineForm.relatedHouse }
+        : {}),
+      ...(incomeFlagFields?.length
+        ? {
+            isTax: lineForm.isTax,
+            isSaving: lineForm.isSaving,
+            isInvestment: lineForm.isInvestment,
+          }
         : {}),
     };
 
@@ -578,6 +624,34 @@ export function FinanceLedgerSheetPanel({
               />
             </div>
           </div>
+          {showIncomeFlagsCol && incomeFlagFields ? (
+            <div className="row g-3 mt-0">
+              <div className="col-12">
+                <span className="form-label small d-block mb-1">Classification</span>
+                <div className="d-flex flex-wrap gap-3">
+                  {incomeFlagFields.map(({ field, label }) => (
+                    <div key={field} className="form-check mb-0">
+                      <input
+                        id={`${sheetId}-ledger-${field}`}
+                        type="checkbox"
+                        className="form-check-input"
+                        checked={lineForm[field]}
+                        onChange={(ev) =>
+                          setLineForm((f) => ({ ...f, [field]: ev.target.checked }))
+                        }
+                      />
+                      <label
+                        className="form-check-label small"
+                        htmlFor={`${sheetId}-ledger-${field}`}
+                      >
+                        {label}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {relatedHouseOptions?.length ? (
             <div className="row g-3 mt-0">
               <div className="col-md-4">
@@ -621,6 +695,11 @@ export function FinanceLedgerSheetPanel({
               <tr key={r.id}>
                 <td className="small">{r.category}</td>
                 <td className="small">{r.description}</td>
+                {showIncomeFlagsCol ? (
+                  <td className="small text-muted">
+                    {incomeLedgerFlagLabels(r, incomeFlagFields) || "—"}
+                  </td>
+                ) : null}
                 {showRelatedHouseCol ? (
                   <td className="small text-muted">
                     {r.relatedHouse
@@ -675,6 +754,7 @@ export function FinanceLedgerSheetPanel({
                   "\u2014"
                 )}
               </td>
+              {showIncomeFlagsCol ? <td className="small" /> : null}
               {showRelatedHouseCol ? <td className="small" /> : null}
               <td className="small text-end">
                 {convertedTotal !== null ? (

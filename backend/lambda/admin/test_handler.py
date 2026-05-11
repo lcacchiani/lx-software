@@ -35,6 +35,7 @@ from handler import (  # noqa: E402
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _path_finance_parse_job,
+    _sanitize_ledger_records_list,
     _statement_basename_already_imported,
     _utc_iso_z,
 )
@@ -409,9 +410,90 @@ class TestLedgerSheetPayload(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["category"], "Utility")
         self.assertEqual(out[0]["amountPeriod"], "month")
+        self.assertNotIn("isTax", out[0])
 
+    def test_income_classification_flags(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Salary",
+                    "description": "Pay",
+                    "amount": 100,
+                    "currency": "HKD",
+                    "isTax": True,
+                    "isSaving": False,
+                    "isInvestment": True,
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="incomeRecords",
+            categories=INCOME_RECORD_CATEGORIES,
+        )
+        self.assertTrue(out[0]["isTax"])
+        self.assertFalse(out[0]["isSaving"])
+        self.assertTrue(out[0]["isInvestment"])
 
-class TestUploadContentTypeAllowList(unittest.TestCase):
+    def test_income_classification_flag_invalid_type(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Salary",
+                    "description": "Pay",
+                    "amount": 100,
+                    "currency": "HKD",
+                    "isTax": "yes",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_ledger_sheet_payload(
+                body,
+                body_key="incomeRecords",
+                categories=INCOME_RECORD_CATEGORIES,
+            )
+        self.assertIn("isTax", str(ctx.exception))
+
+    def test_expense_helper_category(self) -> None:
+        body = {
+            "expenseRecords": [
+                {
+                    "id": "e1",
+                    "category": "Helper",
+                    "description": "Domestic help",
+                    "amount": 5000,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="expenseRecords",
+            categories=EXPENSE_RECORD_CATEGORIES,
+        )
+        self.assertEqual(out[0]["category"], "Helper")
+
+    def test_sanitize_income_flags_coerces_non_bool(self) -> None:
+        raw = [
+            {
+                "id": "a",
+                "category": "Salary",
+                "description": "Pay",
+                "amount": 1,
+                "currency": "HKD",
+                "isTax": True,
+                "isSaving": "no",
+            }
+        ]
+        out = _sanitize_ledger_records_list(
+            raw, INCOME_RECORD_CATEGORIES, include_income_flags=True
+        )
+        self.assertTrue(out[0]["isTax"])
+        self.assertFalse(out[0]["isSaving"])
+        self.assertFalse(out[0]["isInvestment"])
     def test_image_types_allowed(self) -> None:
         self.assertTrue(_is_allowed_upload_content_type("image/png"))
         self.assertTrue(_is_allowed_upload_content_type("image/jpeg"))

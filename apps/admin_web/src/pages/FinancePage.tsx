@@ -5,6 +5,7 @@ import { useFinance } from "../hooks/useFinance";
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  INCOME_LEDGER_FLAG_FIELDS,
   type HouseKey,
 } from "../lib/financeModel";
 
@@ -129,6 +130,7 @@ export function FinancePage() {
                 deleteConfirmMessage="Delete this income record?"
                 emptyMessage="No income records yet."
                 relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
+                incomeFlagFields={INCOME_LEDGER_FLAG_FIELDS}
               />
             ) : null}
             {tab === "expenses" ? (
