@@ -284,6 +284,46 @@ class TestLedgerSheetPayload(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["category"], "Rent")
         self.assertEqual(out[0]["amount"], 500.5)
+        self.assertNotIn("relatedHouse", out[0])
+
+    def test_income_related_house(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Rent",
+                    "description": "Room sublet",
+                    "amount": 500.5,
+                    "currency": "GBP",
+                    "relatedHouse": "morrison",
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="incomeRecords",
+            categories=INCOME_RECORD_CATEGORIES,
+        )
+        self.assertEqual(out[0]["relatedHouse"], "morrison")
+
+    def test_income_invalid_related_house(self) -> None:
+        body = {
+            "incomeRecords": [
+                {
+                    "id": "a",
+                    "category": "Rent",
+                    "description": "x",
+                    "amount": 1,
+                    "currency": "HKD",
+                    "relatedHouse": "villa",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_ledger_sheet_payload(
+                body, body_key="incomeRecords", categories=INCOME_RECORD_CATEGORIES
+            )
+        self.assertIn("relatedHouse", str(ctx.exception))
 
     def test_income_invalid_category(self) -> None:
         body = {

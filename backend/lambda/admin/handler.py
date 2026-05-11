@@ -568,15 +568,17 @@ def _sanitize_ledger_records_list(
         d = desc.strip()
         if len(d) > MAX_FINANCE_DESCRIPTION:
             d = d[:MAX_FINANCE_DESCRIPTION]
-        out.append(
-            {
-                "id": rid.strip(),
-                "category": cat,
-                "description": d,
-                "amount": amt_f,
-                "currency": cur,
-            }
-        )
+        rec: dict[str, Any] = {
+            "id": rid.strip(),
+            "category": cat,
+            "description": d,
+            "amount": amt_f,
+            "currency": cur,
+        }
+        rh = row.get("relatedHouse")
+        if rh in FINANCE_HOUSE_KEYS:
+            rec["relatedHouse"] = rh
+        out.append(rec)
     return out
 
 
@@ -620,15 +622,22 @@ def _normalize_ledger_sheet_payload(
             row.get("currency", DEFAULT_FINANCE_CURRENCY),
             f"{body_key}[{i}].currency",
         )
-        out.append(
-            {
-                "id": rid.strip(),
-                "category": cat,
-                "description": desc.strip(),
-                "amount": float(amt),
-                "currency": cur,
-            }
-        )
+        house_raw = row.get("relatedHouse")
+        rec: dict[str, Any] = {
+            "id": rid.strip(),
+            "category": cat,
+            "description": desc.strip(),
+            "amount": float(amt),
+            "currency": cur,
+        }
+        if house_raw is not None and house_raw != "":
+            if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
+                houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
+                raise ValueError(
+                    f"{body_key}[{i}].relatedHouse must be one of: {houses}"
+                )
+            rec["relatedHouse"] = house_raw
+        out.append(rec)
     return out
 
 

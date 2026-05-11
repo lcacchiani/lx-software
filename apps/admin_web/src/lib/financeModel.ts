@@ -80,6 +80,8 @@ export const EXPENSE_CATEGORIES = [
 
 export type FinanceLedgerSheetKey = "income" | "expenses";
 
+export type HouseKey = "hillmarton" | "morrison";
+
 /** One row in the Income or Expenses ledger (same shape; category lists differ per sheet). */
 export type FinanceLedgerRecord = {
   readonly id: string;
@@ -87,6 +89,8 @@ export type FinanceLedgerRecord = {
   readonly description: string;
   readonly amount: number;
   readonly currency: string;
+  /** Optional link to a house (same keys as finance house tabs). */
+  readonly relatedHouse?: HouseKey;
 };
 
 export type FinancePersistedState = {
@@ -95,8 +99,6 @@ export type FinancePersistedState = {
   readonly incomeRecords: readonly FinanceLedgerRecord[];
   readonly expenseRecords: readonly FinanceLedgerRecord[];
 };
-
-export type HouseKey = "hillmarton" | "morrison";
 
 export const DEFAULT_FLOAT: HouseFloat = {
   amount: 0,
@@ -153,12 +155,16 @@ export function normalizeLedgerRecords(
     }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    const rh = row.relatedHouse;
+    const relatedHouse: HouseKey | undefined =
+      rh === "hillmarton" || rh === "morrison" ? rh : undefined;
     out.push({
       id,
       category,
       description,
       amount,
       currency,
+      ...(relatedHouse ? { relatedHouse } : {}),
     });
   }
   return out;

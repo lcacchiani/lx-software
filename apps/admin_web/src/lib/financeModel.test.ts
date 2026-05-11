@@ -39,4 +39,34 @@ describe("normalizeLedgerRecords", () => {
     ];
     expect(normalizeLedgerRecords(rows, EXPENSE_CATEGORIES)).toHaveLength(1);
   });
+
+  it("preserves relatedHouse when valid", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Salary",
+        description: "Pay",
+        amount: 100,
+        currency: "HKD",
+        relatedHouse: "hillmarton",
+      },
+    ];
+    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES);
+    expect(out[0].relatedHouse).toBe("hillmarton");
+  });
+
+  it("drops invalid relatedHouse values", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Salary",
+        description: "Pay",
+        amount: 100,
+        currency: "HKD",
+        relatedHouse: "other",
+      },
+    ];
+    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES);
+    expect(out[0].relatedHouse).toBeUndefined();
+  });
 });

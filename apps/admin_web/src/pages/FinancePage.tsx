@@ -5,9 +5,18 @@ import { useFinance } from "../hooks/useFinance";
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  type HouseKey,
 } from "../lib/financeModel";
 
 type FinanceTab = "hillmarton" | "morrison" | "income" | "expenses";
+
+const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
+  readonly value: HouseKey;
+  readonly label: string;
+}> = [
+  { value: "hillmarton", label: "32 Hillmarton" },
+  { value: "morrison", label: "The Morrison" },
+];
 
 export function FinancePage() {
   const {
@@ -119,6 +128,7 @@ export function FinancePage() {
                 tableSectionTitle="Monthly Income"
                 deleteConfirmMessage="Delete this income record?"
                 emptyMessage="No income records yet."
+                relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
               />
             ) : null}
             {tab === "expenses" ? (
@@ -132,6 +142,7 @@ export function FinancePage() {
                 deleteConfirmMessage="Delete this expense record?"
                 emptyMessage="No expense records yet."
                 alphabetizeCategoryDropdown
+                relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
               />
             ) : null}
           </div>
