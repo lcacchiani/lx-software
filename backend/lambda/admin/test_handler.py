@@ -1399,9 +1399,18 @@ class TestFxV2RatesQuery(unittest.TestCase):
         self.assertEqual(base, "HKD")
         self.assertEqual(need, ["USD"])
 
-    def test_rejects_unsupported(self) -> None:
-        err = _parse_fx_v2_rates_query({"base": "HKD", "quotes": "JPY"})
+    def test_accepts_any_three_letter_code(self) -> None:
+        # Codes outside SUPPORTED_FINANCE_CURRENCIES (e.g. JPY, BTC) are
+        # passed through; Frankfurter validates upstream.
+        base, need = _parse_fx_v2_rates_query({"base": "HKD", "quotes": "JPY,BTC"})
+        self.assertEqual(base, "HKD")
+        self.assertEqual(need, ["BTC", "JPY"])
+
+    def test_rejects_invalid_code_format(self) -> None:
+        err = _parse_fx_v2_rates_query({"base": "HKD", "quotes": "US"})
         self.assertIsInstance(err, str)
+        err2 = _parse_fx_v2_rates_query({"base": "HK1", "quotes": "USD"})
+        self.assertIsInstance(err2, str)
 
 
 if __name__ == "__main__":

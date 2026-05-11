@@ -688,6 +688,82 @@ export function investmentRecordFiatNotionalInQuoteCurrency(
   return p;
 }
 
+/**
+ * Returns the per-row "market price source" currency code for an Investment row,
+ * i.e. the symbol whose Frankfurter rate (against the row currency) is applied
+ * to `unit` to compute the current value:
+ *  - Crypto rows return the trimmed `cryptoCurrency` (when set).
+ *  - ETF rows return the trimmed `ticker` (when set).
+ *  - Other categories (or rows missing the field) return `undefined`.
+ */
+export function investmentMarketSourceCurrency(
+  record: FinanceInvestmentRecord,
+): string | undefined {
+  if (record.category === "Crypto") {
+    const v = record.cryptoCurrency?.trim();
+    return v ? v : undefined;
+  }
+  if (record.category === "ETF") {
+    const v = record.ticker?.trim();
+    return v ? v : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Whether {@link record} is a Crypto/ETF row eligible for market-priced current value:
+ * has a positive numeric `unit` AND a non-empty `cryptoCurrency`/`ticker` field.
+ * Rows where the market source equals the row currency still qualify (rate is identity).
+ */
+export function isInvestmentMarketPriced(record: FinanceInvestmentRecord): boolean {
+  const src = investmentMarketSourceCurrency(record);
+  if (!src) return false;
+  const u = record.unit;
+  return u !== undefined && Number.isFinite(u) && u > 0;
+}
+
+/**
+ * Computes the current value of an Investment row in its own `currency`.
+ *
+ * For Crypto/ETF rows that are {@link isInvestmentMarketPriced market priced},
+ * the value is `unit × rate(1 marketSource → row.currency)`, where the
+ * rate is provided by `convertOneUnitToRowCurrency`. The callback may
+ * throw or return `undefined` when the rate is unavailable; in that case
+ * this function returns `undefined` so callers can render a placeholder.
+ *
+ * For all other rows (or when the row is not yet market-priced), falls back
+ * to {@link investmentRecordFiatNotionalInQuoteCurrency}.
+ */
+export function investmentRecordCurrentValueInRowCurrency(
+  record: FinanceInvestmentRecord,
+  convertOneUnitToRowCurrency: (
+    marketSourceCurrency: string,
+    rowCurrency: string,
+  ) => number | undefined,
+): number | undefined {
+  if (!isInvestmentMarketPriced(record)) {
+    return investmentRecordFiatNotionalInQuoteCurrency(record);
+  }
+  const src = investmentMarketSourceCurrency(record);
+  if (!src) {
+    return investmentRecordFiatNotionalInQuoteCurrency(record);
+  }
+  const u = record.unit;
+  if (u === undefined || !Number.isFinite(u)) {
+    return investmentRecordFiatNotionalInQuoteCurrency(record);
+  }
+  let oneUnit: number | undefined;
+  try {
+    oneUnit = convertOneUnitToRowCurrency(src, record.currency);
+  } catch {
+    return undefined;
+  }
+  if (oneUnit === undefined || !Number.isFinite(oneUnit)) {
+    return undefined;
+  }
+  return u * oneUnit;
+}
+
 /** Value shown in the Investments “Details” column (property, ticker, or crypto label). */
 export function investmentDetailsDisplay(
   record: FinanceInvestmentRecord,

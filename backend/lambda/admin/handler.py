@@ -1875,7 +1875,13 @@ FRANKFURTER_API_BASE = "https://api.frankfurter.dev"
 def _parse_fx_v2_rates_query(
     qs: dict[str, Any] | None,
 ) -> tuple[str, list[str]] | str:
-    """Return ``(base, sorted_unique_quotes)`` or a validation error message."""
+    """Return ``(base, sorted_unique_quotes)`` or a validation error message.
+
+    Accepts any 3-letter alphabetic code (Frankfurter validates whether the
+    code is actually supported upstream and returns 4xx otherwise). This
+    keeps the proxy generic enough to convert ticker/crypto codes used in
+    the Investments tab in addition to the supported finance currencies.
+    """
     if not qs:
         return "base is required"
     base = str(qs.get("base") or "").strip().upper()
@@ -1885,8 +1891,8 @@ def _parse_fx_v2_rates_query(
     parts = [p.strip().upper() for p in quotes_raw.split(",") if p.strip()]
     need = sorted({p for p in parts if p != base})
     for c in [base, *need]:
-        if c not in SUPPORTED_FINANCE_CURRENCIES:
-            return f"Unsupported currency: {c}"
+        if not (len(c) == 3 and c.isalpha()):
+            return f"Invalid currency code: {c}"
     return (base, need)
 
 
