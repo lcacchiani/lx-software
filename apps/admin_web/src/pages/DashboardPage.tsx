@@ -98,8 +98,14 @@ function HouseSummaryCard({
         data.incomeRecords,
         data.expenseRecords,
         houseKey,
+        data.expenseIncomeAllocationPercents,
       ),
-    [data.expenseRecords, data.incomeRecords, houseKey],
+    [
+      data.expenseIncomeAllocationPercents,
+      data.expenseRecords,
+      data.incomeRecords,
+      houseKey,
+    ],
   );
 
   const monthlyNetByCurrency = useMemo(
