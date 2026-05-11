@@ -10,6 +10,7 @@ import {
   newStatementLineId,
   type FinanceLedgerAmountPeriod,
   type FinanceLedgerRecord,
+  type HouseKey,
 } from "../lib/financeModel";
 import { useFrankfurterRatesToBase } from "../hooks/useFrankfurterRatesToBase";
 import {
@@ -33,11 +34,21 @@ type LineFormState = {
   amount: string;
   currency: string;
   amountPeriod: FinanceLedgerAmountPeriod;
+  relatedHouse: HouseKey | "";
 };
 
-const TABLE_COLUMNS: AdminDataTableColumn[] = [
+const BASE_TABLE_COLUMNS: AdminDataTableColumn[] = [
   { key: "cat", header: "Category", className: "small" },
   { key: "desc", header: "Description", className: "small" },
+];
+
+const RELATED_HOUSE_TABLE_COLUMN: AdminDataTableColumn = {
+  key: "house",
+  header: "Related property",
+  className: "small",
+};
+
+const AMOUNT_CCY_OPS_COLUMNS: AdminDataTableColumn[] = [
   {
     key: "amt",
     header: "Monthly amount",
@@ -52,8 +63,6 @@ const TABLE_COLUMNS: AdminDataTableColumn[] = [
     headerClassName: "text-end",
   },
 ];
-
-const COL_SPAN = TABLE_COLUMNS.length;
 
 export type FinanceLedgerSheetPanelProps = {
   readonly sheetId: string;
@@ -74,6 +83,11 @@ export type FinanceLedgerSheetPanelProps = {
   readonly sortTableRowsByCurrencyCategoryDescription?: boolean;
   /** When true, category `<select>` options are listed A–Z (default option is first alphabetically). */
   readonly alphabetizeCategoryDropdown?: boolean;
+  /** When set, shows an optional “related property” control and table column. */
+  readonly relatedHouseOptions?: ReadonlyArray<{
+    readonly value: HouseKey;
+    readonly label: string;
+  }>;
 };
 
 export function FinanceLedgerSheetPanel({
@@ -88,7 +102,26 @@ export function FinanceLedgerSheetPanel({
   filterPlaceholder = "Filter records…",
   sortTableRowsByCurrencyCategoryDescription = true,
   alphabetizeCategoryDropdown = false,
+  relatedHouseOptions,
 }: FinanceLedgerSheetPanelProps) {
+  const showRelatedHouseCol = Boolean(relatedHouseOptions?.length);
+  const tableColumns = useMemo(
+    () =>
+      showRelatedHouseCol
+        ? [...BASE_TABLE_COLUMNS, RELATED_HOUSE_TABLE_COLUMN, ...AMOUNT_CCY_OPS_COLUMNS]
+        : [...BASE_TABLE_COLUMNS, ...AMOUNT_CCY_OPS_COLUMNS],
+    [showRelatedHouseCol],
+  );
+  const colSpan = tableColumns.length;
+
+  const relatedHouseLabelByValue = useMemo(() => {
+    const m = new Map<HouseKey, string>();
+    if (!relatedHouseOptions) return m;
+    for (const o of relatedHouseOptions) {
+      m.set(o.value, o.label);
+    }
+    return m;
+  }, [relatedHouseOptions]);
   const formId = `${sheetId}-ledger-form`;
   const categoryOptions = useMemo(() => {
     const list = [...categories];
@@ -104,6 +137,7 @@ export function FinanceLedgerSheetPanel({
     amount: "",
     currency: GLOBAL_DEFAULT_CURRENCY,
     amountPeriod: "month",
+    relatedHouse: "",
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -119,7 +153,18 @@ export function FinanceLedgerSheetPanel({
     const list = !q
       ? [...records]
       : records.filter((r) => {
-          const hay = [r.category, r.description, r.currency, r.amountPeriod, String(r.amount)]
+          const houseHay =
+            r.relatedHouse && relatedHouseLabelByValue.get(r.relatedHouse)
+              ? relatedHouseLabelByValue.get(r.relatedHouse)
+              : r.relatedHouse ?? "";
+          const hay = [
+            r.category,
+            r.description,
+            r.currency,
+            r.amountPeriod,
+            String(r.amount),
+            houseHay ?? "",
+          ]
             .join(" ")
             .toLowerCase();
           return hay.includes(q);
@@ -130,11 +175,15 @@ export function FinanceLedgerSheetPanel({
         if (byCcy !== 0) return byCcy;
         const byCat = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
         if (byCat !== 0) return byCat;
+        const byHouse = (a.relatedHouse ?? "").localeCompare(b.relatedHouse ?? "", undefined, {
+          sensitivity: "base",
+        });
+        if (byHouse !== 0) return byHouse;
         return a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
       });
     }
     return list;
-  }, [records, tableFilter, sortTableRowsByCurrencyCategoryDescription]);
+  }, [records, tableFilter, sortTableRowsByCurrencyCategoryDescription, relatedHouseLabelByValue]);
 
   const recordCurrencies = useMemo(
     () => records.map((r) => r.currency),
@@ -198,6 +247,7 @@ export function FinanceLedgerSheetPanel({
       amount: String(row.amount),
       currency: row.currency,
       amountPeriod: row.amountPeriod,
+      relatedHouse: row.relatedHouse ?? "",
     });
   }
 
@@ -224,6 +274,9 @@ export function FinanceLedgerSheetPanel({
       amount,
       currency,
       amountPeriod: lineForm.amountPeriod,
+      ...(lineForm.relatedHouse === "hillmarton" || lineForm.relatedHouse === "morrison"
+        ? { relatedHouse: lineForm.relatedHouse }
+        : {}),
     };
 
     onPatch((prev) => {
@@ -348,13 +401,40 @@ export function FinanceLedgerSheetPanel({
               />
             </div>
           </div>
+          {relatedHouseOptions?.length ? (
+            <div className="row g-3 mt-0">
+              <div className="col-md-4">
+                <label className="form-label small" htmlFor={`${sheetId}-ledger-house`}>
+                  Related property <span className="text-muted fw-normal">(optional)</span>
+                </label>
+                <select
+                  id={`${sheetId}-ledger-house`}
+                  className="form-select form-select-sm"
+                  value={lineForm.relatedHouse}
+                  onChange={(ev) =>
+                    setLineForm((f) => ({
+                      ...f,
+                      relatedHouse: ev.target.value as HouseKey | "",
+                    }))
+                  }
+                >
+                  <option value="">— None —</option>
+                  {relatedHouseOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
         </form>
       </AdminEditorSection>
 
       <AdminEditorSection title={tableSectionTitle}>
         <AdminDataTable
           embedded
-          columns={TABLE_COLUMNS}
+          columns={tableColumns}
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder={filterPlaceholder}
@@ -364,6 +444,13 @@ export function FinanceLedgerSheetPanel({
               <tr key={r.id}>
                 <td className="small">{r.category}</td>
                 <td className="small">{r.description}</td>
+                {showRelatedHouseCol ? (
+                  <td className="small text-muted">
+                    {r.relatedHouse
+                      ? (relatedHouseLabelByValue.get(r.relatedHouse) ?? r.relatedHouse)
+                      : "—"}
+                  </td>
+                ) : null}
                 <td className="small text-end">
                   <MoneyAmount
                     amount={ledgerMonthlyAmount(r)}
@@ -389,7 +476,7 @@ export function FinanceLedgerSheetPanel({
             ))
           ) : (
             <AdminDataTableEmptyRow
-              colSpan={COL_SPAN}
+              colSpan={colSpan}
               message={
                 records.length ? "No records match the filter." : emptyMessage
               }
@@ -411,6 +498,7 @@ export function FinanceLedgerSheetPanel({
                   "\u2014"
                 )}
               </td>
+              {showRelatedHouseCol ? <td className="small" /> : null}
               <td className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount

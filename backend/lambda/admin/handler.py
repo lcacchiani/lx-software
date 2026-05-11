@@ -624,21 +624,19 @@ def _sanitize_ledger_records_list(
         if len(d) > MAX_FINANCE_DESCRIPTION:
             d = d[:MAX_FINANCE_DESCRIPTION]
         period_raw = row.get("amountPeriod")
-        period = (
-            "year"
-            if period_raw == "year"
-            else "month"
-        )
-        out.append(
-            {
-                "id": rid.strip(),
-                "category": cat,
-                "description": d,
-                "amount": amt_f,
-                "currency": cur,
-                "amountPeriod": period,
-            }
-        )
+        period = "year" if period_raw == "year" else "month"
+        rec: dict[str, Any] = {
+            "id": rid.strip(),
+            "category": cat,
+            "description": d,
+            "amount": amt_f,
+            "currency": cur,
+            "amountPeriod": period,
+        }
+        rh = row.get("relatedHouse")
+        if rh in FINANCE_HOUSE_KEYS:
+            rec["relatedHouse"] = rh
+        out.append(rec)
     return out
 
 
@@ -689,16 +687,23 @@ def _normalize_ledger_sheet_payload(
                 f"{body_key}[{i}].amountPeriod must be one of: {allowed_p}"
             )
         period = str(period_raw)
-        out.append(
-            {
-                "id": rid.strip(),
-                "category": cat,
-                "description": desc.strip(),
-                "amount": float(amt),
-                "currency": cur,
-                "amountPeriod": period,
-            }
-        )
+        rec: dict[str, Any] = {
+            "id": rid.strip(),
+            "category": cat,
+            "description": desc.strip(),
+            "amount": float(amt),
+            "currency": cur,
+            "amountPeriod": period,
+        }
+        house_raw = row.get("relatedHouse")
+        if house_raw is not None and house_raw != "":
+            if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
+                houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
+                raise ValueError(
+                    f"{body_key}[{i}].relatedHouse must be one of: {houses}"
+                )
+            rec["relatedHouse"] = house_raw
+        out.append(rec)
     return out
 
 

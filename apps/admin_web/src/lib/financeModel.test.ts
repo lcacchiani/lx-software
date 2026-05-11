@@ -80,4 +80,35 @@ describe("normalizeLedgerRecords", () => {
     expect(out[0].amountPeriod).toBe("year");
     expect(ledgerMonthlyAmount(out[0])).toBe(1000);
   });
+
+  it("preserves relatedHouse when valid", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Salary",
+        description: "Pay",
+        amount: 100,
+        currency: "HKD",
+        relatedHouse: "hillmarton",
+      },
+    ];
+    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES);
+    expect(out[0].relatedHouse).toBe("hillmarton");
+    expect(out[0].amountPeriod).toBe("month");
+  });
+
+  it("drops invalid relatedHouse values", () => {
+    const rows = [
+      {
+        id: "1",
+        category: "Salary",
+        description: "Pay",
+        amount: 100,
+        currency: "HKD",
+        relatedHouse: "other",
+      },
+    ];
+    const out = normalizeLedgerRecords(rows, INCOME_CATEGORIES);
+    expect(out[0].relatedHouse).toBeUndefined();
+  });
 });
