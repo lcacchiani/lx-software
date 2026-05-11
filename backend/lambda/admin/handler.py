@@ -42,6 +42,7 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
         "Saving",
         "Investment",
         "Rent",
+        "Mortgage",
         "Insurance",
         "Retirement",
         "Tax",
