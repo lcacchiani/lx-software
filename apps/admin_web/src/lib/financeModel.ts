@@ -115,11 +115,156 @@ export type FinanceLedgerRecord = {
   readonly isTax?: boolean;
   readonly isSaving?: boolean;
   readonly isInvestment?: boolean;
+  /**
+   * Client-only: expense rows computed from tagged monthly income and allocation rates
+   * (never persisted on the expense sheet).
+   */
+  readonly isDerivedFromTaggedIncome?: boolean;
 };
 
 /** Monthly equivalent for ledger tables that show a per-month column. */
 export function ledgerMonthlyAmount(record: FinanceLedgerRecord): number {
   return record.amountPeriod === "year" ? record.amount / 12 : record.amount;
+}
+
+/** Percentages (0–100) applied to monthly income tagged Tax / Investment / Saving per property. */
+export type ExpenseIncomeAllocationPercents = {
+  readonly taxOnIncomePercent: number;
+  readonly investmentOnIncomePercent: number;
+  readonly savingOnIncomePercent: number;
+};
+
+export const DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS: ExpenseIncomeAllocationPercents = {
+  taxOnIncomePercent: 0,
+  investmentOnIncomePercent: 0,
+  savingOnIncomePercent: 0,
+};
+
+export function normalizeExpenseIncomeAllocationPercents(
+  input: unknown,
+): ExpenseIncomeAllocationPercents {
+  const d = DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
+  if (!input || typeof input !== "object") {
+    return d;
+  }
+  const o = input as Record<string, unknown>;
+  const clamp = (v: unknown): number => {
+    const n =
+      typeof v === "number"
+        ? v
+        : typeof v === "string"
+          ? Number.parseFloat(v)
+          : Number.NaN;
+    if (!Number.isFinite(n)) {
+      return 0;
+    }
+    return Math.min(100, Math.max(0, n));
+  };
+  return {
+    taxOnIncomePercent: clamp(o.taxOnIncomePercent),
+    investmentOnIncomePercent: clamp(o.investmentOnIncomePercent),
+    savingOnIncomePercent: clamp(o.savingOnIncomePercent),
+  };
+}
+
+type DerivedExpenseFromTaggedIncomeSpec = {
+  readonly idSegment: string;
+  readonly category: "Tax" | "Investment" | "Saving";
+  readonly title: string;
+  readonly incomeFlag: "isTax" | "isInvestment" | "isSaving";
+  readonly percentKey: keyof ExpenseIncomeAllocationPercents;
+};
+
+const DERIVED_EXPENSE_FROM_TAGGED_INCOME_SPECS: readonly DerivedExpenseFromTaggedIncomeSpec[] = [
+  {
+    idSegment: "tax-on-income",
+    category: "Tax",
+    title: "Tax on Income",
+    incomeFlag: "isTax",
+    percentKey: "taxOnIncomePercent",
+  },
+  {
+    idSegment: "investment-on-income",
+    category: "Investment",
+    title: "Investments on Income",
+    incomeFlag: "isInvestment",
+    percentKey: "investmentOnIncomePercent",
+  },
+  {
+    idSegment: "saving-on-income",
+    category: "Saving",
+    title: "Savings on Income",
+    incomeFlag: "isSaving",
+    percentKey: "savingOnIncomePercent",
+  },
+];
+
+function sumMonthlyTaggedIncomeByHouseAndCurrency(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  houseKey: HouseKey,
+  flag: "isTax" | "isSaving" | "isInvestment",
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of incomeRecords) {
+    if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) {
+      continue;
+    }
+    if (!r[flag]) {
+      continue;
+    }
+    const c = r.currency;
+    out[c] = (out[c] ?? 0) + ledgerMonthlyAmount(r);
+  }
+  return out;
+}
+
+/**
+ * Synthetic expense rows from allocation rates × monthly income flagged on the income sheet
+ * (Tax / Investment / Saving), one row per property and currency where the tagged base is
+ * positive and the rate is greater than zero.
+ */
+export function buildDerivedExpenseLedgerRowsFromTaggedIncome(
+  incomeRecords: readonly FinanceLedgerRecord[],
+  percents: ExpenseIncomeAllocationPercents,
+  relatedHouseOptions: ReadonlyArray<{ readonly value: HouseKey; readonly label: string }>,
+): FinanceLedgerRecord[] {
+  const houses: readonly HouseKey[] = ["hillmarton", "morrison"];
+  const out: FinanceLedgerRecord[] = [];
+  for (const houseKey of houses) {
+    const houseLabel =
+      relatedHouseOptions.find((o) => o.value === houseKey)?.label ?? houseKey;
+    for (const spec of DERIVED_EXPENSE_FROM_TAGGED_INCOME_SPECS) {
+      const pct = percents[spec.percentKey];
+      if (pct <= 0) {
+        continue;
+      }
+      const byCcy = sumMonthlyTaggedIncomeByHouseAndCurrency(
+        incomeRecords,
+        houseKey,
+        spec.incomeFlag,
+      );
+      for (const [currency, base] of Object.entries(byCcy)) {
+        if (base <= 0) {
+          continue;
+        }
+        const amount = base * (pct / 100);
+        if (!Number.isFinite(amount) || amount === 0) {
+          continue;
+        }
+        out.push({
+          id: `__derived__${spec.idSegment}__${houseKey}__${currency}`,
+          category: spec.category,
+          description: `${spec.title} (${houseLabel})`,
+          amount,
+          currency,
+          amountPeriod: "month",
+          relatedHouse: houseKey,
+          isDerivedFromTaggedIncome: true,
+        });
+      }
+    }
+  }
+  return out;
 }
 
 /** Buckets for dashboard-style income vs expense totals by currency. */
@@ -137,7 +282,9 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
   incomeRecords: readonly FinanceLedgerRecord[],
   expenseRecords: readonly FinanceLedgerRecord[],
   houseKey: HouseKey,
+  expenseAllocationPercents?: ExpenseIncomeAllocationPercents,
 ): FinanceLedgerAmountBuckets {
+  const alloc = expenseAllocationPercents ?? DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS;
   const income: Record<string, number> = {};
   const expenses: Record<string, number> = {};
 
@@ -151,6 +298,30 @@ export function sumMonthlyFinanceLedgerAmountsByHouse(
     const c = r.currency;
     expenses[c] = (expenses[c] ?? 0) + r.amount;
   }
+
+  const addDerivedForFlag = (
+    flag: "isTax" | "isSaving" | "isInvestment",
+    pct: number,
+  ): void => {
+    if (pct <= 0) {
+      return;
+    }
+    for (const r of incomeRecords) {
+      if (r.amountPeriod !== "month" || r.relatedHouse !== houseKey) {
+        continue;
+      }
+      if (!r[flag]) {
+        continue;
+      }
+      const c = r.currency;
+      const base = ledgerMonthlyAmount(r);
+      expenses[c] = (expenses[c] ?? 0) + base * (pct / 100);
+    }
+  };
+
+  addDerivedForFlag("isTax", alloc.taxOnIncomePercent);
+  addDerivedForFlag("isInvestment", alloc.investmentOnIncomePercent);
+  addDerivedForFlag("isSaving", alloc.savingOnIncomePercent);
 
   return { incomeByCurrency: income, expensesByCurrency: expenses };
 }
@@ -173,6 +344,7 @@ export type FinancePersistedState = {
   readonly morrison: HouseFinanceData;
   readonly incomeRecords: readonly FinanceLedgerRecord[];
   readonly expenseRecords: readonly FinanceLedgerRecord[];
+  readonly expenseIncomeAllocationPercents: ExpenseIncomeAllocationPercents;
 };
 
 export const DEFAULT_FLOAT: HouseFloat = {
@@ -193,6 +365,7 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   morrison: emptyHouse(),
   incomeRecords: [],
   expenseRecords: [],
+  expenseIncomeAllocationPercents: DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTS,
 };
 
 function categorySet(categories: readonly string[]): Set<string> {

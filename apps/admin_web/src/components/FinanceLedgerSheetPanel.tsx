@@ -6,8 +6,10 @@ import {
 } from "../lib/currencies";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
+  buildDerivedExpenseLedgerRowsFromTaggedIncome,
   ledgerMonthlyAmount,
   newStatementLineId,
+  type ExpenseIncomeAllocationPercents,
   type FinanceLedgerAmountPeriod,
   type FinanceLedgerRecord,
   type HouseKey,
@@ -161,6 +163,13 @@ export type FinanceLedgerSheetPanelProps = {
     readonly field: IncomeLedgerFlagField;
     readonly label: string;
   }>;
+  /** Expenses sheet: persisted allocation rates for derived rows (optional). */
+  readonly expenseIncomeAllocationPercents?: ExpenseIncomeAllocationPercents;
+  readonly onPatchExpenseIncomeAllocationPercents?: (
+    next: ExpenseIncomeAllocationPercents,
+  ) => void;
+  /** Expenses sheet: income ledger rows used to compute derived expense amounts. */
+  readonly incomeRecordsForDerivedExpenses?: readonly FinanceLedgerRecord[];
 };
 
 function incomeLedgerFlagLabels(
@@ -173,6 +182,111 @@ function incomeLedgerFlagLabels(
     if (record[field]) parts.push(label);
   }
   return parts.join(", ");
+}
+
+type TaggedIncomeAllocationSectionProps = {
+  readonly sheetId: string;
+  readonly percents: ExpenseIncomeAllocationPercents;
+  readonly onSave: (next: ExpenseIncomeAllocationPercents) => void;
+};
+
+function TaggedIncomeAllocationSection({
+  sheetId,
+  percents,
+  onSave,
+}: TaggedIncomeAllocationSectionProps) {
+  const [draft, setDraft] = useState<ExpenseIncomeAllocationPercents>(percents);
+  return (
+    <AdminEditorSection
+      title="Allocation from tagged income"
+      footer={
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => onSave(draft)}>
+          Save allocation rates
+        </button>
+      }
+    >
+      <p className="small text-muted mb-3">
+        Each rate applies to monthly income on the Income tab for the same related property,
+        using rows marked <strong>Tax</strong>, <strong>Investment</strong>, or{" "}
+        <strong>Saving</strong>. Derived expense lines appear in the table below and cannot be
+        edited or deleted.
+      </p>
+      <div className="row g-3">
+        <div className="col-md-4">
+          <label className="form-label small" htmlFor={`${sheetId}-alloc-tax`}>
+            Tax on Income (% of Tax-tagged income)
+          </label>
+          <input
+            id={`${sheetId}-alloc-tax`}
+            type="number"
+            min={0}
+            max={100}
+            step={0.1}
+            className="form-control form-control-sm"
+            value={draft.taxOnIncomePercent}
+            onChange={(ev) => {
+              const raw = ev.target.value;
+              const n = raw === "" ? 0 : Number.parseFloat(raw);
+              setDraft((d) => ({
+                ...d,
+                taxOnIncomePercent: Number.isFinite(n)
+                  ? Math.min(100, Math.max(0, n))
+                  : d.taxOnIncomePercent,
+              }));
+            }}
+          />
+        </div>
+        <div className="col-md-4">
+          <label className="form-label small" htmlFor={`${sheetId}-alloc-inv`}>
+            Investments on Income (% of Investment-tagged income)
+          </label>
+          <input
+            id={`${sheetId}-alloc-inv`}
+            type="number"
+            min={0}
+            max={100}
+            step={0.1}
+            className="form-control form-control-sm"
+            value={draft.investmentOnIncomePercent}
+            onChange={(ev) => {
+              const raw = ev.target.value;
+              const n = raw === "" ? 0 : Number.parseFloat(raw);
+              setDraft((d) => ({
+                ...d,
+                investmentOnIncomePercent: Number.isFinite(n)
+                  ? Math.min(100, Math.max(0, n))
+                  : d.investmentOnIncomePercent,
+              }));
+            }}
+          />
+        </div>
+        <div className="col-md-4">
+          <label className="form-label small" htmlFor={`${sheetId}-alloc-save`}>
+            Savings on Income (% of Saving-tagged income)
+          </label>
+          <input
+            id={`${sheetId}-alloc-save`}
+            type="number"
+            min={0}
+            max={100}
+            step={0.1}
+            className="form-control form-control-sm"
+            value={draft.savingOnIncomePercent}
+            onChange={(ev) => {
+              const raw = ev.target.value;
+              const n = raw === "" ? 0 : Number.parseFloat(raw);
+              setDraft((d) => ({
+                ...d,
+                savingOnIncomePercent: Number.isFinite(n)
+                  ? Math.min(100, Math.max(0, n))
+                  : d.savingOnIncomePercent,
+              }));
+            }}
+          />
+        </div>
+      </div>
+    </AdminEditorSection>
+  );
 }
 
 export function FinanceLedgerSheetPanel({
@@ -189,6 +303,9 @@ export function FinanceLedgerSheetPanel({
   alphabetizeCategoryDropdown = false,
   relatedHouseOptions,
   incomeFlagFields,
+  expenseIncomeAllocationPercents,
+  onPatchExpenseIncomeAllocationPercents,
+  incomeRecordsForDerivedExpenses,
 }: FinanceLedgerSheetPanelProps) {
   const showRelatedHouseCol = Boolean(relatedHouseOptions?.length);
   const showIncomeFlagsCol = Boolean(incomeFlagFields?.length);
@@ -201,6 +318,37 @@ export function FinanceLedgerSheetPanel({
     }
     return m;
   }, [relatedHouseOptions]);
+
+  const showExpenseAllocationBlock =
+    sheetId === "expenses" &&
+    Boolean(
+      expenseIncomeAllocationPercents &&
+        onPatchExpenseIncomeAllocationPercents &&
+        incomeRecordsForDerivedExpenses,
+    );
+
+  const tableSourceRecords = useMemo((): readonly FinanceLedgerRecord[] => {
+    if (
+      sheetId !== "expenses" ||
+      !expenseIncomeAllocationPercents ||
+      !incomeRecordsForDerivedExpenses ||
+      !relatedHouseOptions?.length
+    ) {
+      return records;
+    }
+    const derived = buildDerivedExpenseLedgerRowsFromTaggedIncome(
+      incomeRecordsForDerivedExpenses,
+      expenseIncomeAllocationPercents,
+      relatedHouseOptions,
+    );
+    return [...derived, ...records];
+  }, [
+    sheetId,
+    records,
+    expenseIncomeAllocationPercents,
+    incomeRecordsForDerivedExpenses,
+    relatedHouseOptions,
+  ]);
 
   const [sortKey, setSortKey] = useState<LedgerSortColumnKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -350,8 +498,8 @@ export function FinanceLedgerSheetPanel({
   const filtered = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
     const list = !q
-      ? [...records]
-      : records.filter((r) => {
+      ? [...tableSourceRecords]
+      : tableSourceRecords.filter((r) => {
           const houseHay =
             r.relatedHouse && relatedHouseLabelByValue.get(r.relatedHouse)
               ? relatedHouseLabelByValue.get(r.relatedHouse)
@@ -389,7 +537,7 @@ export function FinanceLedgerSheetPanel({
     }
     return list;
   }, [
-    records,
+    tableSourceRecords,
     tableFilter,
     sortTableRowsByCurrencyCategoryDescription,
     relatedHouseLabelByValue,
@@ -399,8 +547,8 @@ export function FinanceLedgerSheetPanel({
   ]);
 
   const recordCurrencies = useMemo(
-    () => records.map((r) => r.currency),
-    [records],
+    () => tableSourceRecords.map((r) => r.currency),
+    [tableSourceRecords],
   );
 
   const needsFx = useMemo(() => {
@@ -411,7 +559,7 @@ export function FinanceLedgerSheetPanel({
   const ratesQuery = useFrankfurterRatesToBase(totalDisplayCurrency, recordCurrencies);
 
   const convertedTotal = useMemo(() => {
-    if (records.length === 0) return null;
+    if (tableSourceRecords.length === 0) return null;
     let map: ReadonlyMap<string, number> = new Map();
     if (needsFx) {
       if (!ratesQuery.isSuccess) return null;
@@ -420,7 +568,7 @@ export function FinanceLedgerSheetPanel({
       map = ratePayload.rateByQuote;
     }
     try {
-      return records.reduce(
+      return tableSourceRecords.reduce(
         (sum, r) =>
           sum +
           convertAmountToBase(
@@ -435,7 +583,7 @@ export function FinanceLedgerSheetPanel({
       return null;
     }
   }, [
-    records,
+    tableSourceRecords,
     needsFx,
     ratesQuery.isSuccess,
     ratesQuery.data,
@@ -452,6 +600,9 @@ export function FinanceLedgerSheetPanel({
   }
 
   function openEdit(row: FinanceLedgerRecord) {
+    if (row.isDerivedFromTaggedIncome) {
+      return;
+    }
     setEditingId(row.id);
     setFormError(null);
     setLineForm({
@@ -513,6 +664,10 @@ export function FinanceLedgerSheetPanel({
   }
 
   function deleteRow(id: string) {
+    const row = tableSourceRecords.find((r) => r.id === id);
+    if (row?.isDerivedFromTaggedIncome) {
+      return;
+    }
     if (!window.confirm(deleteConfirmMessage)) return;
     onPatch((prev) => prev.filter((r) => r.id !== id));
     if (editingId === id) {
@@ -522,6 +677,16 @@ export function FinanceLedgerSheetPanel({
 
   return (
     <div>
+      {showExpenseAllocationBlock &&
+      expenseIncomeAllocationPercents &&
+      onPatchExpenseIncomeAllocationPercents ? (
+        <TaggedIncomeAllocationSection
+          key={JSON.stringify(expenseIncomeAllocationPercents)}
+          sheetId={sheetId}
+          percents={expenseIncomeAllocationPercents}
+          onSave={onPatchExpenseIncomeAllocationPercents}
+        />
+      ) : null}
       <AdminEditorSection
         title={formSectionTitle}
         footer={
@@ -716,17 +881,23 @@ export function FinanceLedgerSheetPanel({
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-end">
-                  <TableIconButton
-                    iconClassName="bi bi-pencil"
-                    ariaLabel="Edit record"
-                    onClick={() => openEdit(r)}
-                  />
-                  <TableIconButton
-                    iconClassName="bi bi-trash"
-                    ariaLabel="Delete record"
-                    variant="danger"
-                    onClick={() => deleteRow(r.id)}
-                  />
+                  {r.isDerivedFromTaggedIncome ? (
+                    <span className="text-muted small">Derived</span>
+                  ) : (
+                    <>
+                      <TableIconButton
+                        iconClassName="bi bi-pencil"
+                        ariaLabel="Edit record"
+                        onClick={() => openEdit(r)}
+                      />
+                      <TableIconButton
+                        iconClassName="bi bi-trash"
+                        ariaLabel="Delete record"
+                        variant="danger"
+                        onClick={() => deleteRow(r.id)}
+                      />
+                    </>
+                  )}
                 </td>
               </tr>
             ))
@@ -734,11 +905,13 @@ export function FinanceLedgerSheetPanel({
             <AdminDataTableEmptyRow
               colSpan={colSpan}
               message={
-                records.length ? "No records match the filter." : emptyMessage
+                tableSourceRecords.length
+                  ? "No records match the filter."
+                  : emptyMessage
               }
             />
           )}
-          {records.length > 0 ? (
+          {tableSourceRecords.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
               <td className="small text-muted fw-normal">

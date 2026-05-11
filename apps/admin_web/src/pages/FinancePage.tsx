@@ -24,6 +24,7 @@ export function FinancePage() {
     data,
     patchHouse,
     patchLedgerRecords,
+    patchExpenseIncomeAllocationPercents,
     isLoading,
     isError,
     isSaving,
@@ -145,6 +146,9 @@ export function FinancePage() {
                 emptyMessage="No expense records yet."
                 alphabetizeCategoryDropdown
                 relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
+                expenseIncomeAllocationPercents={data.expenseIncomeAllocationPercents}
+                onPatchExpenseIncomeAllocationPercents={patchExpenseIncomeAllocationPercents}
+                incomeRecordsForDerivedExpenses={data.incomeRecords}
               />
             ) : null}
           </div>
