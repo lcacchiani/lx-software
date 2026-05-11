@@ -2,12 +2,14 @@ import { useState } from "react";
 import { FinanceDataLoadOrError, FinanceSaveStatus } from "../components/FinanceDataStatus";
 import { FinanceInvestmentsPanel } from "../components/FinanceInvestmentsPanel";
 import { FinancePensionPanel, FinanceSavingsPanel } from "../components/FinanceSavingsAndPensionPanels";
+import { FinanceAllocationsPanel } from "../components/FinanceAllocationsPanel";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { useFinance } from "../hooks/useFinance";
 import { HOUSE_DISPLAY_LABEL, LEDGER_RELATED_HOUSE_OPTIONS } from "../lib/houses";
 import {
   EXPENSE_CATEGORIES,
+  EXPENSE_LEDGER_FLAG_FIELDS,
   INCOME_CATEGORIES,
   INCOME_LEDGER_FLAG_FIELDS,
 } from "../lib/financeModel";
@@ -19,7 +21,8 @@ type FinanceTab =
   | "savings"
   | "pension"
   | "income"
-  | "expenses";
+  | "expenses"
+  | "allocations";
 
 export function FinancePage() {
   const {
@@ -29,6 +32,7 @@ export function FinancePage() {
     patchInvestmentRecords,
     patchSavingsRecords,
     patchPensionRecords,
+    patchAllocationRecords,
     patchExpenseIncomeAllocationPercents,
     isLoading,
     isError,
@@ -43,7 +47,8 @@ export function FinancePage() {
       <h1 className="h3 mb-3">Finance</h1>
       <p className="text-muted mb-4">
         House statements, floats, investments, savings, pension, and income and expense ledgers are
-        stored in the admin API (DynamoDB).
+        stored in the admin API (DynamoDB). Expenses tagged <strong>Allocate</strong> also surface on
+        the Allocations tab.
       </p>
       <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
       {!isLoading && !isError ? (
@@ -132,6 +137,17 @@ export function FinancePage() {
                 Expenses
               </button>
             </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${tab === "allocations" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "allocations"}
+                onClick={() => setTab("allocations")}
+              >
+                Allocations
+              </button>
+            </li>
           </ul>
 
           <div className="tab-content">
@@ -191,6 +207,13 @@ export function FinancePage() {
                 expenseIncomeAllocationPercents={data.expenseIncomeAllocationPercents}
                 onPatchExpenseIncomeAllocationPercents={patchExpenseIncomeAllocationPercents}
                 incomeRecordsForDerivedExpenses={data.incomeRecords}
+                expenseFlagFields={EXPENSE_LEDGER_FLAG_FIELDS}
+              />
+            ) : null}
+            {tab === "allocations" ? (
+              <FinanceAllocationsPanel
+                records={data.allocationRecords}
+                onPatch={patchAllocationRecords}
               />
             ) : null}
           </div>

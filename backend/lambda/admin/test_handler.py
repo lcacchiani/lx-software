@@ -29,8 +29,10 @@ from handler import (  # noqa: E402
     INCOME_RECORD_CATEGORIES,
     _groups_include_admin,
     _is_allowed_upload_content_type,
+    _merge_allocation_accumulated_last_updated,
     _merge_investment_last_updated,
     _merge_pension_last_updated,
+    _normalize_allocations_sheet_payload,
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
@@ -959,6 +961,7 @@ class TestLedgerSheetPayload(unittest.TestCase):
         self.assertEqual(out[0]["category"], "Utility")
         self.assertEqual(out[0]["amountPeriod"], "month")
         self.assertNotIn("isTax", out[0])
+        self.assertFalse(out[0].get("isAllocate"))
 
     def test_income_classification_flags(self) -> None:
         body = {
@@ -1004,6 +1007,122 @@ class TestLedgerSheetPayload(unittest.TestCase):
                 categories=INCOME_RECORD_CATEGORIES,
             )
         self.assertIn("isTax", str(ctx.exception))
+
+    def test_expense_allocate_flag_true(self) -> None:
+        body = {
+            "expenseRecords": [
+                {
+                    "id": "e1",
+                    "category": "Utility",
+                    "description": "Electric",
+                    "amount": 88,
+                    "currency": "HKD",
+                    "isAllocate": True,
+                }
+            ]
+        }
+        out = _normalize_ledger_sheet_payload(
+            body,
+            body_key="expenseRecords",
+            categories=EXPENSE_RECORD_CATEGORIES,
+        )
+        self.assertTrue(out[0]["isAllocate"])
+
+    def test_expense_allocate_flag_invalid_type(self) -> None:
+        body = {
+            "expenseRecords": [
+                {
+                    "id": "e1",
+                    "category": "Utility",
+                    "description": "Electric",
+                    "amount": 88,
+                    "currency": "HKD",
+                    "isAllocate": "yes",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_ledger_sheet_payload(
+                body,
+                body_key="expenseRecords",
+                categories=EXPENSE_RECORD_CATEGORIES,
+            )
+        self.assertIn("isAllocate", str(ctx.exception))
+
+    def test_normalize_allocations_empty_when_none_tagged(self) -> None:
+        out = _normalize_allocations_sheet_payload(
+            {"allocationRecords": []}, frozenset()
+        )
+        self.assertEqual(out, [])
+
+    def test_normalize_allocations_rejects_nonempty_when_none_tagged(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_allocations_sheet_payload(
+                {"allocationRecords": [{"expenseId": "x", "accumulatedAmount": 0}]},
+                frozenset(),
+            )
+
+    def test_normalize_allocations_full_match(self) -> None:
+        body = {
+            "allocationRecords": [
+                {"expenseId": "a", "accumulatedAmount": 0},
+                {"expenseId": "b", "accumulatedAmount": 12.5},
+            ]
+        }
+        out = _normalize_allocations_sheet_payload(body, frozenset({"a", "b"}))
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out[1]["accumulatedAmount"], 12.5)
+
+    def test_normalize_allocations_rejects_missing_row(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_allocations_sheet_payload(
+                {"allocationRecords": [{"expenseId": "a", "accumulatedAmount": 0}]},
+                frozenset({"a", "b"}),
+            )
+
+    def test_normalize_allocations_rejects_unknown_expense_id(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_allocations_sheet_payload(
+                {
+                    "allocationRecords": [
+                        {"expenseId": "a", "accumulatedAmount": 0},
+                        {"expenseId": "z", "accumulatedAmount": 0},
+                    ]
+                },
+                frozenset({"a"}),
+            )
+
+    def test_merge_allocation_updates_last_updated_on_amount_change(self) -> None:
+        existing = [{"expenseId": "a", "accumulatedAmount": 1.0, "lastUpdated": "2026-01-01"}]
+        normalized = [{"expenseId": "a", "accumulatedAmount": 2.0}]
+        out = _merge_allocation_accumulated_last_updated(
+            normalized, existing, today_iso="2026-02-02"
+        )
+        self.assertEqual(out[0]["lastUpdated"], "2026-02-02")
+
+    def test_merge_allocation_keeps_last_updated_when_amount_unchanged(self) -> None:
+        out = _merge_allocation_accumulated_last_updated(
+            [{"expenseId": "a", "accumulatedAmount": 2.0}],
+            [{"expenseId": "a", "accumulatedAmount": 2.0, "lastUpdated": "2026-01-01"}],
+            today_iso="2026-02-02",
+        )
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-01")
+
+    def test_sanitize_expense_allocate_flag(self) -> None:
+        raw = [
+            {
+                "id": "e1",
+                "category": "Utility",
+                "description": "x",
+                "amount": 1,
+                "currency": "HKD",
+                "isAllocate": True,
+            }
+        ]
+        out = _sanitize_ledger_records_list(
+            raw, EXPENSE_RECORD_CATEGORIES, include_expense_flags=True
+        )
+        self.assertTrue(out[0]["isAllocate"])
 
     def test_expense_helper_category(self) -> None:
         body = {
