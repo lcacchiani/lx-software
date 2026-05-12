@@ -54,7 +54,7 @@ EXPENSE_RECORD_CATEGORIES = frozenset(
 INVESTMENT_RECORD_CATEGORIES = frozenset(
     {"Real Estate", "Fixed Term Deposit", "ETF", "Crypto"}
 )
-INVESTMENT_ASSET_TYPES = frozenset({"Fixed", "Liquid"})
+ASSET_TYPES = frozenset({"Fixed", "Liquid"})
 MAX_INVESTMENT_PROVIDER_LEN = 500
 MAX_INVESTMENT_TICKER_LEN = 64
 MAX_INVESTMENT_CRYPTO_CURRENCY_LEN = 120
@@ -817,7 +817,7 @@ def _sanitize_investment_records_list(raw: Any) -> list[dict[str, Any]]:
         if cat not in INVESTMENT_RECORD_CATEGORIES:
             continue
         at = row.get("assetType")
-        if at not in INVESTMENT_ASSET_TYPES:
+        if at not in ASSET_TYPES:
             continue
         prov = row.get("provider")
         if not isinstance(prov, str) or not prov.strip():
@@ -977,7 +977,7 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
             f"At most {MAX_LEDGER_RECORDS} records allowed in investmentRecords"
         )
     allowed_cat = ", ".join(sorted(INVESTMENT_RECORD_CATEGORIES))
-    allowed_at = ", ".join(sorted(INVESTMENT_ASSET_TYPES))
+    allowed_at = ", ".join(sorted(ASSET_TYPES))
     out: list[dict[str, Any]] = []
     for i, row in enumerate(raw):
         if not isinstance(row, dict):
@@ -991,7 +991,7 @@ def _normalize_investment_sheet_payload(body: dict[str, Any]) -> list[dict[str, 
                 f"investmentRecords[{i}].category must be one of: {allowed_cat}"
             )
         at = row.get("assetType")
-        if at not in INVESTMENT_ASSET_TYPES:
+        if at not in ASSET_TYPES:
             raise ValueError(
                 f"investmentRecords[{i}].assetType must be one of: {allowed_at}"
             )
@@ -1219,7 +1219,7 @@ def _sanitize_savings_records_list(raw: Any) -> list[dict[str, Any]]:
             if len(desc) > MAX_FINANCE_DESCRIPTION:
                 desc = desc[:MAX_FINANCE_DESCRIPTION]
         at_raw = row.get("assetType")
-        if at_raw in INVESTMENT_ASSET_TYPES:
+        if at_raw in ASSET_TYPES:
             at = str(at_raw)
         else:
             at = "Fixed"
@@ -1941,7 +1941,7 @@ def _normalize_savings_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any
         d = desc_raw.strip()
         if len(d) > MAX_FINANCE_DESCRIPTION:
             raise ValueError(f"savingsRecords[{i}].description is too long")
-        allowed_at = ", ".join(sorted(INVESTMENT_ASSET_TYPES))
+        allowed_at = ", ".join(sorted(ASSET_TYPES))
         at_raw = row.get("assetType")
         if at_raw is None or at_raw == "":
             at = "Fixed"
@@ -1951,7 +1951,7 @@ def _normalize_savings_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any
             at_st = at_raw.strip()
             if not at_st:
                 at = "Fixed"
-            elif at_st not in INVESTMENT_ASSET_TYPES:
+            elif at_st not in ASSET_TYPES:
                 raise ValueError(
                     f"savingsRecords[{i}].assetType must be one of: {allowed_at}"
                 )

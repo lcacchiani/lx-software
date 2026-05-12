@@ -111,9 +111,9 @@ export const INVESTMENT_CATEGORIES = [
 
 export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
 
-export const INVESTMENT_ASSET_TYPES = ["Fixed", "Liquid"] as const;
+export const ASSET_TYPES = ["Fixed", "Liquid"] as const;
 
-export type AssetType = (typeof INVESTMENT_ASSET_TYPES)[number];
+export type AssetType = (typeof ASSET_TYPES)[number];
 
 export type HouseKey = "hillmarton" | "morrison";
 

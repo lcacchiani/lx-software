@@ -7,7 +7,7 @@ import {
 import { convertAmountToBase, convertAmountWithBase } from "../lib/frankfurterRates";
 import { parseAmount } from "../lib/formParse";
 import {
-  INVESTMENT_ASSET_TYPES,
+  ASSET_TYPES,
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
   INVESTMENT_TICKER_MAX_LEN,
@@ -695,7 +695,7 @@ export function FinanceInvestmentsPanel({
       setFormError("Pick a valid category.");
       return;
     }
-    if (!INVESTMENT_ASSET_TYPES.includes(form.assetType)) {
+    if (!ASSET_TYPES.includes(form.assetType)) {
       setFormError("Pick a valid asset type.");
       return;
     }
@@ -860,7 +860,7 @@ export function FinanceInvestmentsPanel({
                   setForm((f) => ({ ...f, assetType: ev.target.value as AssetType }))
                 }
               >
-                {INVESTMENT_ASSET_TYPES.map((t) => (
+                {ASSET_TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>

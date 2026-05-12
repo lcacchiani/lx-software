@@ -8,7 +8,7 @@ import { formatDateUtc } from "../lib/formatDisplay";
 import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
-  INVESTMENT_ASSET_TYPES,
+  ASSET_TYPES,
   MAX_PENSION_DESCRIPTION_LEN,
   newStatementLineId,
   type FinancePensionRecord,
@@ -441,7 +441,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const id = editingId ?? newStatementLineId();
 
     if (variant === "savings") {
-      const assetType: AssetType = INVESTMENT_ASSET_TYPES.includes(assetTypeInput)
+      const assetType: AssetType = ASSET_TYPES.includes(assetTypeInput)
         ? assetTypeInput
         : "Fixed";
       const descTrimmed = descriptionInput.trim();
@@ -558,7 +558,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                     setAssetTypeInput(ev.target.value as AssetType)
                   }
                 >
-                  {INVESTMENT_ASSET_TYPES.map((t) => (
+                  {ASSET_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>
