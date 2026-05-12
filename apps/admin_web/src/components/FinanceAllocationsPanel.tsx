@@ -9,6 +9,7 @@ import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import {
+  CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX,
   type FinanceAllocationRecord,
   newCustomAllocationExpenseId,
 } from "../lib/financeModel";
@@ -32,6 +33,16 @@ function allocationLastUpdatedDisplay(lastUpdated: string | undefined): string {
     return "—";
   }
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
+}
+
+/** Linked rows mirror an expense tagged Allocate; custom rows are created on the Allocations tab. */
+function allocationTagsCellLabel(r: FinanceAllocationRecord): string {
+  const isCustom =
+    r.isCustomAllocation === true || r.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
+  if (!isCustom) {
+    return r.isIncome === true ? "Expenses, Income" : "Expenses";
+  }
+  return r.isIncome === true ? "Income" : "—";
 }
 
 function compareAllocations(
@@ -255,7 +266,7 @@ export function FinanceAllocationsPanel(props: {
           const hay = [r.description, r.currency, String(r.monthlyAmount), String(r.accumulatedAmount)]
             .join(" ")
             .toLowerCase();
-          const tagHay = r.isIncome === true ? "income" : "";
+          const tagHay = allocationTagsCellLabel(r).toLowerCase();
           return `${hay} ${tagHay}`.includes(q);
         });
     if (sortKey !== null) {
@@ -686,7 +697,7 @@ export function FinanceAllocationsPanel(props: {
               return (
               <tr key={r.expenseId}>
                 <td className="small">{r.description}</td>
-                <td className="small text-muted">{r.isIncome === true ? "Income" : "—"}</td>
+                <td className="small text-muted">{allocationTagsCellLabel(r)}</td>
                 <td className="small text-end">
                   {monthlyCol.kind === "dash" ? (
                     <span className="text-muted">—</span>
