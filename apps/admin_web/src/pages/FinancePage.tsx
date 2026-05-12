@@ -43,7 +43,7 @@ export function FinancePage() {
     saveError,
     saveErrorDetail,
   } = useFinance();
-  const [tab, setTab] = useState<FinanceTab>("hillmarton");
+  const [tab, setTab] = useState<FinanceTab>("accounts");
 
   return (
     <div>
