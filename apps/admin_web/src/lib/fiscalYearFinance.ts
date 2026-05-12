@@ -62,10 +62,15 @@ export function defaultFiscalYearIdForNowUtc(now = new Date()): FiscalYearId {
 
 export type FiscalYearAmountBuckets = {
   readonly incomeByCurrency: Readonly<Record<string, number>>;
+  /** Net from statement lines typed as expenditure (excludes mortgage). */
   readonly expensesByCurrency: Readonly<Record<string, number>>;
+  readonly mortgageByCurrency: Readonly<Record<string, number>>;
 };
 
-/** Sums statement-line net amounts by type for lines whose `dateUtc` falls in the fiscal year. */
+/**
+ * Sums statement-line net amounts for lines whose `dateUtc` falls in the fiscal year:
+ * income, expenditure (excluding mortgage), and mortgage separately.
+ */
 export function sumHouseStatementLinesForFiscalYear(
   lines: readonly HouseStatementLine[],
   startCalendarYear: number,
@@ -73,14 +78,20 @@ export function sumHouseStatementLinesForFiscalYear(
   const { startMs, endExclusiveMs } = fiscalYearUtcBounds(startCalendarYear);
   const income: Record<string, number> = {};
   const expenses: Record<string, number> = {};
+  const mortgage: Record<string, number> = {};
 
   for (const line of lines) {
     const t = new Date(line.dateUtc).getTime();
     if (Number.isNaN(t) || t < startMs || t >= endExclusiveMs) continue;
-    const bucket = line.type === "income" ? income : expenses;
     const cur = line.currency;
-    bucket[cur] = (bucket[cur] ?? 0) + line.netAmount;
+    if (line.type === "income") {
+      income[cur] = (income[cur] ?? 0) + line.netAmount;
+    } else if (line.type === "mortgage") {
+      mortgage[cur] = (mortgage[cur] ?? 0) + line.netAmount;
+    } else {
+      expenses[cur] = (expenses[cur] ?? 0) + line.netAmount;
+    }
   }
 
-  return { incomeByCurrency: income, expensesByCurrency: expenses };
+  return { incomeByCurrency: income, expensesByCurrency: expenses, mortgageByCurrency: mortgage };
 }

@@ -140,6 +140,10 @@ export function HouseSummaryCard({
           <dd className="col-sm-8 pt-2">
             <FiscalBucketList buckets={sums.expensesByCurrency} emptyLabel="—" />
           </dd>
+          <dt className="col-sm-4 text-muted pt-2">Mortgage</dt>
+          <dd className="col-sm-8 pt-2">
+            <FiscalBucketList buckets={sums.mortgageByCurrency} emptyLabel="—" />
+          </dd>
         </dl>
         <p className="text-muted small mb-0 mt-3">
           Totals use net amounts from house statement lines in this period.
