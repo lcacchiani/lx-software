@@ -185,7 +185,7 @@ function HouseSummaryCard({
   );
 }
 
-function GeneralSummaryCard() {
+function MonthlyViewExpenseAllocationsSection() {
   const { data } = useFinance();
   const generalBuckets = useMemo(
     () =>
@@ -355,8 +355,7 @@ function GeneralSummaryCard() {
     if (c.income <= 0) {
       return (
         <p className="text-muted small mb-0">
-          General income is zero in {GLOBAL_DEFAULT_CURRENCY}, so category shares of income
-          are not shown.
+          Income is zero in {GLOBAL_DEFAULT_CURRENCY}, so category allocations are not shown.
         </p>
       );
     }
@@ -381,17 +380,17 @@ function GeneralSummaryCard() {
   }
 
   return (
-    <div className="card h-100 shadow-sm">
-      <div className="card-body d-flex flex-column">
-        <h2 className="h6 mb-3">
-          <strong>General</strong>
-        </h2>
-        <div className="d-flex flex-column flex-lg-row gap-3 flex-grow-1">
-          <div className="flex-grow-1 flex-lg-shrink-0" style={{ flexBasis: "min(100%, 20rem)" }}>
+    <div className="row g-3 mb-4">
+      <div className="col-12 col-lg-6">
+        <div className="card h-100 shadow-sm">
+          <div className="card-body d-flex flex-column">
+            <h2 className="h6 mb-3">
+              <strong>Monthly View</strong>
+            </h2>
             <p className="text-muted small mb-3">
-              Monthly income and expenses not linked to any property (including
-              derived tax, saving, and investment amounts from tagged income with no
-              related property), summed in {GLOBAL_DEFAULT_CURRENCY}.
+              Monthly income and expenses not linked to any property (including derived tax,
+              saving, and investment amounts from tagged income with no related property),
+              summed in {GLOBAL_DEFAULT_CURRENCY}.
             </p>
             <dl className="row small mb-0">
               <dt className="col-sm-4 text-muted">Income</dt>
@@ -404,10 +403,17 @@ function GeneralSummaryCard() {
               <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "netDaily")}</dd>
             </dl>
           </div>
-          <div className="vr text-muted opacity-50 d-none d-lg-block align-self-stretch flex-shrink-0" />
-          <div className="flex-grow-1">
+        </div>
+      </div>
+      <div className="col-12 col-lg-6">
+        <div className="card h-100 shadow-sm">
+          <div className="card-body d-flex flex-column">
+            <h2 className="h6 mb-3">
+              <strong>Expense Allocations</strong>
+            </h2>
             <p className="small text-muted mb-2">
-              Expense categories as a share of general income (highest first).
+              Expense categories as a share of general income in this monthly view (highest
+              first).
             </p>
             {generalCategoryPercentPanel(convertedHkd)}
           </div>
@@ -472,11 +478,7 @@ export function DashboardPage() {
               />
             </div>
           </div>
-          <div className="row g-3 mb-4">
-            <div className="col-12">
-              <GeneralSummaryCard />
-            </div>
-          </div>
+          <MonthlyViewExpenseAllocationsSection />
         </>
       ) : null}
 
