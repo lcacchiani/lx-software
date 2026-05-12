@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  allocationRecordDisplayedMonthlyAmount,
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
   investmentRecordCurrentValueInRowCurrency,
   investmentRecordFiatNotionalInQuoteCurrency,
@@ -24,6 +25,48 @@ import {
   syntheticIncomeLedgerRowsFromAllocations,
   type HouseKey,
 } from "./financeModel";
+
+describe("allocationRecordDisplayedMonthlyAmount", () => {
+  it("returns linked monthly amount", () => {
+    expect(
+      allocationRecordDisplayedMonthlyAmount({
+        expenseId: "e1",
+        description: "A",
+        monthlyAmount: 120,
+        accumulatedAmount: 0,
+        currency: "HKD",
+      }),
+    ).toBe(120);
+  });
+
+  it("returns custom income monthly when income tagged", () => {
+    expect(
+      allocationRecordDisplayedMonthlyAmount({
+        expenseId: "__custom__00000000-0000-4000-8000-000000000001",
+        description: "C",
+        monthlyAmount: 0,
+        accumulatedAmount: 1,
+        currency: "USD",
+        isCustomAllocation: true,
+        isIncome: true,
+        allocationIncomeMonthly: 42,
+      }),
+    ).toBe(42);
+  });
+
+  it("returns zero for custom row without income", () => {
+    expect(
+      allocationRecordDisplayedMonthlyAmount({
+        expenseId: "__custom__00000000-0000-4000-8000-000000000002",
+        description: "C",
+        monthlyAmount: 0,
+        accumulatedAmount: 1,
+        currency: "USD",
+        isCustomAllocation: true,
+      }),
+    ).toBe(0);
+  });
+});
 
 describe("normalizeInvestmentRecords", () => {
   it("keeps rows with allowed category and asset type", () => {
@@ -1387,6 +1430,38 @@ describe("allocationRecordsToApiPayload", () => {
     expect(body).toEqual([{ expenseId: "exp-1", accumulatedAmount: 2, isIncome: true }]);
   });
 
+  it("includes isPension on linked and custom rows when true", () => {
+    const body = allocationRecordsToApiPayload([
+      {
+        expenseId: "exp-1",
+        description: "X",
+        monthlyAmount: 10,
+        accumulatedAmount: 2,
+        currency: "HKD",
+        isPension: true,
+      },
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000012",
+        description: "Side",
+        monthlyAmount: 0,
+        accumulatedAmount: 1,
+        currency: "HKD",
+        isCustomAllocation: true,
+        isPension: true,
+      },
+    ]);
+    expect(body).toEqual([
+      { expenseId: "exp-1", accumulatedAmount: 2, isPension: true },
+      {
+        expenseId: "__custom__00000000-0000-4000-8000-000000000012",
+        description: "Side",
+        currency: "HKD",
+        accumulatedAmount: 1,
+        isPension: true,
+      },
+    ]);
+  });
+
   it("treats __custom__ id as custom even without flag", () => {
     const body = allocationRecordsToApiPayload([
       {
@@ -1416,11 +1491,13 @@ describe("allocationRecordsToApiPayload", () => {
         accumulatedAmount: 1,
         currency: "HKD",
         isCustomAllocation: true,
+        isPension: true,
       },
     ]);
     expect(out).toHaveLength(1);
     expect(out[0].monthlyAmount).toBe(0);
     expect(out[0].isIncome).toBeUndefined();
+    expect(out[0].isPension).toBe(true);
   });
 
   it("normalizes custom allocation with income tag and monthly", () => {

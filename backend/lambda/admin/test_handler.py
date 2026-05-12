@@ -1492,6 +1492,18 @@ class TestLedgerSheetPayload(unittest.TestCase):
         self.assertTrue(by_id["a"].get("isIncome"))
         self.assertFalse(by_id["b"].get("isIncome", False))
 
+    def test_normalize_allocations_linked_is_pension_flag(self) -> None:
+        body = {
+            "allocationRecords": [
+                {"expenseId": "a", "accumulatedAmount": 0, "isPension": True},
+                {"expenseId": "b", "accumulatedAmount": 0},
+            ]
+        }
+        out = _normalize_allocations_sheet_payload(body, frozenset({"a", "b"}))
+        by_id = {r["expenseId"]: r for r in out}
+        self.assertTrue(by_id["a"].get("isPension"))
+        self.assertFalse(by_id["b"].get("isPension", False))
+
     def test_merge_allocation_linked_updates_last_updated_on_is_income_toggle(self) -> None:
         existing = [{"expenseId": "a", "accumulatedAmount": 1.0, "lastUpdated": "2026-01-01"}]
         normalized = [{"expenseId": "a", "accumulatedAmount": 1.0, "isIncome": True}]
@@ -1500,6 +1512,15 @@ class TestLedgerSheetPayload(unittest.TestCase):
         )
         self.assertEqual(out[0]["lastUpdated"], "2026-02-02")
         self.assertTrue(out[0].get("isIncome"))
+
+    def test_merge_allocation_linked_updates_last_updated_on_is_pension_toggle(self) -> None:
+        existing = [{"expenseId": "a", "accumulatedAmount": 1.0, "lastUpdated": "2026-01-01"}]
+        normalized = [{"expenseId": "a", "accumulatedAmount": 1.0, "isPension": True}]
+        out = _merge_allocation_stored_last_updated(
+            normalized, existing, today_iso="2026-02-02"
+        )
+        self.assertEqual(out[0]["lastUpdated"], "2026-02-02")
+        self.assertTrue(out[0].get("isPension"))
 
     def test_normalize_allocations_mixed_linked_and_custom(self) -> None:
         eid = f"__custom__{uuid.uuid4()}"

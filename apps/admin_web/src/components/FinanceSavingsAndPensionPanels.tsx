@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -9,8 +9,10 @@ import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   ASSET_TYPES,
+  CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX,
   MAX_PENSION_DESCRIPTION_LEN,
   newStatementLineId,
+  type FinanceAllocationRecord,
   type FinancePensionRecord,
   type FinanceSavingsRecord,
   type AssetType,
@@ -775,6 +777,111 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   );
 }
 
+function pensionTaggedAllocationMonthlyCell(r: FinanceAllocationRecord): ReactNode {
+  const isCustom =
+    r.isCustomAllocation === true || r.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
+  if (isCustom && r.isIncome !== true) {
+    return <span className="text-muted">—</span>;
+  }
+  if (isCustom && r.isIncome === true) {
+    return (
+      <MoneyAmount
+        amount={r.allocationIncomeMonthly ?? 0}
+        currency={r.currency}
+        amountOnly
+      />
+    );
+  }
+  return <MoneyAmount amount={r.monthlyAmount} currency={r.currency} amountOnly />;
+}
+
+function allocationRowLastUpdatedDisplay(lastUpdated: string | undefined): string {
+  if (!lastUpdated) {
+    return "—";
+  }
+  return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
+}
+
+function PensionTaggedAllocationsFromAllocationsTab(props: {
+  readonly rows: readonly FinanceAllocationRecord[];
+}) {
+  const { rows } = props;
+  const [filter, setFilter] = useState("");
+  const columns = useMemo(
+    (): AdminDataTableColumn[] => [
+      { key: "d", header: "Description", className: "small" },
+      {
+        key: "m",
+        header: <span className="text-end d-block">Monthly amount</span>,
+        className: "small text-end",
+        headerClassName: "small text-end",
+      },
+      {
+        key: "a",
+        header: <span className="text-end d-block">Accumulated</span>,
+        className: "small text-end",
+        headerClassName: "small text-end",
+      },
+      { key: "c", header: "Currency", className: "small" },
+      { key: "l", header: "Last update", className: "small text-nowrap" },
+    ],
+    [],
+  );
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const base = !q
+      ? [...rows]
+      : rows.filter((r) =>
+          [r.description, r.currency, String(r.accumulatedAmount)]
+            .join(" ")
+            .toLowerCase()
+            .includes(q),
+        );
+    base.sort((a, b) =>
+      a.description.localeCompare(b.description, undefined, { sensitivity: "base" }),
+    );
+    return base;
+  }, [rows, filter]);
+  const colSpan = columns.length;
+
+  return (
+    <AdminEditorSection title="Allocation rows tagged Pension">
+      <p className="small text-muted mb-3">
+        Lines tagged <strong>Pension</strong> on the Allocations tab are listed here. Edit amounts
+        and tags on Allocations.
+      </p>
+      <AdminDataTable
+        embedded
+        columns={columns}
+        filterValue={filter}
+        onFilterChange={setFilter}
+        filterPlaceholder="Filter tagged allocations…"
+      >
+        {filtered.length ? (
+          filtered.map((r) => (
+            <tr key={r.expenseId}>
+              <td className="small">{r.description}</td>
+              <td className="small text-end">{pensionTaggedAllocationMonthlyCell(r)}</td>
+              <td className="small text-end">
+                <MoneyAmount amount={r.accumulatedAmount} currency={r.currency} amountOnly />
+              </td>
+              <td className="small">{r.currency}</td>
+              <td className="small">{allocationRowLastUpdatedDisplay(r.lastUpdated)}</td>
+            </tr>
+          ))
+        ) : (
+          <AdminDataTableEmptyRow
+            colSpan={colSpan}
+            message={
+              rows.length ? "No rows match the filter." : "No allocation rows tagged Pension yet."
+            }
+          />
+        )}
+      </AdminDataTable>
+    </AdminEditorSection>
+  );
+}
+
 export function FinanceSavingsPanel(props: {
   readonly records: readonly FinanceSavingsRecord[];
   readonly onPatch: (
@@ -804,21 +911,29 @@ export function FinancePensionPanel(props: {
   readonly onPatch: (
     patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[],
   ) => void;
+  readonly allocationRecords: readonly FinanceAllocationRecord[];
 }) {
+  const pensionTaggedAllocations = useMemo(
+    () => props.allocationRecords.filter((r) => r.isPension === true),
+    [props.allocationRecords],
+  );
   return (
-    <SimpleMoneyRecordsPanel
-      variant="pension"
-      records={props.records}
-      onPatch={props.onPatch}
-      sheetId="pension"
-      formSectionTitle="Pension record"
-      tableSectionTitle="Pension"
-      labelColumnHeader="Fund"
-      labelFormLabel="Fund"
-      labelInputId="pension-fund"
-      deleteConfirmMessage="Delete this pension record?"
-      emptyMessage="No pension records yet."
-      columnOrder="valueFirst"
-    />
+    <div>
+      <PensionTaggedAllocationsFromAllocationsTab rows={pensionTaggedAllocations} />
+      <SimpleMoneyRecordsPanel
+        variant="pension"
+        records={props.records}
+        onPatch={props.onPatch}
+        sheetId="pension"
+        formSectionTitle="Pension record"
+        tableSectionTitle="Pension"
+        labelColumnHeader="Fund"
+        labelFormLabel="Fund"
+        labelInputId="pension-fund"
+        deleteConfirmMessage="Delete this pension record?"
+        emptyMessage="No pension records yet."
+        columnOrder="valueFirst"
+      />
+    </div>
   );
 }
