@@ -166,6 +166,19 @@ export function FinanceAccountsPanel(props: {
         thAriaSort: thAria("desc"),
       },
       {
+        key: "atype",
+        header: (
+          <TableSortHeaderButton
+            label="Account Type"
+            isActive={sortKey === "atype"}
+            direction={dirFor("atype")}
+            onClick={() => onSort("atype")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("atype"),
+      },
+      {
         key: "amt",
         header: (
           <TableSortHeaderButton
@@ -194,17 +207,17 @@ export function FinanceAccountsPanel(props: {
         thAriaSort: thAria("stmt"),
       },
       {
-        key: "atype",
+        key: "ccy",
         header: (
           <TableSortHeaderButton
-            label="Account Type"
-            isActive={sortKey === "atype"}
-            direction={dirFor("atype")}
-            onClick={() => onSort("atype")}
+            label="Currency"
+            isActive={sortKey === "ccy"}
+            direction={dirFor("ccy")}
+            onClick={() => onSort("ccy")}
           />
         ),
         className: "small",
-        thAriaSort: thAria("atype"),
+        thAriaSort: thAria("ccy"),
       },
       {
         key: "day",
@@ -219,19 +232,6 @@ export function FinanceAccountsPanel(props: {
         className: "small text-end",
         headerClassName: "text-end",
         thAriaSort: thAria("day"),
-      },
-      {
-        key: "ccy",
-        header: (
-          <TableSortHeaderButton
-            label="Currency"
-            isActive={sortKey === "ccy"}
-            direction={dirFor("ccy")}
-            onClick={() => onSort("ccy")}
-          />
-        ),
-        className: "small",
-        thAriaSort: thAria("ccy"),
       },
       {
         key: "lastUpdated",
@@ -457,6 +457,29 @@ export function FinanceAccountsPanel(props: {
               />
             </div>
             <div className="col-2">
+              <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
+                Account Type
+              </label>
+              <select
+                id={`${sheetId}-account-type`}
+                className="form-select form-select-sm"
+                value={accountTypeInput}
+                onChange={(ev) => {
+                  const next = ev.target.value as FinanceAccountType;
+                  setAccountTypeInput(next);
+                  if (!accountTypeIsCreditCard(next)) {
+                    setLastStatementStr("");
+                  }
+                }}
+              >
+                {FINANCE_ACCOUNT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-2">
               <label className="form-label small" htmlFor={`${sheetId}-value`}>
                 Current Balance
               </label>
@@ -494,27 +517,16 @@ export function FinanceAccountsPanel(props: {
               )}
             </div>
             <div className="col-2">
-              <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
-                Account Type
+              <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
+                Currency
               </label>
-              <select
-                id={`${sheetId}-account-type`}
-                className="form-select form-select-sm"
-                value={accountTypeInput}
-                onChange={(ev) => {
-                  const next = ev.target.value as FinanceAccountType;
-                  setAccountTypeInput(next);
-                  if (!accountTypeIsCreditCard(next)) {
-                    setLastStatementStr("");
-                  }
-                }}
-              >
-                {FINANCE_ACCOUNT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <CurrencySelect
+                id={`${sheetId}-ccy`}
+                value={formCurrency}
+                onChange={(code) =>
+                  setFormCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                }
+              />
             </div>
             <div className="col-2">
               <label
@@ -549,18 +561,6 @@ export function FinanceAccountsPanel(props: {
                 </div>
               )}
             </div>
-            <div className="col-2">
-              <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
-                Currency
-              </label>
-              <CurrencySelect
-                id={`${sheetId}-ccy`}
-                value={formCurrency}
-                onChange={(code) =>
-                  setFormCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
-                }
-              />
-            </div>
           </div>
         </form>
       </AdminEditorSection>
@@ -577,6 +577,7 @@ export function FinanceAccountsPanel(props: {
             filtered.map((r) => (
               <tr key={r.id}>
                 <td className="small">{r.description || "—"}</td>
+                <td className="small">{r.accountType}</td>
                 <td className="small text-end">
                   <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
                 </td>
@@ -591,11 +592,10 @@ export function FinanceAccountsPanel(props: {
                     "—"
                   )}
                 </td>
-                <td className="small">{r.accountType}</td>
+                <td className="small">{r.currency}</td>
                 <td className="small text-end">
                   {accountTypeUsesBillingCycleDay(r.accountType) ? r.billingCycleDay : "—"}
                 </td>
-                <td className="small">{r.currency}</td>
                 <td className="small text-nowrap">{accountLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
                   <TableIconButton
@@ -621,6 +621,14 @@ export function FinanceAccountsPanel(props: {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
+              <td className="small text-muted fw-normal">
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
+              </td>
               <td className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount
@@ -633,15 +641,6 @@ export function FinanceAccountsPanel(props: {
                 )}
               </td>
               <td className="small" />
-              <td className="small" />
-              <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
-                  needsFx={needsFx}
-                  fxError={fxError}
-                  fxLoading={fxLoading}
-                  ratesQuery={ratesQuery}
-                />
-              </td>
               <td className="small">
                 <CurrencySelect
                   id={`${sheetId}-total-ccy`}
@@ -651,6 +650,7 @@ export function FinanceAccountsPanel(props: {
                   disabled={fxLoading}
                 />
               </td>
+              <td className="small" />
               <td className="small" />
               <td className="small text-end" />
             </tr>
