@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -9,7 +9,6 @@ import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   ASSET_TYPES,
-  CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX,
   MAX_PENSION_DESCRIPTION_LEN,
   newStatementLineId,
   type FinanceAllocationRecord,
@@ -78,9 +77,24 @@ function compareSavings(
   return a.id.localeCompare(b.id);
 }
 
-function comparePension(
-  a: FinancePensionRecord,
-  b: FinancePensionRecord,
+type PensionTableFundRow = { readonly kind: "fund"; readonly record: FinancePensionRecord };
+type PensionTableAllocationRow = {
+  readonly kind: "allocation";
+  readonly record: FinanceAllocationRecord;
+};
+type PensionTableRow = PensionTableFundRow | PensionTableAllocationRow;
+
+function pensionTableFundLabel(row: PensionTableRow): string {
+  return row.kind === "fund" ? row.record.fund : "Allocation";
+}
+
+function pensionTableValue(row: PensionTableRow): number {
+  return row.kind === "fund" ? row.record.value : row.record.accumulatedAmount;
+}
+
+function comparePensionTableRows(
+  a: PensionTableRow,
+  b: PensionTableRow,
   sortKey: MoneyRecordsSortKey,
   sortDir: "asc" | "desc",
 ): number {
@@ -88,26 +102,30 @@ function comparePension(
   let cmp = 0;
   switch (sortKey) {
     case "label":
-      cmp = a.fund.localeCompare(b.fund, undefined, { sensitivity: "base" });
+      cmp = pensionTableFundLabel(a).localeCompare(pensionTableFundLabel(b), undefined, {
+        sensitivity: "base",
+      });
       break;
     case "atype":
       cmp = 0;
       break;
     case "amt": {
-      const ma = a.value;
-      const mb = b.value;
+      const ma = pensionTableValue(a);
+      const mb = pensionTableValue(b);
       cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
       break;
     }
     case "ccy":
-      cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+      cmp = a.record.currency.localeCompare(b.record.currency, undefined, { sensitivity: "base" });
       break;
     case "desc":
-      cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+      cmp = a.record.description.localeCompare(b.record.description, undefined, {
+        sensitivity: "base",
+      });
       break;
     case "lastUpdated": {
-      const sa = a.lastUpdated ?? "";
-      const sb = b.lastUpdated ?? "";
+      const sa = a.record.lastUpdated ?? "";
+      const sb = b.record.lastUpdated ?? "";
       if (!sa && !sb) {
         cmp = 0;
       } else if (!sa) {
@@ -123,7 +141,9 @@ function comparePension(
       break;
   }
   if (cmp !== 0) return dir * cmp;
-  return a.id.localeCompare(b.id);
+  const idA = a.kind === "fund" ? a.record.id : a.record.expenseId;
+  const idB = b.kind === "fund" ? b.record.id : b.record.expenseId;
+  return idA.localeCompare(idB);
 }
 
 type SimpleMoneyRecordsPanelProps =
@@ -145,6 +165,8 @@ type SimpleMoneyRecordsPanelProps =
   | {
       variant: "pension";
       records: readonly FinancePensionRecord[];
+      /** Allocation rows tagged Pension (read-only in this table; edit on Allocations). */
+      pensionTaggedAllocationRecords?: readonly FinanceAllocationRecord[];
       onPatch: (patch: (prev: readonly FinancePensionRecord[]) => FinancePensionRecord[]) => void;
       sheetId: string;
       formSectionTitle: string;
@@ -172,6 +194,13 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     emptyMessage,
     columnOrder,
   } = props;
+
+  const allocationRecordsForPensionTable =
+    props.variant === "pension" ? props.pensionTaggedAllocationRecords : undefined;
+  const pensionTaggedAllocationRecords = useMemo(
+    () => allocationRecordsForPensionTable ?? [],
+    [allocationRecordsForPensionTable],
+  );
 
   /** Savings editor: one row on large screens, each control ~1/6 width (Bootstrap 12-col → col per row-cols-6). */
   const savingsSingleRowGrid = variant === "savings";
@@ -346,28 +375,51 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       }
       return list;
     }
-    const recs = records as readonly FinancePensionRecord[];
+    const fundRecs = records as readonly FinancePensionRecord[];
+    const merged: PensionTableRow[] = [
+      ...fundRecs.map((record) => ({ kind: "fund" as const, record })),
+      ...pensionTaggedAllocationRecords
+        .filter((r) => r.isPension === true)
+        .map((record) => ({ kind: "allocation" as const, record })),
+    ];
     const list = !q
-      ? [...recs]
-      : recs.filter((r) => {
-          const hay = [r.fund, r.description, r.currency, String(r.value), r.lastUpdated ?? ""]
+      ? [...merged]
+      : merged.filter((row) => {
+          if (row.kind === "fund") {
+            const r = row.record;
+            return [r.fund, r.description, r.currency, String(r.value), r.lastUpdated ?? ""]
+              .join(" ")
+              .toLowerCase()
+              .includes(q);
+          }
+          const a = row.record;
+          return ["allocation", a.description, a.currency, String(a.accumulatedAmount), a.lastUpdated ?? ""]
             .join(" ")
-            .toLowerCase();
-          return hay.includes(q);
+            .toLowerCase()
+            .includes(q);
         });
     if (sortKey !== null) {
-      list.sort((a, b) => comparePension(a, b, sortKey, sortDir));
+      list.sort((a, b) => comparePensionTableRows(a, b, sortKey, sortDir));
     } else {
       list.sort((a, b) => {
-        const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+        const byCcy = a.record.currency.localeCompare(b.record.currency, undefined, {
+          sensitivity: "base",
+        });
         if (byCcy !== 0) return byCcy;
-        return a.fund.localeCompare(b.fund, undefined, { sensitivity: "base" });
+        return pensionTableFundLabel(a).localeCompare(pensionTableFundLabel(b), undefined, {
+          sensitivity: "base",
+        });
       });
     }
     return list;
-  }, [records, tableFilter, sortKey, sortDir, variant]);
+  }, [records, tableFilter, sortKey, sortDir, variant, pensionTaggedAllocationRecords]);
 
-  const recordCurrencies = useMemo(() => filtered.map((r) => r.currency), [filtered]);
+  const recordCurrencies = useMemo(() => {
+    if (variant === "pension") {
+      return (filtered as readonly PensionTableRow[]).map((row) => row.record.currency);
+    }
+    return (filtered as readonly FinanceSavingsRecord[]).map((r) => r.currency);
+  }, [filtered, variant]);
   const { needsFx, ratesQuery, fxLoading, fxError } = useFrankfurterRatesForTotals(
     totalDisplayCurrency,
     recordCurrencies,
@@ -375,6 +427,11 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
 
   const convertedTotal = useMemo(() => {
     if (filtered.length === 0) {
+      if (variant === "pension") {
+        const fundEmpty = (records as readonly FinancePensionRecord[]).length === 0;
+        const allocEmpty = !pensionTaggedAllocationRecords.some((r) => r.isPension === true);
+        return fundEmpty && allocEmpty ? null : 0;
+      }
       return records.length === 0 ? null : 0;
     }
     let map: ReadonlyMap<string, number> = new Map();
@@ -385,7 +442,21 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       map = ratePayload.rateByQuote;
     }
     try {
-      return filtered.reduce(
+      if (variant === "pension") {
+        return (filtered as readonly PensionTableRow[]).reduce(
+          (sum, row) =>
+            sum +
+            convertAmountToBase(
+              pensionTableValue(row),
+              row.record.currency,
+              totalDisplayCurrency,
+              map,
+            ),
+          0,
+        );
+      }
+      const recs = filtered as readonly FinanceSavingsRecord[] | readonly FinancePensionRecord[];
+      return recs.reduce(
         (sum, r) => sum + convertAmountToBase(r.value, r.currency, totalDisplayCurrency, map),
         0,
       );
@@ -394,7 +465,9 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     }
   }, [
     filtered,
-    records.length,
+    records,
+    pensionTaggedAllocationRecords,
+    variant,
     needsFx,
     ratesQuery.isSuccess,
     ratesQuery.data,
@@ -642,73 +715,172 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           filterPlaceholder="Filter records…"
         >
           {filtered.length ? (
-            filtered.map((r) => {
-              const label = variant === "savings" ? (r as FinanceSavingsRecord).deposit : (r as FinancePensionRecord).fund;
-              const descriptionText =
-                variant === "savings"
-                  ? (r as FinanceSavingsRecord).description
-                  : (r as FinancePensionRecord).description;
-              const descCell = <td className="small">{descriptionText}</td>;
-              const assetTypeCell =
-                variant === "savings" ? (
-                  <td className="small">{(r as FinanceSavingsRecord).assetType}</td>
-                ) : null;
-              const lastUpdatedCellPension =
-                variant === "pension" ? (
+            variant === "pension" ? (
+              (filtered as readonly PensionTableRow[]).map((row) => {
+                if (row.kind === "allocation") {
+                  const a = row.record;
+                  const descCell = <td className="small">{a.description}</td>;
+                  const lastUpdatedCellPension = (
+                    <td className="small text-nowrap">
+                      {pensionLastUpdatedDisplay(a.lastUpdated)}
+                    </td>
+                  );
+                  const cellsValueFirst = (
+                    <>
+                      <td className="small">Allocation</td>
+                      {descCell}
+                      <td className="small text-end">
+                        <MoneyAmount
+                          amount={a.accumulatedAmount}
+                          currency={a.currency}
+                          amountOnly
+                        />
+                      </td>
+                      <td className="small">{a.currency}</td>
+                      {lastUpdatedCellPension}
+                    </>
+                  );
+                  const cellsCurrencyFirst = (
+                    <>
+                      <td className="small">Allocation</td>
+                      {descCell}
+                      <td className="small">{a.currency}</td>
+                      <td className="small text-end">
+                        <MoneyAmount
+                          amount={a.accumulatedAmount}
+                          currency={a.currency}
+                          amountOnly
+                        />
+                      </td>
+                      {lastUpdatedCellPension}
+                    </>
+                  );
+                  return (
+                    <tr key={`alloc-${a.expenseId}`}>
+                      {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
+                      <td className="small text-end text-muted">
+                        <span className="visually-hidden">Edit on Allocations</span>—
+                      </td>
+                    </tr>
+                  );
+                }
+                const r = row.record;
+                const label = r.fund;
+                const descriptionText = r.description;
+                const descCell = <td className="small">{descriptionText}</td>;
+                const lastUpdatedCellPension = (
                   <td className="small text-nowrap">
-                    {pensionLastUpdatedDisplay((r as FinancePensionRecord).lastUpdated)}
+                    {pensionLastUpdatedDisplay(r.lastUpdated)}
                   </td>
-                ) : null;
-              const cellsValueFirst = (
-                <>
-                  <td className="small">{label}</td>
-                  {assetTypeCell}
-                  {descCell}
-                  <td className="small text-end">
-                    <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
-                  </td>
-                  <td className="small">{r.currency}</td>
-                  {lastUpdatedCellPension}
-                </>
-              );
-              const cellsCurrencyFirst = (
-                <>
-                  <td className="small">{label}</td>
-                  {assetTypeCell}
-                  {descCell}
-                  <td className="small">{r.currency}</td>
-                  <td className="small text-end">
-                    <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
-                  </td>
-                  {lastUpdatedCellPension}
-                </>
-              );
-              return (
-                <tr key={r.id}>
-                  {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
-                  <td className="small text-end">
-                    <TableIconButton
-                      iconClassName="bi bi-pencil"
-                      ariaLabel="Edit record"
-                      onClick={() => openEdit(r)}
-                    />
-                    <TableIconButton
-                      iconClassName="bi bi-trash"
-                      ariaLabel="Delete record"
-                      variant="danger"
-                      onClick={() => deleteRow(r.id)}
-                    />
-                  </td>
-                </tr>
-              );
-            })
+                );
+                const cellsValueFirst = (
+                  <>
+                    <td className="small">{label}</td>
+                    {descCell}
+                    <td className="small text-end">
+                      <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
+                    </td>
+                    <td className="small">{r.currency}</td>
+                    {lastUpdatedCellPension}
+                  </>
+                );
+                const cellsCurrencyFirst = (
+                  <>
+                    <td className="small">{label}</td>
+                    {descCell}
+                    <td className="small">{r.currency}</td>
+                    <td className="small text-end">
+                      <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
+                    </td>
+                    {lastUpdatedCellPension}
+                  </>
+                );
+                return (
+                  <tr key={r.id}>
+                    {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
+                    <td className="small text-end">
+                      <TableIconButton
+                        iconClassName="bi bi-pencil"
+                        ariaLabel="Edit record"
+                        onClick={() => openEdit(r)}
+                      />
+                      <TableIconButton
+                        iconClassName="bi bi-trash"
+                        ariaLabel="Delete record"
+                        variant="danger"
+                        onClick={() => deleteRow(r.id)}
+                      />
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              (filtered as readonly FinanceSavingsRecord[]).map((r) => {
+                const label = r.deposit;
+                const descriptionText = r.description;
+                const descCell = <td className="small">{descriptionText}</td>;
+                const assetTypeCell = <td className="small">{r.assetType}</td>;
+                const cellsValueFirst = (
+                  <>
+                    <td className="small">{label}</td>
+                    {assetTypeCell}
+                    {descCell}
+                    <td className="small text-end">
+                      <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
+                    </td>
+                    <td className="small">{r.currency}</td>
+                  </>
+                );
+                const cellsCurrencyFirst = (
+                  <>
+                    <td className="small">{label}</td>
+                    {assetTypeCell}
+                    {descCell}
+                    <td className="small">{r.currency}</td>
+                    <td className="small text-end">
+                      <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
+                    </td>
+                  </>
+                );
+                return (
+                  <tr key={r.id}>
+                    {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
+                    <td className="small text-end">
+                      <TableIconButton
+                        iconClassName="bi bi-pencil"
+                        ariaLabel="Edit record"
+                        onClick={() => openEdit(r)}
+                      />
+                      <TableIconButton
+                        iconClassName="bi bi-trash"
+                        ariaLabel="Delete record"
+                        variant="danger"
+                        onClick={() => deleteRow(r.id)}
+                      />
+                    </td>
+                  </tr>
+                );
+              })
+            )
           ) : (
             <AdminDataTableEmptyRow
               colSpan={colSpan}
-              message={records.length ? "No records match the filter." : emptyMessage}
+              message={
+                variant === "pension"
+                  ? (records as readonly FinancePensionRecord[]).length > 0 ||
+                    pensionTaggedAllocationRecords.some((r) => r.isPension === true)
+                    ? "No records match the filter."
+                    : emptyMessage
+                  : records.length
+                    ? "No records match the filter."
+                    : emptyMessage
+              }
             />
           )}
-          {records.length > 0 ? (
+          {((variant === "pension" &&
+            ((records as readonly FinancePensionRecord[]).length > 0 ||
+              pensionTaggedAllocationRecords.some((r) => r.isPension === true))) ||
+          (variant === "savings" && (records as readonly FinanceSavingsRecord[]).length > 0)) ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
               {variant === "savings" ? <td className="small" /> : null}
@@ -777,111 +949,6 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   );
 }
 
-function pensionTaggedAllocationMonthlyCell(r: FinanceAllocationRecord): ReactNode {
-  const isCustom =
-    r.isCustomAllocation === true || r.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
-  if (isCustom && r.isIncome !== true) {
-    return <span className="text-muted">—</span>;
-  }
-  if (isCustom && r.isIncome === true) {
-    return (
-      <MoneyAmount
-        amount={r.allocationIncomeMonthly ?? 0}
-        currency={r.currency}
-        amountOnly
-      />
-    );
-  }
-  return <MoneyAmount amount={r.monthlyAmount} currency={r.currency} amountOnly />;
-}
-
-function allocationRowLastUpdatedDisplay(lastUpdated: string | undefined): string {
-  if (!lastUpdated) {
-    return "—";
-  }
-  return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
-}
-
-function PensionTaggedAllocationsFromAllocationsTab(props: {
-  readonly rows: readonly FinanceAllocationRecord[];
-}) {
-  const { rows } = props;
-  const [filter, setFilter] = useState("");
-  const columns = useMemo(
-    (): AdminDataTableColumn[] => [
-      { key: "d", header: "Description", className: "small" },
-      {
-        key: "m",
-        header: <span className="text-end d-block">Monthly amount</span>,
-        className: "small text-end",
-        headerClassName: "small text-end",
-      },
-      {
-        key: "a",
-        header: <span className="text-end d-block">Accumulated</span>,
-        className: "small text-end",
-        headerClassName: "small text-end",
-      },
-      { key: "c", header: "Currency", className: "small" },
-      { key: "l", header: "Last update", className: "small text-nowrap" },
-    ],
-    [],
-  );
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    const base = !q
-      ? [...rows]
-      : rows.filter((r) =>
-          [r.description, r.currency, String(r.accumulatedAmount)]
-            .join(" ")
-            .toLowerCase()
-            .includes(q),
-        );
-    base.sort((a, b) =>
-      a.description.localeCompare(b.description, undefined, { sensitivity: "base" }),
-    );
-    return base;
-  }, [rows, filter]);
-  const colSpan = columns.length;
-
-  return (
-    <AdminEditorSection title="Allocation rows tagged Pension">
-      <p className="small text-muted mb-3">
-        Lines tagged <strong>Pension</strong> on the Allocations tab are listed here. Edit amounts
-        and tags on Allocations.
-      </p>
-      <AdminDataTable
-        embedded
-        columns={columns}
-        filterValue={filter}
-        onFilterChange={setFilter}
-        filterPlaceholder="Filter tagged allocations…"
-      >
-        {filtered.length ? (
-          filtered.map((r) => (
-            <tr key={r.expenseId}>
-              <td className="small">{r.description}</td>
-              <td className="small text-end">{pensionTaggedAllocationMonthlyCell(r)}</td>
-              <td className="small text-end">
-                <MoneyAmount amount={r.accumulatedAmount} currency={r.currency} amountOnly />
-              </td>
-              <td className="small">{r.currency}</td>
-              <td className="small">{allocationRowLastUpdatedDisplay(r.lastUpdated)}</td>
-            </tr>
-          ))
-        ) : (
-          <AdminDataTableEmptyRow
-            colSpan={colSpan}
-            message={
-              rows.length ? "No rows match the filter." : "No allocation rows tagged Pension yet."
-            }
-          />
-        )}
-      </AdminDataTable>
-    </AdminEditorSection>
-  );
-}
-
 export function FinanceSavingsPanel(props: {
   readonly records: readonly FinanceSavingsRecord[];
   readonly onPatch: (
@@ -913,27 +980,21 @@ export function FinancePensionPanel(props: {
   ) => void;
   readonly allocationRecords: readonly FinanceAllocationRecord[];
 }) {
-  const pensionTaggedAllocations = useMemo(
-    () => props.allocationRecords.filter((r) => r.isPension === true),
-    [props.allocationRecords],
-  );
   return (
-    <div>
-      <PensionTaggedAllocationsFromAllocationsTab rows={pensionTaggedAllocations} />
-      <SimpleMoneyRecordsPanel
-        variant="pension"
-        records={props.records}
-        onPatch={props.onPatch}
-        sheetId="pension"
-        formSectionTitle="Pension record"
-        tableSectionTitle="Pension"
-        labelColumnHeader="Fund"
-        labelFormLabel="Fund"
-        labelInputId="pension-fund"
-        deleteConfirmMessage="Delete this pension record?"
-        emptyMessage="No pension records yet."
-        columnOrder="valueFirst"
-      />
-    </div>
+    <SimpleMoneyRecordsPanel
+      variant="pension"
+      records={props.records}
+      pensionTaggedAllocationRecords={props.allocationRecords}
+      onPatch={props.onPatch}
+      sheetId="pension"
+      formSectionTitle="Pension record"
+      tableSectionTitle="Pension"
+      labelColumnHeader="Fund"
+      labelFormLabel="Fund"
+      labelInputId="pension-fund"
+      deleteConfirmMessage="Delete this pension record?"
+      emptyMessage="No pension records yet."
+      columnOrder="valueFirst"
+    />
   );
 }

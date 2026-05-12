@@ -294,22 +294,6 @@ export function allocationRecordsToApiPayload(
   });
 }
 
-/** Monthly amount shown in allocation summaries (matches Allocations tab “Monthly amount” column). */
-export function allocationRecordDisplayedMonthlyAmount(record: FinanceAllocationRecord): number {
-  const isCustom =
-    record.isCustomAllocation === true ||
-    record.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
-  if (isCustom) {
-    if (record.isIncome === true) {
-      const v = record.allocationIncomeMonthly;
-      return typeof v === "number" && Number.isFinite(v) ? v : 0;
-    }
-    return 0;
-  }
-  const v = record.monthlyAmount;
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-
 /** Monthly income implied by an allocation tagged {@link FinanceAllocationRecord.isIncome}. */
 export function allocationRecordIncomeMonthlyValue(record: FinanceAllocationRecord): number {
   if (record.isIncome !== true) {
