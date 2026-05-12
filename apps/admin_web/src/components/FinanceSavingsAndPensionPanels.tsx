@@ -171,6 +171,9 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     columnOrder,
   } = props;
 
+  /** Savings editor: one row on large screens, each control ~1/6 width (Bootstrap 12-col → col per row-cols-6). */
+  const savingsSingleRowGrid = variant === "savings";
+
   const [sortKey, setSortKey] = useState<MoneyRecordsSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const onSort = useCallback((key: MoneyRecordsSortKey) => {
@@ -531,8 +534,12 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               {formError}
             </div>
           ) : null}
-          <div className="row g-3">
-            <div className="col-md-3">
+          <div
+            className={
+              savingsSingleRowGrid ? "row g-3 row-cols-1 row-cols-lg-6" : "row g-3"
+            }
+          >
+            <div className={savingsSingleRowGrid ? "col" : "col-md-3"}>
               <label className="form-label small" htmlFor={labelInputId}>
                 {labelFormLabel}
               </label>
@@ -546,7 +553,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               />
             </div>
             {variant === "savings" ? (
-              <div className="col-md-2">
+              <div className="col">
                 <label className="form-label small" htmlFor={`${sheetId}-atype`}>
                   Asset type
                 </label>
@@ -566,7 +573,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 </select>
               </div>
             ) : null}
-            <div className="col-md-3">
+            <div className={savingsSingleRowGrid ? "col" : "col-md-3"}>
               <label className="form-label small" htmlFor={`${sheetId}-description`}>
                 Description
               </label>
@@ -579,7 +586,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               />
             </div>
             {columnOrder === "currencyFirst" ? (
-              <div className="col-md-3">
+              <div className={savingsSingleRowGrid ? "col" : "col-md-3"}>
                 <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                   Currency
                 </label>
@@ -592,7 +599,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 />
               </div>
             ) : null}
-            <div className="col-md-3">
+            <div className={savingsSingleRowGrid ? "col" : "col-md-3"}>
               <label className="form-label small" htmlFor={`${sheetId}-value`}>
                 Value
               </label>
@@ -607,7 +614,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               />
             </div>
             {columnOrder === "valueFirst" ? (
-              <div className="col-md-3">
+              <div className={savingsSingleRowGrid ? "col" : "col-md-3"}>
                 <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                   Currency
                 </label>
