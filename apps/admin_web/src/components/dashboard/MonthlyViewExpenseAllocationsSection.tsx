@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { MoneyAmount } from "../ui";
 import { useGeneralMonthlyViewConvertedHkd } from "../../hooks/useGeneralMonthlyViewConvertedHkd";
 import { GLOBAL_DEFAULT_CURRENCY } from "../../lib/currencies";
@@ -9,6 +9,23 @@ function formatExpensePercentOfIncome(percent: number): string {
     return `${rounded}%`;
   }
   return `${rounded.toFixed(1)}%`;
+}
+
+/** Matches {@link AllocationCoverageDashboardCard} allocation rows table styling. */
+function expenseAllocationPercentTable(body: ReactNode) {
+  return (
+    <div className="table-responsive mb-0" style={{ maxHeight: "18rem" }}>
+      <table className="table table-sm table-striped mb-0">
+        <thead>
+          <tr>
+            <th className="small">Category</th>
+            <th className="small text-end">% of income</th>
+          </tr>
+        </thead>
+        <tbody>{body}</tbody>
+      </table>
+    </div>
+  );
 }
 
 export function MonthlyViewExpenseAllocationsSection() {
@@ -50,41 +67,61 @@ export function MonthlyViewExpenseAllocationsSection() {
 
   function generalCategoryPercentPanel(c: typeof convertedHkd): ReactNode {
     if (c.status === "empty") {
-      return <span className="text-muted">—</span>;
+      return <p className="text-muted small mb-0">No monthly view data yet.</p>;
     }
     if (c.status === "loading") {
-      return <span className="text-muted">Loading rates…</span>;
-    }
-    if (c.status === "error") {
-      return <span className="text-danger">Could not load exchange rates.</span>;
-    }
-    if (c.status === "fx-missing") {
-      return <span className="text-danger">Missing FX rate for a currency.</span>;
-    }
-    if (c.income <= 0) {
-      return (
-        <p className="text-muted small mb-0">
-          Income is zero in {GLOBAL_DEFAULT_CURRENCY}, so category allocations are not shown.
-        </p>
+      return expenseAllocationPercentTable(
+        <tr>
+          <td colSpan={2} className="small text-muted">
+            Loading rates…
+          </td>
+        </tr>,
       );
     }
-    return (
-      <dl className="row small mb-0">
-        {c.categoryPercentsSorted.map(({ category, percent }, idx) => (
-          <Fragment key={category}>
-            <dt
-              className={
-                idx > 0 ? "col-sm-4 text-muted pt-2" : "col-sm-4 text-muted"
-              }
-            >
-              {category}
-            </dt>
-            <dd className={idx > 0 ? "col-sm-8 pt-2" : "col-sm-8"}>
+    if (c.status === "error") {
+      return expenseAllocationPercentTable(
+        <tr>
+          <td colSpan={2} className="small text-danger">
+            Could not load exchange rates.
+          </td>
+        </tr>,
+      );
+    }
+    if (c.status === "fx-missing") {
+      return expenseAllocationPercentTable(
+        <tr>
+          <td colSpan={2} className="small text-danger">
+            Missing FX rate for a currency.
+          </td>
+        </tr>,
+      );
+    }
+    if (c.income <= 0) {
+      return expenseAllocationPercentTable(
+        <tr>
+          <td colSpan={2} className="small text-muted">
+            Income is zero in {GLOBAL_DEFAULT_CURRENCY}, so category allocations are not shown.
+          </td>
+        </tr>,
+      );
+    }
+    return expenseAllocationPercentTable(
+      c.categoryPercentsSorted.length === 0 ? (
+        <tr>
+          <td colSpan={2} className="small text-muted">
+            No expense categories in this view.
+          </td>
+        </tr>
+      ) : (
+        c.categoryPercentsSorted.map(({ category, percent }) => (
+          <tr key={category}>
+            <td className="small">{category}</td>
+            <td className="small text-end text-nowrap">
               {formatExpensePercentOfIncome(percent)}
-            </dd>
-          </Fragment>
-        ))}
-      </dl>
+            </td>
+          </tr>
+        ))
+      ),
     );
   }
 
