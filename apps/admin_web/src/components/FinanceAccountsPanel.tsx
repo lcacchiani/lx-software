@@ -34,6 +34,10 @@ function accountLastUpdatedDisplay(lastUpdated: string | undefined): string {
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
+function accountTypeUsesBillingCycleDay(t: FinanceAccountType): boolean {
+  return t !== "Bank Account";
+}
+
 type AccountsSortKey = "desc" | "atype" | "day" | "amt" | "ccy" | "lastUpdated";
 
 function compareAccounts(
@@ -235,7 +239,9 @@ export function FinanceAccountsPanel(props: {
           const hay = [
             r.description,
             r.accountType,
-            String(r.billingCycleDay),
+            ...(accountTypeUsesBillingCycleDay(r.accountType)
+              ? [String(r.billingCycleDay)]
+              : []),
             r.currency,
             String(r.recordedValue),
             r.lastUpdated ?? "",
@@ -317,10 +323,19 @@ export function FinanceAccountsPanel(props: {
   function submit(e: FormEvent) {
     e.preventDefault();
     const valueNum = parseAmount(valueStr);
-    const dayParsed = Number.parseInt(billingDayStr.trim(), 10);
-    if (!Number.isInteger(dayParsed) || dayParsed < 1 || dayParsed > 31) {
-      setFormError("Billing cycle day must be a whole number from 1 to 31.");
-      return;
+    let billingCycleDay: number;
+    if (accountTypeUsesBillingCycleDay(accountTypeInput)) {
+      const dayParsed = Number.parseInt(billingDayStr.trim(), 10);
+      if (!Number.isInteger(dayParsed) || dayParsed < 1 || dayParsed > 31) {
+        setFormError("Billing cycle day must be a whole number from 1 to 31.");
+        return;
+      }
+      billingCycleDay = dayParsed;
+    } else if (editingId) {
+      const prev = records.find((r) => r.id === editingId);
+      billingCycleDay = prev?.billingCycleDay ?? 1;
+    } else {
+      billingCycleDay = 1;
     }
     if (valueNum === null) {
       setFormError("Recorded value must be a valid number.");
@@ -332,7 +347,7 @@ export function FinanceAccountsPanel(props: {
       id,
       description: descriptionInput.trim(),
       accountType: accountTypeInput,
-      billingCycleDay: dayParsed,
+      billingCycleDay,
       recordedValue: valueNum,
       currency,
     };
@@ -407,22 +422,24 @@ export function FinanceAccountsPanel(props: {
                 ))}
               </select>
             </div>
-            <div className="col-md-2">
-              <label className="form-label small" htmlFor={`${sheetId}-billing-day`}>
-                Billing cycle day
-              </label>
-              <input
-                id={`${sheetId}-billing-day`}
-                type="number"
-                min={1}
-                max={31}
-                step={1}
-                className="form-control form-control-sm"
-                required
-                value={billingDayStr}
-                onChange={(ev) => setBillingDayStr(ev.target.value)}
-              />
-            </div>
+            {accountTypeUsesBillingCycleDay(accountTypeInput) ? (
+              <div className="col-md-2">
+                <label className="form-label small" htmlFor={`${sheetId}-billing-day`}>
+                  Billing cycle day
+                </label>
+                <input
+                  id={`${sheetId}-billing-day`}
+                  type="number"
+                  min={1}
+                  max={31}
+                  step={1}
+                  className="form-control form-control-sm"
+                  required
+                  value={billingDayStr}
+                  onChange={(ev) => setBillingDayStr(ev.target.value)}
+                />
+              </div>
+            ) : null}
             <div className="col-md-3">
               <label className="form-label small" htmlFor={`${sheetId}-value`}>
                 Recorded value
@@ -466,7 +483,9 @@ export function FinanceAccountsPanel(props: {
               <tr key={r.id}>
                 <td className="small">{r.description || "—"}</td>
                 <td className="small">{r.accountType}</td>
-                <td className="small text-end">{r.billingCycleDay}</td>
+                <td className="small text-end">
+                  {accountTypeUsesBillingCycleDay(r.accountType) ? r.billingCycleDay : "—"}
+                </td>
                 <td className="small text-end">
                   <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
                 </td>
