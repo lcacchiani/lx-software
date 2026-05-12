@@ -258,16 +258,6 @@ export function AllocationCoverageDashboardCard() {
                       </tr>
                     )}
                   </tbody>
-                  {sortedAllocations.length > 0 && sheet.status === "ok" ? (
-                    <tfoot>
-                      <tr className="fw-semibold">
-                        <td className="small">Total allocations</td>
-                        <td className="small text-end text-nowrap">
-                          <MoneyAmount amount={sheet.allocationsSum} currency={base} />
-                        </td>
-                      </tr>
-                    </tfoot>
-                  ) : null}
                 </table>
               </div>
 
@@ -276,6 +266,14 @@ export function AllocationCoverageDashboardCard() {
                 <dd className="col-sm-7 text-end mb-0">
                   {sheet.status === "ok" ? (
                     <MoneyAmount amount={sheet.coverage} currency={base} />
+                  ) : (
+                    loadingOrErrorMessage(sheet)
+                  )}
+                </dd>
+                <dt className="col-sm-5 text-muted pt-2">Allocations</dt>
+                <dd className="col-sm-7 text-end pt-2 mb-0">
+                  {sheet.status === "ok" ? (
+                    <MoneyAmount amount={sheet.allocationsSum} currency={base} />
                   ) : (
                     loadingOrErrorMessage(sheet)
                   )}
