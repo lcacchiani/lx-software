@@ -1,0 +1,258 @@
+import { Fragment, type ReactNode, useMemo } from "react";
+import { MoneyAmount } from "../ui";
+import { useFrankfurterRatesToBase } from "../../hooks/useFrankfurterRatesToBase";
+import { useFinance } from "../../hooks/useFinance";
+import { GLOBAL_DEFAULT_CURRENCY } from "../../lib/currencies";
+import { convertAmountToBase } from "../../lib/frankfurterRates";
+import { LEDGER_RELATED_HOUSE_OPTIONS } from "../../lib/houses";
+import {
+  EXPENSE_CATEGORIES,
+  sumMonthlyFinanceLedgerAmountsGeneral,
+  sumMonthlyGeneralExpenseAmountsByCategory,
+} from "../../lib/financeModel";
+
+function formatExpensePercentOfIncome(percent: number): string {
+  const rounded = Math.round(percent * 10) / 10;
+  if (Number.isInteger(rounded)) {
+    return `${rounded}%`;
+  }
+  return `${rounded.toFixed(1)}%`;
+}
+
+export function MonthlyViewExpenseAllocationsSection() {
+  const { data } = useFinance();
+  const generalBuckets = useMemo(
+    () =>
+      sumMonthlyFinanceLedgerAmountsGeneral(
+        data.incomeRecords,
+        data.expenseRecords,
+        data.expenseIncomeAllocationPercents,
+        LEDGER_RELATED_HOUSE_OPTIONS,
+        data.allocationRecords,
+      ),
+    [
+      data.allocationRecords,
+      data.expenseIncomeAllocationPercents,
+      data.expenseRecords,
+      data.incomeRecords,
+    ],
+  );
+
+  const hasActivity = useMemo(() => {
+    for (const v of Object.values(generalBuckets.incomeByCurrency)) {
+      if (v !== 0) return true;
+    }
+    for (const v of Object.values(generalBuckets.expensesByCurrency)) {
+      if (v !== 0) return true;
+    }
+    return false;
+  }, [generalBuckets]);
+
+  const quoteCurrencies = useMemo(() => {
+    const s = new Set<string>();
+    for (const [ccy, amt] of Object.entries(generalBuckets.incomeByCurrency)) {
+      if (amt !== 0) s.add(ccy);
+    }
+    for (const [ccy, amt] of Object.entries(generalBuckets.expensesByCurrency)) {
+      if (amt !== 0) s.add(ccy);
+    }
+    return [...s];
+  }, [generalBuckets]);
+
+  const needsFx = useMemo(
+    () =>
+      quoteCurrencies.some(
+        (c) => c.trim().toUpperCase() !== GLOBAL_DEFAULT_CURRENCY,
+      ),
+    [quoteCurrencies],
+  );
+
+  const ratesQuery = useFrankfurterRatesToBase(GLOBAL_DEFAULT_CURRENCY, quoteCurrencies);
+
+  const convertedHkd = useMemo(() => {
+    if (!hasActivity) {
+      return { status: "empty" as const };
+    }
+    let rateByQuote: ReadonlyMap<string, number> = new Map();
+    if (needsFx) {
+      if (ratesQuery.isPending) {
+        return { status: "loading" as const };
+      }
+      if (ratesQuery.isError) {
+        return { status: "error" as const };
+      }
+      if (!ratesQuery.isSuccess || !ratesQuery.data) {
+        return { status: "loading" as const };
+      }
+      rateByQuote = ratesQuery.data.rateByQuote;
+    }
+    try {
+      const sumBucket = (rec: Readonly<Record<string, number>>): number =>
+        Object.entries(rec).reduce(
+          (sum, [ccy, amt]) =>
+            amt === 0
+              ? sum
+              : sum +
+                convertAmountToBase(amt, ccy, GLOBAL_DEFAULT_CURRENCY, rateByQuote),
+          0,
+        );
+      const income = sumBucket(generalBuckets.incomeByCurrency);
+      const expenses = sumBucket(generalBuckets.expensesByCurrency);
+      const expenseByCategory = sumMonthlyGeneralExpenseAmountsByCategory(
+        data.incomeRecords,
+        data.expenseRecords,
+        data.expenseIncomeAllocationPercents,
+        LEDGER_RELATED_HOUSE_OPTIONS,
+      );
+      const categoryPercentsSorted = EXPENSE_CATEGORIES.map((category) => {
+        const buckets: Readonly<Record<string, number>> = expenseByCategory[category] ?? {};
+        const amountHkd = sumBucket(buckets);
+        const percent = income > 0 ? (amountHkd / income) * 100 : 0;
+        return { category, amountHkd, percent };
+      }).sort((a, b) => {
+        if (b.percent !== a.percent) {
+          return b.percent - a.percent;
+        }
+        return a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+      });
+      return {
+        status: "ok" as const,
+        income,
+        expenses,
+        net: income - expenses,
+        categoryPercentsSorted,
+      };
+    } catch {
+      return { status: "fx-missing" as const };
+    }
+  }, [
+    data.expenseIncomeAllocationPercents,
+    data.expenseRecords,
+    data.incomeRecords,
+    generalBuckets.expensesByCurrency,
+    generalBuckets.incomeByCurrency,
+    hasActivity,
+    needsFx,
+    ratesQuery.data,
+    ratesQuery.isError,
+    ratesQuery.isPending,
+    ratesQuery.isSuccess,
+  ]);
+
+  function generalHkdValue(
+    c: typeof convertedHkd,
+    kind: "income" | "expenses" | "net" | "netDaily",
+  ): ReactNode {
+    if (c.status === "empty") {
+      return <span className="text-muted">—</span>;
+    }
+    if (c.status === "loading") {
+      return <span className="text-muted">Loading rates…</span>;
+    }
+    if (c.status === "error") {
+      return <span className="text-danger">Could not load exchange rates.</span>;
+    }
+    if (c.status === "fx-missing") {
+      return <span className="text-danger">Missing FX rate for a currency.</span>;
+    }
+    const amt =
+      kind === "income"
+        ? c.income
+        : kind === "expenses"
+          ? c.expenses
+          : kind === "net"
+            ? c.net
+            : c.net / 30;
+    if (kind === "net" || kind === "netDaily") {
+      return (
+        <span className={amt >= 0 ? "text-success" : "text-danger"}>
+          <MoneyAmount amount={amt} currency={GLOBAL_DEFAULT_CURRENCY} />
+        </span>
+      );
+    }
+    return <MoneyAmount amount={amt} currency={GLOBAL_DEFAULT_CURRENCY} />;
+  }
+
+  function generalCategoryPercentPanel(c: typeof convertedHkd): ReactNode {
+    if (c.status === "empty") {
+      return <span className="text-muted">—</span>;
+    }
+    if (c.status === "loading") {
+      return <span className="text-muted">Loading rates…</span>;
+    }
+    if (c.status === "error") {
+      return <span className="text-danger">Could not load exchange rates.</span>;
+    }
+    if (c.status === "fx-missing") {
+      return <span className="text-danger">Missing FX rate for a currency.</span>;
+    }
+    if (c.income <= 0) {
+      return (
+        <p className="text-muted small mb-0">
+          Income is zero in {GLOBAL_DEFAULT_CURRENCY}, so category allocations are not shown.
+        </p>
+      );
+    }
+    return (
+      <dl className="row small mb-0">
+        {c.categoryPercentsSorted.map(({ category, percent }, idx) => (
+          <Fragment key={category}>
+            <dt
+              className={
+                idx > 0 ? "col-sm-4 text-muted pt-2" : "col-sm-4 text-muted"
+              }
+            >
+              {category}
+            </dt>
+            <dd className={idx > 0 ? "col-sm-8 pt-2" : "col-sm-8"}>
+              {formatExpensePercentOfIncome(percent)}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+    );
+  }
+
+  return (
+    <div className="row g-3 mb-4">
+      <div className="col-12 col-lg-6">
+        <div className="card h-100 shadow-sm">
+          <div className="card-body d-flex flex-column">
+            <h2 className="h6 mb-3">
+              <strong>Monthly View</strong>
+            </h2>
+            <p className="text-muted small mb-3">
+              Monthly income and expenses not linked to any property (including derived tax,
+              saving, and investment amounts from tagged income with no related property),
+              summed in {GLOBAL_DEFAULT_CURRENCY}.
+            </p>
+            <dl className="row small mb-0">
+              <dt className="col-sm-4 text-muted">Income</dt>
+              <dd className="col-sm-8">{generalHkdValue(convertedHkd, "income")}</dd>
+              <dt className="col-sm-4 text-muted pt-2">Expenses</dt>
+              <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "expenses")}</dd>
+              <dt className="col-sm-4 text-muted pt-2">Net</dt>
+              <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "net")}</dd>
+              <dt className="col-sm-4 text-muted pt-2">Net (daily)</dt>
+              <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "netDaily")}</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+      <div className="col-12 col-lg-6">
+        <div className="card h-100 shadow-sm">
+          <div className="card-body d-flex flex-column">
+            <h2 className="h6 mb-3">
+              <strong>Expense Allocations</strong>
+            </h2>
+            <p className="small text-muted mb-2">
+              Expense categories as a share of general income in this monthly view (highest
+              first).
+            </p>
+            {generalCategoryPercentPanel(convertedHkd)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
