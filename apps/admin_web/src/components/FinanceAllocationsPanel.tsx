@@ -523,16 +523,6 @@ export function FinanceAllocationsPanel(props: {
 
   return (
     <div>
-      <p className="text-muted small mb-3">
-        Linked rows come from expenses tagged <strong>Allocate</strong> on the Expenses tab or from
-        derived allocation lines (also labeled Allocate there); for those you only set accumulated
-        amounts here—the monthly column follows the expense ledger. Check <strong>Income</strong> to
-        mirror that monthly amount on the Income tab (for custom lines, enter the monthly income
-        when Income is checked). Check <strong>Pension</strong> to show that row in the Pension tab
-        table (accumulated amount appears as value). Use the editor below to add or change custom
-        lines, or to adjust accumulated amounts and tag settings for linked rows.
-      </p>
-
       <AdminEditorSection
         containerRef={allocationEditorSectionRef}
         title={editingLinkedRow ? "Edit accumulated amount" : "Custom allocation"}
