@@ -14,7 +14,7 @@ function formatExpensePercentOfIncome(percent: number): string {
 /** Matches {@link AllocationCoverageDashboardCard} allocation rows table styling. */
 function expenseAllocationPercentTable(body: ReactNode) {
   return (
-    <div className="table-responsive mb-0" style={{ maxHeight: "18rem" }}>
+    <div className="table-responsive mb-0" style={{ maxHeight: "24rem" }}>
       <table className="table table-sm table-striped mb-0">
         <thead>
           <tr>
