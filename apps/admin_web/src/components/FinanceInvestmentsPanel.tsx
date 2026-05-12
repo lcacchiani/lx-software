@@ -7,7 +7,7 @@ import {
 import { convertAmountToBase, convertAmountWithBase } from "../lib/frankfurterRates";
 import { parseAmount } from "../lib/formParse";
 import {
-  INVESTMENT_ASSET_TYPES,
+  ASSET_TYPES,
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
   INVESTMENT_TICKER_MAX_LEN,
@@ -19,7 +19,7 @@ import {
   newStatementLineId,
   type FinanceInvestmentRecord,
   type HouseKey,
-  type InvestmentAssetType,
+  type AssetType,
   type InvestmentCategory,
 } from "../lib/financeModel";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
@@ -175,7 +175,7 @@ function compareInv(
 
 type FormState = {
   category: InvestmentCategory;
-  assetType: InvestmentAssetType;
+  assetType: AssetType;
   provider: string;
   principal: string;
   currency: string;
@@ -695,7 +695,7 @@ export function FinanceInvestmentsPanel({
       setFormError("Pick a valid category.");
       return;
     }
-    if (!INVESTMENT_ASSET_TYPES.includes(form.assetType)) {
+    if (!ASSET_TYPES.includes(form.assetType)) {
       setFormError("Pick a valid asset type.");
       return;
     }
@@ -857,10 +857,10 @@ export function FinanceInvestmentsPanel({
                 className="form-select form-select-sm"
                 value={form.assetType}
                 onChange={(ev) =>
-                  setForm((f) => ({ ...f, assetType: ev.target.value as InvestmentAssetType }))
+                  setForm((f) => ({ ...f, assetType: ev.target.value as AssetType }))
                 }
               >
-                {INVESTMENT_ASSET_TYPES.map((t) => (
+                {ASSET_TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>

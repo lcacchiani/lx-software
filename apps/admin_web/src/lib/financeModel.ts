@@ -111,9 +111,9 @@ export const INVESTMENT_CATEGORIES = [
 
 export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
 
-export const INVESTMENT_ASSET_TYPES = ["Fixed", "Liquid"] as const;
+export const ASSET_TYPES = ["Fixed", "Liquid"] as const;
 
-export type InvestmentAssetType = (typeof INVESTMENT_ASSET_TYPES)[number];
+export type AssetType = (typeof ASSET_TYPES)[number];
 
 export type HouseKey = "hillmarton" | "morrison";
 
@@ -127,7 +127,7 @@ export type FinanceInvestmentRecord = {
   readonly id: string;
   readonly category: InvestmentCategory;
   readonly currency: string;
-  readonly assetType: InvestmentAssetType;
+  readonly assetType: AssetType;
   readonly provider: string;
   /** Amount in `currency`: invested principal; for Crypto with `unit`, spot fiat value of one unit. */
   readonly principalAmount: number;
@@ -152,7 +152,7 @@ export type FinanceInvestmentRecord = {
 export type FinanceSavingsRecord = {
   readonly id: string;
   readonly deposit: string;
-  readonly assetType: InvestmentAssetType;
+  readonly assetType: AssetType;
   readonly description: string;
   readonly value: number;
   readonly currency: string;
@@ -785,7 +785,7 @@ function categorySet(categories: readonly string[]): Set<string> {
 const INVESTMENT_CATEGORY_SET = categorySet(INVESTMENT_CATEGORIES);
 const FINANCE_ACCOUNT_TYPE_SET = categorySet(FINANCE_ACCOUNT_TYPES);
 
-function isInvestmentAssetType(v: unknown): v is InvestmentAssetType {
+function isAssetType(v: unknown): v is AssetType {
   return v === "Fixed" || v === "Liquid";
 }
 
@@ -955,7 +955,7 @@ export function normalizeInvestmentRecords(input: unknown): FinanceInvestmentRec
       continue;
     }
     const category = categoryRaw as InvestmentCategory;
-    if (!isInvestmentAssetType(row.assetType)) {
+    if (!isAssetType(row.assetType)) {
       continue;
     }
     const assetType = row.assetType;
@@ -1070,7 +1070,7 @@ export function normalizeSavingsRecords(input: unknown): FinanceSavingsRecord[] 
     if (description.length > MAX_PENSION_DESCRIPTION_LEN) {
       description = description.slice(0, MAX_PENSION_DESCRIPTION_LEN);
     }
-    const assetType: InvestmentAssetType = isInvestmentAssetType(row.assetType)
+    const assetType: AssetType = isAssetType(row.assetType)
       ? row.assetType
       : "Fixed";
     out.push({ id, deposit, assetType, description, value, currency });
