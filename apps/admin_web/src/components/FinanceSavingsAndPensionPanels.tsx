@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -13,6 +13,7 @@ import {
   type FinancePensionRecord,
   type FinanceSavingsRecord,
 } from "../lib/financeModel";
+import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
@@ -282,6 +283,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
 
   const colSpan = tableColumns.length;
   const formId = `${sheetId}-form`;
+  const recordEditorSectionRef = useRef<HTMLDivElement | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -397,6 +399,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       setValueStr(String(r.value));
       setFormCurrency(coerceSupportedCurrency(r.currency, GLOBAL_DEFAULT_CURRENCY));
     }
+    scheduleFocusRecordEditor(() => recordEditorSectionRef.current);
   }
 
   function submit(e: FormEvent) {
@@ -481,6 +484,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   return (
     <div>
       <AdminEditorSection
+        containerRef={recordEditorSectionRef}
         title={formSectionTitle}
         footer={
           <>

@@ -15,6 +15,7 @@ import {
 } from "../lib/financeModel";
 import { formatDateUtc } from "../lib/formatDisplay";
 import { parseAmount } from "../lib/formParse";
+import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import {
   existingImportedStatementBasenames,
   useParseStatement,
@@ -242,13 +243,6 @@ export function HouseStatementPanel({
     });
   }, [data.defaultCurrency, editingId, prefillStatementAssetKeys]);
 
-  useEffect(() => {
-    if (editingId === null) return;
-    queueMicrotask(() => {
-      lineDescriptionRef.current?.focus({ preventScroll: false });
-    });
-  }, [editingId]);
-
   const sortedLines = useMemo(() => {
     return [...data.lines].sort((a, b) => {
       const ta = new Date(a.dateUtc).getTime();
@@ -332,6 +326,7 @@ export function HouseStatementPanel({
     if (linePdfInputRef.current) {
       linePdfInputRef.current.value = "";
     }
+    scheduleFocusRecordEditor(() => lineEditorSectionRef.current);
   }
 
   function openDuplicateIntoEditor(line: HouseStatementLine) {
@@ -630,8 +625,8 @@ export function HouseStatementPanel({
         ) : null}
       </AdminEditorSection>
 
-      <div ref={lineEditorSectionRef}>
       <AdminEditorSection
+        containerRef={lineEditorSectionRef}
         title="Statement line"
         footer={
           <>
@@ -862,7 +857,6 @@ export function HouseStatementPanel({
           </div>
         </form>
       </AdminEditorSection>
-      </div>
 
       <AdminEditorSection title="House statement">
         <AdminDataTable

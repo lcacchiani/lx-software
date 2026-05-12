@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 export type AdminEditorSectionProps = {
   readonly title?: string;
@@ -6,6 +6,8 @@ export type AdminEditorSectionProps = {
   readonly children: ReactNode;
   /** Primary actions (Save / Update). Placed at the **bottom-left** of the section. */
   readonly footer?: ReactNode;
+  /** Root `.card` element; use with `scheduleFocusRecordEditor` when opening a row for edit. */
+  readonly containerRef?: Ref<HTMLDivElement | null>;
 };
 
 /**
@@ -17,9 +19,10 @@ export function AdminEditorSection({
   description,
   children,
   footer,
+  containerRef,
 }: AdminEditorSectionProps) {
   return (
-    <div className="card shadow-sm mb-4">
+    <div ref={containerRef} className="card shadow-sm mb-4">
       <div className="card-body">
         {title ? (
           <h2 className="h6 text-uppercase text-muted mb-2">{title}</h2>

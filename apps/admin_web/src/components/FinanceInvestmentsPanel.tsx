@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -22,6 +22,7 @@ import {
   type InvestmentAssetType,
   type InvestmentCategory,
 } from "../lib/financeModel";
+import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { buildQuoteMap, type FinanceQuoteResult } from "../lib/financeQuotes";
 import { useFinanceQuotes } from "../hooks/useFinanceQuotes";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
@@ -388,6 +389,7 @@ export function FinanceInvestmentsPanel({
 
   const colSpan = tableColumns.length;
   const formId = `${sheetId}-form`;
+  const recordEditorSectionRef = useRef<HTMLDivElement | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -660,6 +662,7 @@ export function FinanceInvestmentsPanel({
       ticker: row.category === "ETF" ? (row.ticker ?? "") : "",
       cryptoCurrency: row.category === "Crypto" ? (row.cryptoCurrency ?? "") : "",
     });
+    scheduleFocusRecordEditor(() => recordEditorSectionRef.current);
   }
 
   function submit(e: FormEvent) {
@@ -743,6 +746,7 @@ export function FinanceInvestmentsPanel({
   return (
     <div>
       <AdminEditorSection
+        containerRef={recordEditorSectionRef}
         title="Investment record"
         footer={
           <>
