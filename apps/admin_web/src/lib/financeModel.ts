@@ -172,6 +172,23 @@ export type FinancePensionRecord = {
   readonly lastUpdated?: string;
 };
 
+/** Accounts tab (aligned with admin Lambda validation). */
+export const FINANCE_ACCOUNT_TYPES = ["Bank Account", "Credit Card", "Debit Card"] as const;
+
+export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
+
+/** One row in the Accounts sheet (DynamoDB finance sheet `accounts`). */
+export type FinanceAccountRecord = {
+  readonly id: string;
+  readonly accountType: FinanceAccountType;
+  /** Day of month (1–31) for the billing cycle. */
+  readonly billingCycleDay: number;
+  readonly recordedValue: number;
+  readonly currency: string;
+  /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
+  readonly lastUpdated?: string;
+};
+
 /**
  * One row on the Allocations tab: mirrors an expense tagged Allocate, with a persisted
  * accumulated amount (DynamoDB finance sheet `allocations`).
@@ -731,6 +748,7 @@ export type FinancePersistedState = {
   readonly investmentRecords: readonly FinanceInvestmentRecord[];
   readonly savingsRecords: readonly FinanceSavingsRecord[];
   readonly pensionRecords: readonly FinancePensionRecord[];
+  readonly accountRecords: readonly FinanceAccountRecord[];
   readonly allocationRecords: readonly FinanceAllocationRecord[];
 };
 
@@ -756,6 +774,7 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   investmentRecords: [],
   savingsRecords: [],
   pensionRecords: [],
+  accountRecords: [],
   allocationRecords: [],
 };
 
@@ -764,6 +783,7 @@ function categorySet(categories: readonly string[]): Set<string> {
 }
 
 const INVESTMENT_CATEGORY_SET = categorySet(INVESTMENT_CATEGORIES);
+const FINANCE_ACCOUNT_TYPE_SET = categorySet(FINANCE_ACCOUNT_TYPES);
 
 function isInvestmentAssetType(v: unknown): v is InvestmentAssetType {
   return v === "Fixed" || v === "Liquid";
@@ -1109,6 +1129,58 @@ export function normalizePensionRecords(input: unknown): FinancePensionRecord[] 
     }
     const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
     const rec: FinancePensionRecord = { id, fund, description, value, currency };
+    out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
+  }
+  return out;
+}
+
+/** Coerces API payloads into account rows; drops invalid entries. */
+export function normalizeAccountRecords(input: unknown): FinanceAccountRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: FinanceAccountRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const atRaw = typeof row.accountType === "string" ? row.accountType.trim() : "";
+    if (!id || !FINANCE_ACCOUNT_TYPE_SET.has(atRaw)) {
+      continue;
+    }
+    const accountType = atRaw as FinanceAccountType;
+    const dayRaw = row.billingCycleDay;
+    let billingCycleDay: number;
+    if (typeof dayRaw === "number" && Number.isInteger(dayRaw) && !Number.isNaN(dayRaw)) {
+      billingCycleDay = dayRaw;
+    } else if (typeof dayRaw === "string" && /^\d+$/.test(dayRaw.trim())) {
+      billingCycleDay = Number.parseInt(dayRaw.trim(), 10);
+    } else {
+      continue;
+    }
+    if (billingCycleDay < 1 || billingCycleDay > 31) {
+      continue;
+    }
+    const amtRaw = row.recordedValue;
+    const recordedValue =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (!Number.isFinite(recordedValue) || Math.abs(recordedValue) > 1e15) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
+    const rec: FinanceAccountRecord = {
+      id,
+      accountType,
+      billingCycleDay,
+      recordedValue,
+      currency,
+    };
     out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
   }
   return out;

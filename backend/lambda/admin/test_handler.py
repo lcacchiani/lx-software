@@ -34,9 +34,11 @@ from handler import (  # noqa: E402
     _build_allocation_records_for_response,
     _derived_expense_rows_from_tagged_income,
     _merge_allocation_stored_last_updated,
+    _merge_accounts_last_updated,
     _merge_investment_last_updated,
     _merge_pension_last_updated,
     _normalize_allocations_sheet_payload,
+    _normalize_accounts_sheet_payload,
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
@@ -49,6 +51,7 @@ from handler import (  # noqa: E402
     _parse_fx_v2_rates_query,
     _path_finance_house_for_parse,
     _path_finance_parse_job,
+    _sanitize_accounts_records_list,
     _sanitize_expense_income_allocation_percentages,
     _sanitize_investment_records_list,
     _sanitize_ledger_records_list,
@@ -826,6 +829,133 @@ class TestMergePensionLastUpdated(unittest.TestCase):
             }
         ]
         out = _merge_pension_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+
+class TestAccountsSheetPayload(unittest.TestCase):
+    def test_normalize_valid(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "accountType": "Credit Card",
+                    "billingCycleDay": 15,
+                    "recordedValue": -1200.5,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_accounts_sheet_payload(body)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["accountType"], "Credit Card")
+        self.assertEqual(out[0]["billingCycleDay"], 15)
+        self.assertEqual(out[0]["recordedValue"], -1200.5)
+        self.assertEqual(out[0]["currency"], "HKD")
+
+    def test_normalize_rejects_bad_account_type(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "accountType": "Loan",
+                    "billingCycleDay": 1,
+                    "recordedValue": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_accounts_sheet_payload(body)
+
+    def test_normalize_rejects_billing_day_zero(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "accountType": "Bank Account",
+                    "billingCycleDay": 0,
+                    "recordedValue": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_accounts_sheet_payload(body)
+
+    def test_sanitize_keeps_last_updated(self) -> None:
+        raw = [
+            {
+                "id": "a1",
+                "accountType": "Debit Card",
+                "billingCycleDay": 3,
+                "recordedValue": 50,
+                "currency": "USD",
+                "lastUpdated": "2024-06-15",
+            }
+        ]
+        out = _sanitize_accounts_records_list(raw)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["lastUpdated"], "2024-06-15")
+
+
+class TestMergeAccountsLastUpdated(unittest.TestCase):
+    def test_new_id_gets_today(self) -> None:
+        normalized = [
+            {
+                "id": "n1",
+                "accountType": "Bank Account",
+                "billingCycleDay": 1,
+                "recordedValue": 100.0,
+                "currency": "HKD",
+            }
+        ]
+        out = _merge_accounts_last_updated(normalized, [], today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_unchanged_preserves_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_accounts_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2025-03-01")
+
+    def test_changed_row_gets_today(self) -> None:
+        normalized = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 11,
+                "recordedValue": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_accounts_last_updated(normalized, existing, today_iso="2026-01-10")
         self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
 
 
