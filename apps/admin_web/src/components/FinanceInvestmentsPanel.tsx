@@ -19,7 +19,7 @@ import {
   newStatementLineId,
   type FinanceInvestmentRecord,
   type HouseKey,
-  type InvestmentAssetType,
+  type AssetType,
   type InvestmentCategory,
 } from "../lib/financeModel";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
@@ -175,7 +175,7 @@ function compareInv(
 
 type FormState = {
   category: InvestmentCategory;
-  assetType: InvestmentAssetType;
+  assetType: AssetType;
   provider: string;
   principal: string;
   currency: string;
@@ -857,7 +857,7 @@ export function FinanceInvestmentsPanel({
                 className="form-select form-select-sm"
                 value={form.assetType}
                 onChange={(ev) =>
-                  setForm((f) => ({ ...f, assetType: ev.target.value as InvestmentAssetType }))
+                  setForm((f) => ({ ...f, assetType: ev.target.value as AssetType }))
                 }
               >
                 {INVESTMENT_ASSET_TYPES.map((t) => (

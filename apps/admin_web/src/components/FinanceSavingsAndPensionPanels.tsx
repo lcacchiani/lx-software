@@ -13,7 +13,7 @@ import {
   newStatementLineId,
   type FinancePensionRecord,
   type FinanceSavingsRecord,
-  type InvestmentAssetType,
+  type AssetType,
 } from "../lib/financeModel";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
@@ -312,7 +312,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   const [descriptionInput, setDescriptionInput] = useState("");
   const [valueStr, setValueStr] = useState("");
   const [formCurrency, setFormCurrency] = useState(GLOBAL_DEFAULT_CURRENCY);
-  const [assetTypeInput, setAssetTypeInput] = useState<InvestmentAssetType>("Fixed");
+  const [assetTypeInput, setAssetTypeInput] = useState<AssetType>("Fixed");
   const [tableFilter, setTableFilter] = useState("");
   const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
     GLOBAL_DEFAULT_CURRENCY,
@@ -441,7 +441,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const id = editingId ?? newStatementLineId();
 
     if (variant === "savings") {
-      const assetType: InvestmentAssetType = INVESTMENT_ASSET_TYPES.includes(assetTypeInput)
+      const assetType: AssetType = INVESTMENT_ASSET_TYPES.includes(assetTypeInput)
         ? assetTypeInput
         : "Fixed";
       const descTrimmed = descriptionInput.trim();
@@ -555,7 +555,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                   className="form-select form-select-sm"
                   value={assetTypeInput}
                   onChange={(ev) =>
-                    setAssetTypeInput(ev.target.value as InvestmentAssetType)
+                    setAssetTypeInput(ev.target.value as AssetType)
                   }
                 >
                   {INVESTMENT_ASSET_TYPES.map((t) => (
