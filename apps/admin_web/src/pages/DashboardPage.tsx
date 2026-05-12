@@ -307,7 +307,7 @@ function GeneralSummaryCard() {
 
   function generalHkdValue(
     c: typeof convertedHkd,
-    kind: "income" | "expenses" | "net",
+    kind: "income" | "expenses" | "net" | "netDaily",
   ): ReactNode {
     if (c.status === "empty") {
       return <span className="text-muted">—</span>;
@@ -321,8 +321,15 @@ function GeneralSummaryCard() {
     if (c.status === "fx-missing") {
       return <span className="text-danger">Missing FX rate for a currency.</span>;
     }
-    const amt = kind === "income" ? c.income : kind === "expenses" ? c.expenses : c.net;
-    if (kind === "net") {
+    const amt =
+      kind === "income"
+        ? c.income
+        : kind === "expenses"
+          ? c.expenses
+          : kind === "net"
+            ? c.net
+            : c.net / 30;
+    if (kind === "net" || kind === "netDaily") {
       return (
         <span className={amt >= 0 ? "text-success" : "text-danger"}>
           <MoneyAmount amount={amt} currency={GLOBAL_DEFAULT_CURRENCY} />
@@ -393,6 +400,8 @@ function GeneralSummaryCard() {
               <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "expenses")}</dd>
               <dt className="col-sm-4 text-muted pt-2">Net</dt>
               <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "net")}</dd>
+              <dt className="col-sm-4 text-muted pt-2">Net (daily)</dt>
+              <dd className="col-sm-8 pt-2">{generalHkdValue(convertedHkd, "netDaily")}</dd>
             </dl>
           </div>
           <div className="vr text-muted opacity-50 d-none d-lg-block align-self-stretch flex-shrink-0" />
