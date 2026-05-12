@@ -50,7 +50,7 @@ export function AllocationCoverageDashboardCard() {
           <p className="text-muted small mb-0">No allocation or coverage data yet.</p>
         ) : (
           <>
-            <div className="table-responsive mb-3" style={{ maxHeight: "calc(14rem * 1.3)" }}>
+            <div className="table-responsive mb-3" style={{ maxHeight: "18rem" }}>
               <table className="table table-sm table-striped mb-0">
                 <thead>
                   <tr>
