@@ -612,6 +612,7 @@ describe("normalizeSavingsRecords", () => {
     expect(out).toHaveLength(1);
     expect(out[0].deposit).toBe("Bank A");
     expect(out[0].description).toBe("");
+    expect(out[0].assetType).toBe("Fixed");
   });
 
   it("reads description", () => {
@@ -621,6 +622,37 @@ describe("normalizeSavingsRecords", () => {
     const out = normalizeSavingsRecords(rows);
     expect(out).toHaveLength(1);
     expect(out[0].description).toBe("Term");
+    expect(out[0].assetType).toBe("Fixed");
+  });
+
+  it("reads valid assetType", () => {
+    const rows = [
+      {
+        id: "1",
+        deposit: "Bank A",
+        assetType: "Liquid",
+        description: "",
+        value: 1000,
+        currency: "HKD",
+      },
+    ];
+    const out = normalizeSavingsRecords(rows);
+    expect(out[0].assetType).toBe("Liquid");
+  });
+
+  it("defaults invalid assetType to Fixed", () => {
+    const rows = [
+      {
+        id: "1",
+        deposit: "Bank A",
+        assetType: "Volatile",
+        description: "",
+        value: 1000,
+        currency: "HKD",
+      },
+    ];
+    const out = normalizeSavingsRecords(rows);
+    expect(out[0].assetType).toBe("Fixed");
   });
 });
 

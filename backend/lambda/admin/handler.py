@@ -1218,10 +1218,16 @@ def _sanitize_savings_records_list(raw: Any) -> list[dict[str, Any]]:
             desc = desc_raw.strip()
             if len(desc) > MAX_FINANCE_DESCRIPTION:
                 desc = desc[:MAX_FINANCE_DESCRIPTION]
+        at_raw = row.get("assetType")
+        if at_raw in INVESTMENT_ASSET_TYPES:
+            at = str(at_raw)
+        else:
+            at = "Fixed"
         out.append(
             {
                 "id": rid.strip(),
                 "deposit": d,
+                "assetType": at,
                 "description": desc,
                 "value": amt_f,
                 "currency": cur,
@@ -1935,10 +1941,27 @@ def _normalize_savings_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any
         d = desc_raw.strip()
         if len(d) > MAX_FINANCE_DESCRIPTION:
             raise ValueError(f"savingsRecords[{i}].description is too long")
+        allowed_at = ", ".join(sorted(INVESTMENT_ASSET_TYPES))
+        at_raw = row.get("assetType")
+        if at_raw is None or at_raw == "":
+            at = "Fixed"
+        elif not isinstance(at_raw, str):
+            raise ValueError(f"savingsRecords[{i}].assetType must be a string")
+        else:
+            at_st = at_raw.strip()
+            if not at_st:
+                at = "Fixed"
+            elif at_st not in INVESTMENT_ASSET_TYPES:
+                raise ValueError(
+                    f"savingsRecords[{i}].assetType must be one of: {allowed_at}"
+                )
+            else:
+                at = at_st
         out.append(
             {
                 "id": rid.strip(),
                 "deposit": dep.strip(),
+                "assetType": at,
                 "description": d,
                 "value": amt_f,
                 "currency": cur,

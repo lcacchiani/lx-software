@@ -152,6 +152,7 @@ export type FinanceInvestmentRecord = {
 export type FinanceSavingsRecord = {
   readonly id: string;
   readonly deposit: string;
+  readonly assetType: InvestmentAssetType;
   readonly description: string;
   readonly value: number;
   readonly currency: string;
@@ -1049,7 +1050,10 @@ export function normalizeSavingsRecords(input: unknown): FinanceSavingsRecord[] 
     if (description.length > MAX_PENSION_DESCRIPTION_LEN) {
       description = description.slice(0, MAX_PENSION_DESCRIPTION_LEN);
     }
-    out.push({ id, deposit, description, value, currency });
+    const assetType: InvestmentAssetType = isInvestmentAssetType(row.assetType)
+      ? row.assetType
+      : "Fixed";
+    out.push({ id, deposit, assetType, description, value, currency });
   }
   return out;
 }

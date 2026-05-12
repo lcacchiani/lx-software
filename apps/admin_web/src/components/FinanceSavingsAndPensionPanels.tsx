@@ -8,10 +8,12 @@ import { formatDateUtc } from "../lib/formatDisplay";
 import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
+  INVESTMENT_ASSET_TYPES,
   MAX_PENSION_DESCRIPTION_LEN,
   newStatementLineId,
   type FinancePensionRecord,
   type FinanceSavingsRecord,
+  type InvestmentAssetType,
 } from "../lib/financeModel";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
@@ -34,8 +36,8 @@ function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
-/** Pension adds server-managed `lastUpdated`; both sheets include a description column between label and value. */
-type MoneyRecordsSortKey = "label" | "amt" | "ccy" | "desc" | "lastUpdated";
+/** Pension adds server-managed `lastUpdated`. Savings adds `atype` (asset type) between label and description. */
+type MoneyRecordsSortKey = "label" | "atype" | "amt" | "ccy" | "desc" | "lastUpdated";
 
 function compareSavings(
   a: FinanceSavingsRecord,
@@ -48,6 +50,9 @@ function compareSavings(
   switch (sortKey) {
     case "label":
       cmp = a.deposit.localeCompare(b.deposit, undefined, { sensitivity: "base" });
+      break;
+    case "atype":
+      cmp = a.assetType.localeCompare(b.assetType, undefined, { sensitivity: "base" });
       break;
     case "amt": {
       const ma = a.value;
@@ -82,6 +87,9 @@ function comparePension(
   switch (sortKey) {
     case "label":
       cmp = a.fund.localeCompare(b.fund, undefined, { sensitivity: "base" });
+      break;
+    case "atype":
+      cmp = 0;
       break;
     case "amt": {
       const ma = a.value;
@@ -201,6 +209,19 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       className: "small",
       thAriaSort: thAria("label"),
     };
+    const assetTypeCol: AdminDataTableColumn = {
+      key: "atype",
+      header: (
+        <TableSortHeaderButton
+          label="Asset type"
+          isActive={sortKey === "atype"}
+          direction={dirFor("atype")}
+          onClick={() => onSort("atype")}
+        />
+      ),
+      className: "small",
+      thAriaSort: thAria("atype"),
+    };
     const valueCol: AdminDataTableColumn = {
       key: "amt",
       header: (
@@ -270,8 +291,8 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
         : [labelCol, descCol, ccyCol, valueCol, lastUpdatedCol, opsCol];
     }
     return columnOrder === "valueFirst"
-      ? [labelCol, descCol, valueCol, ccyCol, opsCol]
-      : [labelCol, descCol, ccyCol, valueCol, opsCol];
+      ? [labelCol, assetTypeCol, descCol, valueCol, ccyCol, opsCol]
+      : [labelCol, assetTypeCol, descCol, ccyCol, valueCol, opsCol];
   }, [
     columnOrder,
     labelColumnHeader,
@@ -291,6 +312,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   const [descriptionInput, setDescriptionInput] = useState("");
   const [valueStr, setValueStr] = useState("");
   const [formCurrency, setFormCurrency] = useState(GLOBAL_DEFAULT_CURRENCY);
+  const [assetTypeInput, setAssetTypeInput] = useState<InvestmentAssetType>("Fixed");
   const [tableFilter, setTableFilter] = useState("");
   const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
     GLOBAL_DEFAULT_CURRENCY,
@@ -303,7 +325,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
       const list = !q
         ? [...recs]
         : recs.filter((r) => {
-            const hay = [r.deposit, r.description, r.currency, String(r.value)]
+            const hay = [r.deposit, r.assetType, r.description, r.currency, String(r.value)]
               .join(" ")
               .toLowerCase();
             return hay.includes(q);
@@ -381,6 +403,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     setDescriptionInput("");
     setValueStr("");
     setFormCurrency(GLOBAL_DEFAULT_CURRENCY);
+    setAssetTypeInput("Fixed");
   }
 
   function openEdit(row: FinanceSavingsRecord | FinancePensionRecord) {
@@ -389,6 +412,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     if (variant === "savings") {
       const r = row as FinanceSavingsRecord;
       setNameInput(r.deposit);
+      setAssetTypeInput(r.assetType);
       setDescriptionInput(r.description);
       setValueStr(String(r.value));
       setFormCurrency(coerceSupportedCurrency(r.currency, GLOBAL_DEFAULT_CURRENCY));
@@ -417,10 +441,14 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const id = editingId ?? newStatementLineId();
 
     if (variant === "savings") {
+      const assetType: InvestmentAssetType = INVESTMENT_ASSET_TYPES.includes(assetTypeInput)
+        ? assetTypeInput
+        : "Fixed";
       const descTrimmed = descriptionInput.trim();
       const row: FinanceSavingsRecord = {
         id,
         deposit: nameInput.trim(),
+        assetType,
         description:
           descTrimmed.length > MAX_PENSION_DESCRIPTION_LEN
             ? descTrimmed.slice(0, MAX_PENSION_DESCRIPTION_LEN)
@@ -517,6 +545,27 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 onChange={(ev) => setNameInput(ev.target.value)}
               />
             </div>
+            {variant === "savings" ? (
+              <div className="col-md-2">
+                <label className="form-label small" htmlFor={`${sheetId}-atype`}>
+                  Asset type
+                </label>
+                <select
+                  id={`${sheetId}-atype`}
+                  className="form-select form-select-sm"
+                  value={assetTypeInput}
+                  onChange={(ev) =>
+                    setAssetTypeInput(ev.target.value as InvestmentAssetType)
+                  }
+                >
+                  {INVESTMENT_ASSET_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="col-md-3">
               <label className="form-label small" htmlFor={`${sheetId}-description`}>
                 Description
@@ -591,6 +640,10 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                   ? (r as FinanceSavingsRecord).description
                   : (r as FinancePensionRecord).description;
               const descCell = <td className="small">{descriptionText}</td>;
+              const assetTypeCell =
+                variant === "savings" ? (
+                  <td className="small">{(r as FinanceSavingsRecord).assetType}</td>
+                ) : null;
               const lastUpdatedCellPension =
                 variant === "pension" ? (
                   <td className="small text-nowrap">
@@ -600,6 +653,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               const cellsValueFirst = (
                 <>
                   <td className="small">{label}</td>
+                  {assetTypeCell}
                   {descCell}
                   <td className="small text-end">
                     <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
@@ -611,6 +665,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               const cellsCurrencyFirst = (
                 <>
                   <td className="small">{label}</td>
+                  {assetTypeCell}
                   {descCell}
                   <td className="small">{r.currency}</td>
                   <td className="small text-end">
@@ -647,6 +702,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
+              {variant === "savings" ? <td className="small" /> : null}
               <td className="small text-muted fw-normal">
                 <FrankfurterRatesFooterNote
                   needsFx={needsFx}
