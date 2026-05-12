@@ -13,8 +13,12 @@ const DUPLICATE_STATEMENT_BASE_MSG =
 
 const PARSE_POLL_INITIAL_WAIT_MS = 1000;
 const PARSE_POLL_BACKOFF_CAP_MS = 5000;
-/** Lambda timeout (120s) + margin for worker completion before client gives up. */
-const PARSE_POLL_DEADLINE_MS = 210_000;
+/**
+ * Must exceed the admin Lambda statement-parse worker timeout (300s in CDK) and
+ * the PARSE_JOB_STUCK_SECONDS window (420s) so polling can observe terminal job
+ * states instead of giving up while DynamoDB still shows `processing`.
+ */
+const PARSE_POLL_DEADLINE_MS = 480_000;
 
 /**
  * Collects exact filenames (S3 key basenames) already used by lines with

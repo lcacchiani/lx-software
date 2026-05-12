@@ -369,11 +369,21 @@ export class LxsoftwareStack extends cdk.Stack {
       jwtAudience: [this.auth.userPoolClient.userPoolClientId],
     });
 
+    /**
+     * Statement PDF parsing runs on async self-invoke of AdminApiFn (HTTP API
+     * stays sub-30s). Keep Lambda timeout, OpenRouter urllib timeout, job stale/
+     * stuck thresholds, and the admin SPA poll deadline (`useParseStatement.ts`)
+     * in a consistent order: OpenRouter + cold-start headroom < Lambda ≤ stale
+     * ≤ stuck < browser poll < async maxEventAge.
+     */
+    const adminStatementParseLambdaTimeout = cdk.Duration.seconds(300);
+    const openRouterHttpTimeoutSeconds = "210";
+    const parseJobStaleSeconds = "330";
+    const parseJobStuckSeconds = "420";
+
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
-      // PDF parsing uses OpenRouter; worker runs can exceed a minute. HTTP API
-      // integrations stay within ~30s; async parse jobs cover longer work.
-      timeout: cdk.Duration.seconds(120),
+      timeout: adminStatementParseLambdaTimeout,
       memorySize: 1024,
       environmentEncryptionKey: this.sharedEncryptionKey,
       logEncryptionKey: this.sharedEncryptionKey,
@@ -386,8 +396,9 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
         OPENROUTER_MODEL: openRouterModel.valueAsString,
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
-        PARSE_JOB_STALE_SECONDS: "150",
-        PARSE_JOB_STUCK_SECONDS: "240",
+        OPENROUTER_TIMEOUT_SECONDS: openRouterHttpTimeoutSeconds,
+        PARSE_JOB_STALE_SECONDS: parseJobStaleSeconds,
+        PARSE_JOB_STUCK_SECONDS: parseJobStuckSeconds,
         PARSE_JOB_TTL_SECONDS: "604800",
       },
     });
@@ -402,7 +413,7 @@ export class LxsoftwareStack extends cdk.Stack {
     new lambda.EventInvokeConfig(this, "AdminApiAsyncInvoke", {
       function: adminFn,
       retryAttempts: 0,
-      maxEventAge: cdk.Duration.minutes(6),
+      maxEventAge: cdk.Duration.minutes(10),
     });
 
     // Self-invoke permission for async parse worker. Using
@@ -518,7 +529,7 @@ export class LxsoftwareStack extends cdk.Stack {
     const inboundStatementFn = createPythonLambda(this, "InboundStatementMailFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
       handler: "inbound_email_handler.lambda_handler",
-      timeout: cdk.Duration.seconds(120),
+      timeout: adminStatementParseLambdaTimeout,
       memorySize: 1024,
       environmentEncryptionKey: this.sharedEncryptionKey,
       logEncryptionKey: this.sharedEncryptionKey,
@@ -534,9 +545,10 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_API_KEY_SECRET_ARN: openRouterApiKeySecretArn.valueAsString,
         OPENROUTER_MODEL: openRouterModel.valueAsString,
         OPENROUTER_PDF_ENGINE: openRouterPdfEngine.valueAsString,
+        OPENROUTER_TIMEOUT_SECONDS: openRouterHttpTimeoutSeconds,
         PARSE_WORKER_FUNCTION_NAME: adminFn.functionName,
-        PARSE_JOB_STALE_SECONDS: "150",
-        PARSE_JOB_STUCK_SECONDS: "240",
+        PARSE_JOB_STALE_SECONDS: parseJobStaleSeconds,
+        PARSE_JOB_STUCK_SECONDS: parseJobStuckSeconds,
         PARSE_JOB_TTL_SECONDS: "604800",
       },
     });
