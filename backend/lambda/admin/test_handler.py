@@ -631,6 +631,7 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["deposit"], "HSBC Time Deposit")
         self.assertEqual(out[0]["description"], "")
+        self.assertEqual(out[0]["assetType"], "Fixed")
         self.assertEqual(out[0]["value"], 50000.0)
 
     def test_savings_normalize_with_description(self) -> None:
@@ -647,6 +648,7 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         }
         out = _normalize_savings_sheet_payload(body)
         self.assertEqual(out[0]["description"], "12-month fixed")
+        self.assertEqual(out[0]["assetType"], "Fixed")
         body = {
             "pensionRecords": [
                 {
@@ -664,6 +666,36 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         self.assertEqual(out[0]["description"], "DC scheme")
         self.assertEqual(out[0]["currency"], "USD")
 
+    def test_savings_normalize_accepts_asset_type_liquid(self) -> None:
+        body = {
+            "savingsRecords": [
+                {
+                    "id": "s1",
+                    "deposit": "Instant access",
+                    "assetType": "Liquid",
+                    "value": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_savings_sheet_payload(body)
+        self.assertEqual(out[0]["assetType"], "Liquid")
+
+    def test_savings_normalize_rejects_invalid_asset_type(self) -> None:
+        body = {
+            "savingsRecords": [
+                {
+                    "id": "s1",
+                    "deposit": "X",
+                    "assetType": "Volatile",
+                    "value": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_savings_sheet_payload(body)
+
     def test_savings_sanitize_drops_empty_deposit(self) -> None:
         raw = [
             {"id": "a", "deposit": "", "value": 1, "currency": "HKD"},
@@ -672,6 +704,7 @@ class TestSavingsPensionSheetPayload(unittest.TestCase):
         out = _sanitize_savings_records_list(raw)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["id"], "b")
+        self.assertEqual(out[0]["assetType"], "Fixed")
 
     def test_pension_rejects_bad_currency(self) -> None:
         body = {
