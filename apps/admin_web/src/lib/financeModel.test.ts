@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
-  allocationRecordDisplayedMonthlyAmount,
   buildDerivedExpenseLedgerRowsFromTaggedIncome,
   investmentRecordCurrentValueInRowCurrency,
   investmentRecordFiatNotionalInQuoteCurrency,
@@ -25,48 +24,6 @@ import {
   syntheticIncomeLedgerRowsFromAllocations,
   type HouseKey,
 } from "./financeModel";
-
-describe("allocationRecordDisplayedMonthlyAmount", () => {
-  it("returns linked monthly amount", () => {
-    expect(
-      allocationRecordDisplayedMonthlyAmount({
-        expenseId: "e1",
-        description: "A",
-        monthlyAmount: 120,
-        accumulatedAmount: 0,
-        currency: "HKD",
-      }),
-    ).toBe(120);
-  });
-
-  it("returns custom income monthly when income tagged", () => {
-    expect(
-      allocationRecordDisplayedMonthlyAmount({
-        expenseId: "__custom__00000000-0000-4000-8000-000000000001",
-        description: "C",
-        monthlyAmount: 0,
-        accumulatedAmount: 1,
-        currency: "USD",
-        isCustomAllocation: true,
-        isIncome: true,
-        allocationIncomeMonthly: 42,
-      }),
-    ).toBe(42);
-  });
-
-  it("returns zero for custom row without income", () => {
-    expect(
-      allocationRecordDisplayedMonthlyAmount({
-        expenseId: "__custom__00000000-0000-4000-8000-000000000002",
-        description: "C",
-        monthlyAmount: 0,
-        accumulatedAmount: 1,
-        currency: "USD",
-        isCustomAllocation: true,
-      }),
-    ).toBe(0);
-  });
-});
 
 describe("normalizeInvestmentRecords", () => {
   it("keeps rows with allowed category and asset type", () => {

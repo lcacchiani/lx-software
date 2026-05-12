@@ -54,8 +54,8 @@ export function FinancePage() {
         <strong>Allocate</strong>, derived allocation lines from tagged income (both labeled Allocate
         on Expenses), and <strong>custom</strong> allocation rows you add on Allocations. Any row can
         be tagged <strong>Income</strong> so it appears on the Income tab with a monthly amount, or{" "}
-        <strong>Pension</strong> so it appears on the Pension tab. The Accounts tab stores bank and
-        card balances with billing cycle metadata.
+        <strong>Pension</strong> so it appears in the Pension tab table (with fund rows). The Accounts
+        tab stores bank and card balances with billing cycle metadata.
       </p>
       <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
       {!isLoading && !isError ? (
@@ -236,7 +236,6 @@ export function FinancePage() {
             {tab === "allocations" ? (
               <FinanceAllocationsPanel
                 records={data.allocationRecords}
-                pensionRecords={data.pensionRecords}
                 onPatch={patchAllocationRecords}
               />
             ) : null}
