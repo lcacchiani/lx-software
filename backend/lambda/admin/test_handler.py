@@ -838,6 +838,7 @@ class TestAccountsSheetPayload(unittest.TestCase):
             "accountRecords": [
                 {
                     "id": "a1",
+                    "description": "Household Visa",
                     "accountType": "Credit Card",
                     "billingCycleDay": 15,
                     "recordedValue": -1200.5,
@@ -847,6 +848,7 @@ class TestAccountsSheetPayload(unittest.TestCase):
         }
         out = _normalize_accounts_sheet_payload(body)
         self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["description"], "Household Visa")
         self.assertEqual(out[0]["accountType"], "Credit Card")
         self.assertEqual(out[0]["billingCycleDay"], 15)
         self.assertEqual(out[0]["recordedValue"], -1200.5)
@@ -858,6 +860,37 @@ class TestAccountsSheetPayload(unittest.TestCase):
                 {
                     "id": "a1",
                     "accountType": "Loan",
+                    "billingCycleDay": 1,
+                    "recordedValue": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_accounts_sheet_payload(body)
+
+    def test_normalize_description_defaults_empty(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "accountType": "Bank Account",
+                    "billingCycleDay": 1,
+                    "recordedValue": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_accounts_sheet_payload(body)
+        self.assertEqual(out[0]["description"], "")
+
+    def test_normalize_rejects_non_string_description(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "description": 99,
+                    "accountType": "Bank Account",
                     "billingCycleDay": 1,
                     "recordedValue": 1,
                     "currency": "HKD",
@@ -896,6 +929,7 @@ class TestAccountsSheetPayload(unittest.TestCase):
         out = _sanitize_accounts_records_list(raw)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["lastUpdated"], "2024-06-15")
+        self.assertEqual(out[0]["description"], "")
 
 
 class TestMergeAccountsLastUpdated(unittest.TestCase):
@@ -948,6 +982,31 @@ class TestMergeAccountsLastUpdated(unittest.TestCase):
         existing = [
             {
                 "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_accounts_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_description_change_updates_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "a1",
+                "description": "Renamed account",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "a1",
+                "description": "",
                 "accountType": "Credit Card",
                 "billingCycleDay": 10,
                 "recordedValue": 1.0,

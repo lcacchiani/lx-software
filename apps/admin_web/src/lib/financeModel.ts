@@ -177,9 +177,12 @@ export const FINANCE_ACCOUNT_TYPES = ["Bank Account", "Credit Card", "Debit Card
 
 export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
 
+export const MAX_ACCOUNT_DESCRIPTION_LEN = 8000;
+
 /** One row in the Accounts sheet (DynamoDB finance sheet `accounts`). */
 export type FinanceAccountRecord = {
   readonly id: string;
+  readonly description: string;
   readonly accountType: FinanceAccountType;
   /** Day of month (1–31) for the billing cycle. */
   readonly billingCycleDay: number;
@@ -1173,9 +1176,14 @@ export function normalizeAccountRecords(input: unknown): FinanceAccountRecord[] 
     }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    let description = typeof row.description === "string" ? row.description.trim() : "";
+    if (description.length > MAX_ACCOUNT_DESCRIPTION_LEN) {
+      description = description.slice(0, MAX_ACCOUNT_DESCRIPTION_LEN);
+    }
     const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
     const rec: FinanceAccountRecord = {
       id,
+      description,
       accountType,
       billingCycleDay,
       recordedValue,

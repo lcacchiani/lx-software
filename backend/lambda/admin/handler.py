@@ -1284,8 +1284,9 @@ def _merge_pension_last_updated(
     return out
 
 
-def _account_row_signature(row: dict[str, Any]) -> tuple[str, int, float, str]:
+def _account_row_signature(row: dict[str, Any]) -> tuple[str, str, int, float, str]:
     return (
+        str(row.get("description", "")),
         str(row["accountType"]),
         int(row["billingCycleDay"]),
         float(row["recordedValue"]),
@@ -2001,8 +2002,17 @@ def _sanitize_accounts_records_list(raw: Any) -> list[dict[str, Any]]:
         cur = _coerce_finance_currency_value(
             row.get("currency"), DEFAULT_FINANCE_CURRENCY
         )
+        desc_raw = row.get("description", "")
+        if desc_raw is None:
+            desc_raw = ""
+        if not isinstance(desc_raw, str):
+            continue
+        d = desc_raw.strip()
+        if len(d) > MAX_FINANCE_DESCRIPTION:
+            d = d[:MAX_FINANCE_DESCRIPTION]
         entry: dict[str, Any] = {
             "id": rid.strip(),
+            "description": d,
             "accountType": account_type,
             "billingCycleDay": bd,
             "recordedValue": amt_f,
@@ -2056,9 +2066,18 @@ def _normalize_accounts_sheet_payload(body: dict[str, Any]) -> list[dict[str, An
             row.get("currency", DEFAULT_FINANCE_CURRENCY),
             f"accountRecords[{i}].currency",
         )
+        desc_raw = row.get("description", "")
+        if desc_raw is None:
+            desc_raw = ""
+        if not isinstance(desc_raw, str):
+            raise ValueError(f"accountRecords[{i}].description must be a string")
+        d = desc_raw.strip()
+        if len(d) > MAX_FINANCE_DESCRIPTION:
+            raise ValueError(f"accountRecords[{i}].description is too long")
         out.append(
             {
                 "id": rid.strip(),
+                "description": d,
                 "accountType": at_st,
                 "billingCycleDay": bd,
                 "recordedValue": amt_f,

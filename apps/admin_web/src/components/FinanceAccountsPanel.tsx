@@ -34,7 +34,7 @@ function accountLastUpdatedDisplay(lastUpdated: string | undefined): string {
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
-type AccountsSortKey = "atype" | "day" | "amt" | "ccy" | "lastUpdated";
+type AccountsSortKey = "desc" | "atype" | "day" | "amt" | "ccy" | "lastUpdated";
 
 function compareAccounts(
   a: FinanceAccountRecord,
@@ -45,6 +45,9 @@ function compareAccounts(
   const dir = sortDir === "asc" ? 1 : -1;
   let cmp = 0;
   switch (sortKey) {
+    case "desc":
+      cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+      break;
     case "atype":
       cmp = a.accountType.localeCompare(b.accountType, undefined, { sensitivity: "base" });
       break;
@@ -110,6 +113,7 @@ export function FinanceAccountsPanel(props: {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [descriptionInput, setDescriptionInput] = useState("");
   const [accountTypeInput, setAccountTypeInput] = useState<FinanceAccountType>("Bank Account");
   const [billingDayStr, setBillingDayStr] = useState("1");
   const [valueStr, setValueStr] = useState("");
@@ -132,6 +136,19 @@ export function FinanceAccountsPanel(props: {
       sortKey === key ? sortDir : null;
 
     return [
+      {
+        key: "desc",
+        header: (
+          <TableSortHeaderButton
+            label="Description"
+            isActive={sortKey === "desc"}
+            direction={dirFor("desc")}
+            onClick={() => onSort("desc")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("desc"),
+      },
       {
         key: "atype",
         header: (
@@ -216,6 +233,7 @@ export function FinanceAccountsPanel(props: {
       ? [...records]
       : records.filter((r) => {
           const hay = [
+            r.description,
             r.accountType,
             String(r.billingCycleDay),
             r.currency,
@@ -232,6 +250,8 @@ export function FinanceAccountsPanel(props: {
       list.sort((a, b) => {
         const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
         if (byCcy !== 0) return byCcy;
+        const byDesc = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
+        if (byDesc !== 0) return byDesc;
         return a.accountType.localeCompare(b.accountType, undefined, { sensitivity: "base" });
       });
     }
@@ -276,6 +296,7 @@ export function FinanceAccountsPanel(props: {
   function resetForm() {
     setEditingId(null);
     setFormError(null);
+    setDescriptionInput("");
     setAccountTypeInput("Bank Account");
     setBillingDayStr("1");
     setValueStr("");
@@ -285,6 +306,7 @@ export function FinanceAccountsPanel(props: {
   function openEdit(row: FinanceAccountRecord) {
     setEditingId(row.id);
     setFormError(null);
+    setDescriptionInput(row.description);
     setAccountTypeInput(row.accountType);
     setBillingDayStr(String(row.billingCycleDay));
     setValueStr(String(row.recordedValue));
@@ -308,6 +330,7 @@ export function FinanceAccountsPanel(props: {
     const id = editingId ?? newStatementLineId();
     const row: FinanceAccountRecord = {
       id,
+      description: descriptionInput.trim(),
       accountType: accountTypeInput,
       billingCycleDay: dayParsed,
       recordedValue: valueNum,
@@ -353,6 +376,20 @@ export function FinanceAccountsPanel(props: {
             </div>
           ) : null}
           <div className="row g-3">
+            <div className="col-md-3">
+              <label className="form-label small" htmlFor={`${sheetId}-description`}>
+                Description
+              </label>
+              <input
+                id={`${sheetId}-description`}
+                type="text"
+                className="form-control form-control-sm"
+                value={descriptionInput}
+                onChange={(ev) => setDescriptionInput(ev.target.value)}
+                placeholder="e.g. bank or card name"
+                autoComplete="off"
+              />
+            </div>
             <div className="col-md-3">
               <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
                 Account Type
@@ -427,6 +464,7 @@ export function FinanceAccountsPanel(props: {
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
+                <td className="small">{r.description || "—"}</td>
                 <td className="small">{r.accountType}</td>
                 <td className="small text-end">{r.billingCycleDay}</td>
                 <td className="small text-end">
@@ -458,6 +496,7 @@ export function FinanceAccountsPanel(props: {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
+              <td className="small" />
               <td className="small text-muted fw-normal">
                 <FrankfurterRatesFooterNote
                   needsFx={needsFx}
