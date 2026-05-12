@@ -614,7 +614,7 @@ export function HouseStatementPanel({
         </div>
         {parseStatement.isPending ? (
           <p className="small text-muted mt-2 mb-0">
-            Uploading and parsing — this can take 20–40 seconds for multi-page PDFs.
+            Uploading and parsing — often under a minute; large or scanned PDFs can take several minutes.
           </p>
         ) : null}
         {parseStatement.isError ? (
