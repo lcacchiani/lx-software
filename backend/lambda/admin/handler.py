@@ -26,7 +26,7 @@ ADMIN_GROUP = "admin"
 RECORD_PK_PREFIX = "RECORD#"
 PARSE_JOB_PK_PREFIX = "PARSE_JOB#"
 FINANCE_HOUSE_KEYS = frozenset({"hillmarton", "morrison"})
-FINANCE_LINE_TYPES = frozenset({"income", "expenditure"})
+FINANCE_LINE_TYPES = frozenset({"income", "expenditure", "mortgage"})
 SUPPORTED_FINANCE_CURRENCIES = frozenset(
     {"GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED"}
 )
@@ -546,7 +546,9 @@ def _normalize_finance_payload(body: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"lines[{i}].dateUtc must be a valid ISO-8601 instant")
         typ = raw.get("type")
         if typ not in FINANCE_LINE_TYPES:
-            raise ValueError(f"lines[{i}].type must be income or expenditure")
+            raise ValueError(
+                f"lines[{i}].type must be income, expenditure, or mortgage"
+            )
         desc = raw.get("description")
         if not isinstance(desc, str) or not desc.strip():
             raise ValueError(f"lines[{i}].description is required")

@@ -4,7 +4,7 @@ import {
   type CurrencyCode,
 } from "./currencies";
 
-export type FinanceLineType = "income" | "expenditure";
+export type FinanceLineType = "income" | "expenditure" | "mortgage";
 
 export type HouseFloat = {
   readonly amount: number;
@@ -1411,7 +1411,7 @@ export function newStatementLineId(): string {
 }
 
 function isFinanceLineType(v: unknown): v is FinanceLineType {
-  return v === "income" || v === "expenditure";
+  return v === "income" || v === "expenditure" || v === "mortgage";
 }
 
 /** Coerces API / legacy payloads into a consistent `HouseFinanceData` shape. */

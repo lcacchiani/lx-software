@@ -6,7 +6,8 @@ transactions from a PDF (or image / text) attachment stored in S3.
 Mirrors the design used in github.com/lcacchiani/evolvesprouts'
 ``openrouter_expense_parser.py`` but is purpose-built for the LX Software
 admin "House statement" feature: each parsed line maps directly onto the
-``HouseStatementLine`` shape stored against a house in DynamoDB.
+``HouseStatementLine`` shape stored against a house in DynamoDB (line types:
+``income``, ``expenditure``, ``mortgage``).
 """
 
 from __future__ import annotations
@@ -30,8 +31,9 @@ _DEFAULT_MAX_FILE_BYTES = 15 * 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS = 60
 
 _SUPPORTED_CURRENCIES = ("GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED")
-_FINANCE_LINE_TYPES = ("income", "expenditure")
+_FINANCE_LINE_TYPES = ("income", "expenditure", "mortgage")
 _DISCARD_DESCRIPTION_NORMALIZED = "payment to landlord"
+_MTG_IN_DESCRIPTION = re.compile(r"(?i)\bmtg\b")
 
 _api_key_cache: str | None = None
 
@@ -261,6 +263,8 @@ def _normalize_result(parsed: dict[str, Any], *, default_currency: str) -> dict[
         description = _optional_text(raw.get("description"), max_length=2000)
         if not description:
             continue
+        if _MTG_IN_DESCRIPTION.search(description):
+            line_type = "mortgage"
         if description.strip().casefold() == _DISCARD_DESCRIPTION_NORMALIZED:
             continue
         currency = _coerce_currency(raw.get("currency"), fallback=fallback_cur)
@@ -301,6 +305,8 @@ def _coerce_line_type(value: Any) -> str | None:
         return "income"
     if s in {"debit", "out", "withdrawal", "expense", "outgoing", "money_out"}:
         return "expenditure"
+    if s in {"home_loan", "mortgage_payment"}:
+        return "mortgage"
     return None
 
 
@@ -496,14 +502,16 @@ def _schema_prompt(default_currency: str) -> str:
         "Extract every transaction from the attached finance / bank statement "
         "and return strict JSON only matching this shape: "
         '{"lines": [{"dateUtc":"YYYY-MM-DDTHH:MM:SS.000Z", '
-        '"type":"income|expenditure", "description":"string", '
+        '"type":"income|expenditure|mortgage", "description":"string", '
         '"netAmount":number, "vat":number, "grossAmount":number, '
         '"currency":"3-letter ISO"}]}.'
         " Rules: "
         "(1) dateUtc must be an ISO-8601 UTC instant — if only a date is "
         "shown use 00:00:00.000Z time. "
         "(2) type is 'income' for credits / money in, 'expenditure' for "
-        "debits / money out. "
+        "debits / money out that are not mortgage payments, and 'mortgage' "
+        "for any line whose payee, reference, or description is labeled "
+        "MTG or clearly indicates a mortgage payment (typically a debit). "
         "(3) Amounts are positive numbers in major currency units. "
         "grossAmount is the absolute value of the transaction. "
         "If VAT is not shown, set vat to 0 and netAmount equal to "

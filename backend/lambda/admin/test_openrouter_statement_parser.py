@@ -90,6 +90,38 @@ class TestNormalizeResult(unittest.TestCase):
         self.assertEqual(out["lines"][0]["type"], "income")
         self.assertEqual(out["lines"][1]["type"], "expenditure")
 
+    def test_mortgage_type_from_model(self) -> None:
+        parsed = {
+            "lines": [
+                {
+                    "dateUtc": "2026-04-03T12:00:00Z",
+                    "type": "mortgage",
+                    "description": "Home loan",
+                    "grossAmount": 1200,
+                }
+            ]
+        }
+        out = parser._normalize_result(parsed, default_currency="GBP")
+        self.assertEqual(len(out["lines"]), 1)
+        self.assertEqual(out["lines"][0]["type"], "mortgage")
+
+    def test_mtg_in_description_forces_mortgage(self) -> None:
+        for desc in ("MTG", "DD MTG PAYMENT", "Direct debit mtg"):
+            with self.subTest(desc=desc):
+                parsed = {
+                    "lines": [
+                        {
+                            "dateUtc": "2026-04-01",
+                            "type": "expenditure",
+                            "description": desc,
+                            "grossAmount": 800,
+                            "currency": "GBP",
+                        }
+                    ]
+                }
+                out = parser._normalize_result(parsed, default_currency="GBP")
+                self.assertEqual(out["lines"][0]["type"], "mortgage")
+
     def test_drops_invalid_lines(self) -> None:
         parsed = {
             "lines": [

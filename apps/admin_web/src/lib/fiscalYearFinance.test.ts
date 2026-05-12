@@ -60,7 +60,7 @@ describe("defaultFiscalYearIdForNowUtc", () => {
 describe("sumHouseStatementLinesForFiscalYear", () => {
   const mk = (
     dateUtc: string,
-    type: "income" | "expenditure",
+    type: "income" | "expenditure" | "mortgage",
     net: number,
     currency = "HKD",
   ): HouseStatementLine => ({
@@ -94,5 +94,15 @@ describe("sumHouseStatementLinesForFiscalYear", () => {
     const r = sumHouseStatementLinesForFiscalYear(lines, 2025);
     expect(r.incomeByCurrency.HKD).toBe(10);
     expect(r.incomeByCurrency.USD).toBe(20);
+  });
+
+  it("treats mortgage lines as expenses for fiscal totals", () => {
+    const lines = [
+      mk("2025-06-01T00:00:00.000Z", "mortgage", 3000, "HKD"),
+      mk("2025-06-02T00:00:00.000Z", "expenditure", 100, "HKD"),
+    ];
+    const r = sumHouseStatementLinesForFiscalYear(lines, 2025);
+    expect(r.expensesByCurrency.HKD).toBe(3100);
+    expect(r.incomeByCurrency.HKD).toBeUndefined();
   });
 });
