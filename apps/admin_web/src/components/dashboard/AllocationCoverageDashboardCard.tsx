@@ -162,7 +162,7 @@ export function AllocationCoverageDashboardCard() {
         coverage += convertAmountToBase(acc.recordedValue, acc.currency, base, map);
       }
 
-      const diff = allocationsSum - coverage;
+      const diff = coverage - allocationsSum;
       return {
         status: "ok" as const,
         allocationRows,
@@ -218,9 +218,8 @@ export function AllocationCoverageDashboardCard() {
             <strong>Allocation Coverage</strong>
           </h2>
           <p className="text-muted small mb-3">
-            Allocation rows (same as the Finance Allocations tab) in {base}, compared to liquid
-            investments, all savings deposits, and bank account current balances—also summed in{" "}
-            {base}.
+            Allocation rows (same as the Finance Allocations tab) compared to liquid investments, all
+            savings deposits, and bank account current balances.
           </p>
 
           {sheet.status === "empty" ? (
@@ -232,7 +231,7 @@ export function AllocationCoverageDashboardCard() {
                   <thead>
                     <tr>
                       <th className="small">Description</th>
-                      <th className="small text-end">Accumulated ({base})</th>
+                      <th className="small text-end">Accumulated</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -247,7 +246,7 @@ export function AllocationCoverageDashboardCard() {
                         <tr key={row.key}>
                           <td className="small">{row.description}</td>
                           <td className="small text-end text-nowrap">
-                            <MoneyAmount amount={row.hkd} currency={base} amountOnly />
+                            <MoneyAmount amount={row.hkd} currency={base} />
                           </td>
                         </tr>
                       ))
@@ -264,7 +263,7 @@ export function AllocationCoverageDashboardCard() {
                       <tr className="fw-semibold">
                         <td className="small">Total allocations</td>
                         <td className="small text-end text-nowrap">
-                          <MoneyAmount amount={sheet.allocationsSum} currency={base} amountOnly />
+                          <MoneyAmount amount={sheet.allocationsSum} currency={base} />
                         </td>
                       </tr>
                     </tfoot>
@@ -276,16 +275,16 @@ export function AllocationCoverageDashboardCard() {
                 <dt className="col-sm-5 text-muted">Coverage</dt>
                 <dd className="col-sm-7 text-end mb-0">
                   {sheet.status === "ok" ? (
-                    <MoneyAmount amount={sheet.coverage} currency={base} amountOnly />
+                    <MoneyAmount amount={sheet.coverage} currency={base} />
                   ) : (
                     loadingOrErrorMessage(sheet)
                   )}
                 </dd>
-                <dt className="col-sm-5 text-muted pt-2">Allocations − coverage</dt>
+                <dt className="col-sm-5 text-muted pt-2">Net</dt>
                 <dd className="col-sm-7 text-end pt-2 mb-0">
                   {sheet.status === "ok" ? (
-                    <span className={sheet.diff <= 0 ? "text-success" : "text-danger"}>
-                      <MoneyAmount amount={sheet.diff} currency={base} amountOnly />
+                    <span className={sheet.diff >= 0 ? "text-success" : "text-danger"}>
+                      <MoneyAmount amount={sheet.diff} currency={base} />
                     </span>
                   ) : (
                     loadingOrErrorMessage(sheet)
