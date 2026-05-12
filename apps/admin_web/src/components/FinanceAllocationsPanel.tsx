@@ -548,7 +548,7 @@ export function FinanceAllocationsPanel(props: {
           {editingLinkedRow ? (
             <>
               <div className="row g-3 align-items-end">
-                <div className="col-md-4">
+                <div className="col-md-2">
                   <span className="form-label small d-block text-muted">Description (from expense)</span>
                   <div className="small fw-semibold">{editingLinkedRow.description}</div>
                 </div>
@@ -563,10 +563,6 @@ export function FinanceAllocationsPanel(props: {
                   </div>
                 </div>
                 <div className="col-md-2">
-                  <span className="form-label small d-block text-muted">Currency</span>
-                  <div className="small">{editingLinkedRow.currency}</div>
-                </div>
-                <div className="col-md-2">
                   <label className="form-label small" htmlFor="alloc-linked-accum">
                     Accumulated amount
                   </label>
@@ -579,6 +575,10 @@ export function FinanceAllocationsPanel(props: {
                     value={linkedAccumStr}
                     onChange={(ev) => setLinkedAccumStr(ev.target.value)}
                   />
+                </div>
+                <div className="col-md-2">
+                  <span className="form-label small d-block text-muted">Currency</span>
+                  <div className="small">{editingLinkedRow.currency}</div>
                 </div>
               </div>
               <div className="row g-3 mt-2">
@@ -601,7 +601,7 @@ export function FinanceAllocationsPanel(props: {
           ) : (
             <>
               <div className="row g-3 align-items-end">
-                <div className="col-md-4">
+                <div className="col-md-2">
                   <label className="form-label small" htmlFor="alloc-custom-desc">
                     Description
                   </label>
@@ -612,18 +612,6 @@ export function FinanceAllocationsPanel(props: {
                     required
                     value={customDesc}
                     onChange={(ev) => setCustomDesc(ev.target.value)}
-                  />
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label small" htmlFor="alloc-custom-ccy">
-                    Currency
-                  </label>
-                  <CurrencySelect
-                    id="alloc-custom-ccy"
-                    value={customCcy}
-                    onChange={(code) =>
-                      setCustomCcy(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
-                    }
                   />
                 </div>
                 <div className="col-md-2">
@@ -638,6 +626,34 @@ export function FinanceAllocationsPanel(props: {
                     required
                     value={customAccumStr}
                     onChange={(ev) => setCustomAccumStr(ev.target.value)}
+                  />
+                </div>
+                {customIsIncome ? (
+                  <div className="col-md-2">
+                    <label className="form-label small" htmlFor="alloc-custom-income-monthly">
+                      Monthly income
+                    </label>
+                    <input
+                      id="alloc-custom-income-monthly"
+                      type="number"
+                      step="0.01"
+                      className="form-control form-control-sm"
+                      required={customIsIncome}
+                      value={customIncomeMonthlyStr}
+                      onChange={(ev) => setCustomIncomeMonthlyStr(ev.target.value)}
+                    />
+                  </div>
+                ) : null}
+                <div className="col-md-2">
+                  <label className="form-label small" htmlFor="alloc-custom-ccy">
+                    Currency
+                  </label>
+                  <CurrencySelect
+                    id="alloc-custom-ccy"
+                    value={customCcy}
+                    onChange={(code) =>
+                      setCustomCcy(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                    }
                   />
                 </div>
               </div>
@@ -657,26 +673,10 @@ export function FinanceAllocationsPanel(props: {
                       }}
                     />
                     <label className="form-check-label small" htmlFor="alloc-custom-income">
-                      Income (show on Income tab with monthly amount below)
+                      Income (show on Income tab; monthly amount appears on the line above when checked)
                     </label>
                   </div>
                 </div>
-                {customIsIncome ? (
-                  <div className="col-md-2">
-                    <label className="form-label small" htmlFor="alloc-custom-income-monthly">
-                      Monthly income
-                    </label>
-                    <input
-                      id="alloc-custom-income-monthly"
-                      type="number"
-                      step="0.01"
-                      className="form-control form-control-sm"
-                      required={customIsIncome}
-                      value={customIncomeMonthlyStr}
-                      onChange={(ev) => setCustomIncomeMonthlyStr(ev.target.value)}
-                    />
-                  </div>
-                ) : null}
               </div>
             </>
           )}

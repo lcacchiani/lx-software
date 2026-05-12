@@ -112,7 +112,7 @@ export function FinanceAccountsPanel(props: {
   const formId = `${sheetId}-form`;
   const recordEditorSectionRef = useRef<HTMLDivElement | null>(null);
 
-  const [sortKey, setSortKey] = useState<AccountsSortKey | null>(null);
+  const [sortKey, setSortKey] = useState<AccountsSortKey | null>("atype");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const onSort = useCallback((key: AccountsSortKey) => {
     setSortKey((prevKey) => {
@@ -282,11 +282,11 @@ export function FinanceAccountsPanel(props: {
       list.sort((a, b) => compareAccounts(a, b, sortKey, sortDir));
     } else {
       list.sort((a, b) => {
-        const byCcy = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
-        if (byCcy !== 0) return byCcy;
+        const byType = a.accountType.localeCompare(b.accountType, undefined, { sensitivity: "base" });
+        if (byType !== 0) return byType;
         const byDesc = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
         if (byDesc !== 0) return byDesc;
-        return a.accountType.localeCompare(b.accountType, undefined, { sensitivity: "base" });
+        return a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
       });
     }
     return list;
