@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -19,6 +19,7 @@ import {
   type IncomeLedgerFlagField,
   syntheticIncomeLedgerRowsFromAllocations,
 } from "../lib/financeModel";
+import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
@@ -480,6 +481,7 @@ export function FinanceLedgerSheetPanel({
     isAllocate: false,
   });
 
+  const recordEditorSectionRef = useRef<HTMLDivElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [lineForm, setLineForm] = useState<LineFormState>(() => emptyForm());
@@ -615,6 +617,7 @@ export function FinanceLedgerSheetPanel({
       isInvestment: row.isInvestment === true,
       isAllocate: row.isAllocate === true,
     });
+    scheduleFocusRecordEditor(() => recordEditorSectionRef.current);
   }
 
   function submitLine(e: FormEvent) {
@@ -688,6 +691,7 @@ export function FinanceLedgerSheetPanel({
         />
       ) : null}
       <AdminEditorSection
+        containerRef={recordEditorSectionRef}
         title={formSectionTitle}
         footer={
           <>
