@@ -232,6 +232,11 @@ export type FinanceAllocationRecord = {
    * Custom rows require {@link allocationIncomeMonthly}; linked rows use {@link monthlyAmount}.
    */
   readonly isIncome?: boolean;
+  /**
+   * When true, row is tagged Pension on Allocations and listed on the Pension tab (persisted by
+   * admin API).
+   */
+  readonly isPension?: boolean;
   /** Custom allocations only: per-month income when `isIncome` (persisted by admin API). */
   readonly allocationIncomeMonthly?: number;
   /** Linked rows only: copied from the source expense when present. */
@@ -270,6 +275,9 @@ export function allocationRecordsToApiPayload(
           body.allocationIncomeMonthly = m;
         }
       }
+      if (r.isPension === true) {
+        body.isPension = true;
+      }
       return body;
     }
     const linked: Record<string, unknown> = {
@@ -279,8 +287,27 @@ export function allocationRecordsToApiPayload(
     if (r.isIncome === true) {
       linked.isIncome = true;
     }
+    if (r.isPension === true) {
+      linked.isPension = true;
+    }
     return linked;
   });
+}
+
+/** Monthly amount shown in allocation summaries (matches Allocations tab “Monthly amount” column). */
+export function allocationRecordDisplayedMonthlyAmount(record: FinanceAllocationRecord): number {
+  const isCustom =
+    record.isCustomAllocation === true ||
+    record.expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
+  if (isCustom) {
+    if (record.isIncome === true) {
+      const v = record.allocationIncomeMonthly;
+      return typeof v === "number" && Number.isFinite(v) ? v : 0;
+    }
+    return 0;
+  }
+  const v = record.monthlyAmount;
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
 /** Monthly income implied by an allocation tagged {@link FinanceAllocationRecord.isIncome}. */
@@ -1328,6 +1355,7 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
       row.isCustomAllocation === true ||
       expenseId.startsWith(CUSTOM_ALLOCATION_EXPENSE_ID_PREFIX);
     const isIncome = row.isIncome === true;
+    const isPension = row.isPension === true;
     const rhRaw = row.relatedHouse;
     const relatedHouse: HouseKey | undefined =
       rhRaw === "hillmarton" || rhRaw === "morrison" ? rhRaw : undefined;
@@ -1382,6 +1410,7 @@ export function normalizeAllocationRecords(input: unknown): FinanceAllocationRec
       currency,
       ...(isCustomAllocation ? { isCustomAllocation: true as const } : {}),
       ...(isIncome ? { isIncome: true as const } : {}),
+      ...(isPension ? { isPension: true as const } : {}),
       ...(allocationIncomeMonthly !== undefined ? { allocationIncomeMonthly } : {}),
       ...(relatedHouse ? { relatedHouse } : {}),
     };

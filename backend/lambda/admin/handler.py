@@ -1604,6 +1604,8 @@ def _sanitize_allocation_stored_list(raw: Any) -> list[dict[str, Any]]:
                         aim_f = None
                 if aim_f is not None and aim_f == aim_f and abs(aim_f) <= 1e15:
                     rec["allocationIncomeMonthly"] = aim_f
+            if row.get("isPension") is True:
+                rec["isPension"] = True
             if last_u is not None:
                 rec["lastUpdated"] = last_u
             out.append(rec)
@@ -1611,6 +1613,8 @@ def _sanitize_allocation_stored_list(raw: Any) -> list[dict[str, Any]]:
             rec = {"expenseId": eid, "accumulatedAmount": amt_f}
             if row.get("isIncome") is True:
                 rec["isIncome"] = True
+            if row.get("isPension") is True:
+                rec["isPension"] = True
             if last_u is not None:
                 rec["lastUpdated"] = last_u
             out.append(rec)
@@ -1646,7 +1650,7 @@ def _custom_allocation_row_signature(row: dict[str, Any]) -> tuple[Any, ...]:
                 aim = float(raw)
             except ValueError:
                 aim = None
-    return (d, cur, float(row.get("accumulatedAmount", 0.0)), inc, aim)
+    return (d, cur, float(row.get("accumulatedAmount", 0.0)), inc, aim, row.get("isPension") is True)
 
 
 def _merge_allocation_stored_last_updated(
@@ -1685,6 +1689,8 @@ def _merge_allocation_stored_last_updated(
                         merged["allocationIncomeMonthly"] = float(aim_raw)
                     except ValueError:
                         pass
+            if row.get("isPension") is True:
+                merged["isPension"] = True
             prev = by_id.get(eid)
             if prev is None:
                 merged["lastUpdated"] = today
@@ -1701,17 +1707,22 @@ def _merge_allocation_stored_last_updated(
             merged = {"expenseId": eid, "accumulatedAmount": amt}
             if row.get("isIncome") is True:
                 merged["isIncome"] = True
+            if row.get("isPension") is True:
+                merged["isPension"] = True
             prev = by_id.get(eid)
             prev_inc = prev.get("isIncome") is True if prev else False
             new_inc = merged.get("isIncome") is True
+            prev_pen = prev.get("isPension") is True if prev else False
+            new_pen = merged.get("isPension") is True
             if prev is None:
-                if amt != 0.0 or new_inc:
+                if amt != 0.0 or new_inc or new_pen:
                     merged["lastUpdated"] = today
             else:
                 prev_amt = float(prev.get("accumulatedAmount", 0.0))
                 amt_same = abs(prev_amt - amt) < 1e-9
                 inc_same = prev_inc == new_inc
-                if amt_same and inc_same:
+                pen_same = prev_pen == new_pen
+                if amt_same and inc_same and pen_same:
                     lu = prev.get("lastUpdated")
                     if isinstance(lu, str) and _is_calendar_date_string(lu):
                         merged["lastUpdated"] = lu
@@ -1817,6 +1828,8 @@ def _normalize_allocations_sheet_payload(
                     )
                 rec_c["isIncome"] = True
                 rec_c["allocationIncomeMonthly"] = aim_f
+            if row.get("isPension") is True:
+                rec_c["isPension"] = True
             custom_out.append(rec_c)
         else:
             if eid not in allocated_expense_ids:
@@ -1827,6 +1840,8 @@ def _normalize_allocations_sheet_payload(
             rec_l: dict[str, Any] = {"expenseId": eid, "accumulatedAmount": amt_f}
             if row.get("isIncome") is True:
                 rec_l["isIncome"] = True
+            if row.get("isPension") is True:
+                rec_l["isPension"] = True
             linked_out.append(rec_l)
     if linked_seen != allocated_expense_ids:
         missing = allocated_expense_ids - linked_seen
@@ -1873,6 +1888,8 @@ def _build_allocation_records_for_response(
             row_out["relatedHouse"] = rh
         if st.get("isIncome") is True:
             row_out["isIncome"] = True
+        if st.get("isPension") is True:
+            row_out["isPension"] = True
         if last_u is not None:
             row_out["lastUpdated"] = last_u
         out.append(row_out)
@@ -1925,6 +1942,8 @@ def _build_allocation_records_for_response(
         if is_inc:
             row_out["isIncome"] = True
             row_out["allocationIncomeMonthly"] = aim
+        if st.get("isPension") is True:
+            row_out["isPension"] = True
         if last_u is not None:
             row_out["lastUpdated"] = last_u
         out.append(row_out)
