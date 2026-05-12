@@ -186,7 +186,13 @@ export type FinanceAccountRecord = {
   readonly accountType: FinanceAccountType;
   /** Day of month (1–31) for the billing cycle. */
   readonly billingCycleDay: number;
+  /** Current balance in `currency` (stored as `recordedValue` in the admin API). */
   readonly recordedValue: number;
+  /**
+   * Credit Card only: last statement balance in `currency`.
+   * Omitted for other account types.
+   */
+  readonly lastStatementAmount?: number;
   readonly currency: string;
   /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
   readonly lastUpdated?: string;
@@ -1174,6 +1180,24 @@ export function normalizeAccountRecords(input: unknown): FinanceAccountRecord[] 
     if (!Number.isFinite(recordedValue) || Math.abs(recordedValue) > 1e15) {
       continue;
     }
+    let lastStatementAmount: number | undefined;
+    if (accountType === "Credit Card") {
+      const lsaRaw = row.lastStatementAmount;
+      let lsa: number;
+      if (lsaRaw === undefined || lsaRaw === null || lsaRaw === "") {
+        lsa = 0;
+      } else if (typeof lsaRaw === "number") {
+        lsa = lsaRaw;
+      } else if (typeof lsaRaw === "string") {
+        lsa = Number.parseFloat(lsaRaw);
+      } else {
+        continue;
+      }
+      if (!Number.isFinite(lsa) || Math.abs(lsa) > 1e15) {
+        continue;
+      }
+      lastStatementAmount = lsa;
+    }
     const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
     const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
     let description = typeof row.description === "string" ? row.description.trim() : "";
@@ -1187,6 +1211,7 @@ export function normalizeAccountRecords(input: unknown): FinanceAccountRecord[] 
       accountType,
       billingCycleDay,
       recordedValue,
+      ...(lastStatementAmount !== undefined ? { lastStatementAmount } : {}),
       currency,
     };
     out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });

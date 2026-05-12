@@ -38,7 +38,11 @@ function accountTypeUsesBillingCycleDay(t: FinanceAccountType): boolean {
   return t !== "Bank Account";
 }
 
-type AccountsSortKey = "desc" | "atype" | "day" | "amt" | "ccy" | "lastUpdated";
+function accountTypeIsCreditCard(t: FinanceAccountType): boolean {
+  return t === "Credit Card";
+}
+
+type AccountsSortKey = "desc" | "atype" | "day" | "amt" | "stmt" | "ccy" | "lastUpdated";
 
 function compareAccounts(
   a: FinanceAccountRecord,
@@ -65,6 +69,12 @@ function compareAccounts(
       const ma = a.recordedValue;
       const mb = b.recordedValue;
       cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
+      break;
+    }
+    case "stmt": {
+      const sa = accountTypeIsCreditCard(a.accountType) ? (a.lastStatementAmount ?? 0) : 0;
+      const sb = accountTypeIsCreditCard(b.accountType) ? (b.lastStatementAmount ?? 0) : 0;
+      cmp = sa === sb ? 0 : sa < sb ? -1 : 1;
       break;
     }
     case "ccy":
@@ -121,6 +131,7 @@ export function FinanceAccountsPanel(props: {
   const [accountTypeInput, setAccountTypeInput] = useState<FinanceAccountType>("Bank Account");
   const [billingDayStr, setBillingDayStr] = useState("1");
   const [valueStr, setValueStr] = useState("");
+  const [lastStatementStr, setLastStatementStr] = useState("");
   const [formCurrency, setFormCurrency] = useState(GLOBAL_DEFAULT_CURRENCY);
   const [tableFilter, setTableFilter] = useState("");
   const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
@@ -154,6 +165,34 @@ export function FinanceAccountsPanel(props: {
         thAriaSort: thAria("desc"),
       },
       {
+        key: "amt",
+        header: (
+          <TableSortHeaderButton
+            label="Current Balance"
+            isActive={sortKey === "amt"}
+            direction={dirFor("amt")}
+            onClick={() => onSort("amt")}
+          />
+        ),
+        className: "small text-end",
+        headerClassName: "text-end",
+        thAriaSort: thAria("amt"),
+      },
+      {
+        key: "stmt",
+        header: (
+          <TableSortHeaderButton
+            label="Last Statement Amount"
+            isActive={sortKey === "stmt"}
+            direction={dirFor("stmt")}
+            onClick={() => onSort("stmt")}
+          />
+        ),
+        className: "small text-end",
+        headerClassName: "text-end",
+        thAriaSort: thAria("stmt"),
+      },
+      {
         key: "atype",
         header: (
           <TableSortHeaderButton
@@ -179,20 +218,6 @@ export function FinanceAccountsPanel(props: {
         className: "small text-end",
         headerClassName: "text-end",
         thAriaSort: thAria("day"),
-      },
-      {
-        key: "amt",
-        header: (
-          <TableSortHeaderButton
-            label="Recorded Value"
-            isActive={sortKey === "amt"}
-            direction={dirFor("amt")}
-            onClick={() => onSort("amt")}
-          />
-        ),
-        className: "small text-end",
-        headerClassName: "text-end",
-        thAriaSort: thAria("amt"),
       },
       {
         key: "ccy",
@@ -244,6 +269,9 @@ export function FinanceAccountsPanel(props: {
               : []),
             r.currency,
             String(r.recordedValue),
+            ...(accountTypeIsCreditCard(r.accountType)
+              ? [String(r.lastStatementAmount ?? "")]
+              : []),
             r.lastUpdated ?? "",
           ]
             .join(" ")
@@ -306,6 +334,7 @@ export function FinanceAccountsPanel(props: {
     setAccountTypeInput("Bank Account");
     setBillingDayStr("1");
     setValueStr("");
+    setLastStatementStr("");
     setFormCurrency(GLOBAL_DEFAULT_CURRENCY);
   }
 
@@ -316,6 +345,11 @@ export function FinanceAccountsPanel(props: {
     setAccountTypeInput(row.accountType);
     setBillingDayStr(String(row.billingCycleDay));
     setValueStr(String(row.recordedValue));
+    setLastStatementStr(
+      accountTypeIsCreditCard(row.accountType)
+        ? String(row.lastStatementAmount ?? "")
+        : "",
+    );
     setFormCurrency(coerceSupportedCurrency(row.currency, GLOBAL_DEFAULT_CURRENCY));
     scheduleFocusRecordEditor(() => recordEditorSectionRef.current);
   }
@@ -338,8 +372,17 @@ export function FinanceAccountsPanel(props: {
       billingCycleDay = 1;
     }
     if (valueNum === null) {
-      setFormError("Recorded value must be a valid number.");
+      setFormError("Current balance must be a valid number.");
       return;
+    }
+    let lastStatementNum: number | undefined;
+    if (accountTypeIsCreditCard(accountTypeInput)) {
+      const parsedStmt = parseAmount(lastStatementStr);
+      if (parsedStmt === null) {
+        setFormError("Last Statement Amount must be a valid number.");
+        return;
+      }
+      lastStatementNum = parsedStmt;
     }
     const currency = coerceSupportedCurrency(formCurrency, GLOBAL_DEFAULT_CURRENCY);
     const id = editingId ?? newStatementLineId();
@@ -349,6 +392,7 @@ export function FinanceAccountsPanel(props: {
       accountType: accountTypeInput,
       billingCycleDay,
       recordedValue: valueNum,
+      ...(lastStatementNum !== undefined ? { lastStatementAmount: lastStatementNum } : {}),
       currency,
     };
     onPatch((prev) => {
@@ -391,7 +435,7 @@ export function FinanceAccountsPanel(props: {
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-md-3">
+            <div className="col-2">
               <label className="form-label small" htmlFor={`${sheetId}-description`}>
                 Description
               </label>
@@ -405,44 +449,9 @@ export function FinanceAccountsPanel(props: {
                 autoComplete="off"
               />
             </div>
-            <div className="col-md-3">
-              <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
-                Account Type
-              </label>
-              <select
-                id={`${sheetId}-account-type`}
-                className="form-select form-select-sm"
-                value={accountTypeInput}
-                onChange={(ev) => setAccountTypeInput(ev.target.value as FinanceAccountType)}
-              >
-                {FINANCE_ACCOUNT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {accountTypeUsesBillingCycleDay(accountTypeInput) ? (
-              <div className="col-md-2">
-                <label className="form-label small" htmlFor={`${sheetId}-billing-day`}>
-                  Billing cycle day
-                </label>
-                <input
-                  id={`${sheetId}-billing-day`}
-                  type="number"
-                  min={1}
-                  max={31}
-                  step={1}
-                  className="form-control form-control-sm"
-                  required
-                  value={billingDayStr}
-                  onChange={(ev) => setBillingDayStr(ev.target.value)}
-                />
-              </div>
-            ) : null}
-            <div className="col-md-3">
+            <div className="col-2">
               <label className="form-label small" htmlFor={`${sheetId}-value`}>
-                Recorded value
+                Current Balance
               </label>
               <input
                 id={`${sheetId}-value`}
@@ -454,7 +463,86 @@ export function FinanceAccountsPanel(props: {
                 onChange={(ev) => setValueStr(ev.target.value)}
               />
             </div>
-            <div className="col-md-3">
+            <div className="col-2">
+              <label
+                className="form-label small"
+                htmlFor={accountTypeIsCreditCard(accountTypeInput) ? `${sheetId}-last-statement` : undefined}
+              >
+                Last Statement Amount
+              </label>
+              {accountTypeIsCreditCard(accountTypeInput) ? (
+                <input
+                  id={`${sheetId}-last-statement`}
+                  type="number"
+                  step="0.01"
+                  className="form-control form-control-sm"
+                  required
+                  value={lastStatementStr}
+                  onChange={(ev) => setLastStatementStr(ev.target.value)}
+                />
+              ) : (
+                <div className="form-control form-control-sm bg-light text-muted" aria-hidden>
+                  —
+                </div>
+              )}
+            </div>
+            <div className="col-2">
+              <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
+                Account Type
+              </label>
+              <select
+                id={`${sheetId}-account-type`}
+                className="form-select form-select-sm"
+                value={accountTypeInput}
+                onChange={(ev) => {
+                  const next = ev.target.value as FinanceAccountType;
+                  setAccountTypeInput(next);
+                  if (!accountTypeIsCreditCard(next)) {
+                    setLastStatementStr("");
+                  }
+                }}
+              >
+                {FINANCE_ACCOUNT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-2">
+              <label
+                className="form-label small"
+                htmlFor={
+                  accountTypeUsesBillingCycleDay(accountTypeInput)
+                    ? `${sheetId}-billing-day`
+                    : undefined
+                }
+              >
+                Billing cycle day
+              </label>
+              {accountTypeUsesBillingCycleDay(accountTypeInput) ? (
+                <input
+                  id={`${sheetId}-billing-day`}
+                  type="number"
+                  min={1}
+                  max={31}
+                  step={1}
+                  className="form-control form-control-sm"
+                  required
+                  value={billingDayStr}
+                  onChange={(ev) => setBillingDayStr(ev.target.value)}
+                />
+              ) : (
+                <div
+                  className="form-control form-control-sm bg-light text-muted"
+                  id={`${sheetId}-billing-day`}
+                  aria-hidden
+                >
+                  —
+                </div>
+              )}
+            </div>
+            <div className="col-2">
               <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                 Currency
               </label>
@@ -482,12 +570,23 @@ export function FinanceAccountsPanel(props: {
             filtered.map((r) => (
               <tr key={r.id}>
                 <td className="small">{r.description || "—"}</td>
+                <td className="small text-end">
+                  <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
+                </td>
+                <td className="small text-end">
+                  {accountTypeIsCreditCard(r.accountType) ? (
+                    <MoneyAmount
+                      amount={r.lastStatementAmount ?? 0}
+                      currency={r.currency}
+                      amountOnly
+                    />
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td className="small">{r.accountType}</td>
                 <td className="small text-end">
                   {accountTypeUsesBillingCycleDay(r.accountType) ? r.billingCycleDay : "—"}
-                </td>
-                <td className="small text-end">
-                  <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-nowrap">{accountLastUpdatedDisplay(r.lastUpdated)}</td>
@@ -515,15 +614,6 @@ export function FinanceAccountsPanel(props: {
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
               <td className="small">Total</td>
-              <td className="small" />
-              <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
-                  needsFx={needsFx}
-                  fxError={fxError}
-                  fxLoading={fxLoading}
-                  ratesQuery={ratesQuery}
-                />
-              </td>
               <td className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount
@@ -534,6 +624,16 @@ export function FinanceAccountsPanel(props: {
                 ) : (
                   <span className="text-muted">—</span>
                 )}
+              </td>
+              <td className="small" />
+              <td className="small" />
+              <td className="small text-muted fw-normal">
+                <FrankfurterRatesFooterNote
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
               </td>
               <td className="small">
                 <CurrencySelect
