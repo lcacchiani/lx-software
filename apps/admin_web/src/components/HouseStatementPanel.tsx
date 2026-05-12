@@ -51,6 +51,16 @@ function isoFromUtcParts(datePart: string, timePart: string): string {
   return `${datePart}T${t}:00.000Z`;
 }
 
+function statementLineTypeLabel(type: FinanceLineType): string {
+  if (type === "income") return "Income";
+  if (type === "mortgage") return "Mortgage";
+  return "Expenditure";
+}
+
+function statementLineTypeClass(type: FinanceLineType): string {
+  return type === "income" ? "text-success" : "text-danger";
+}
+
 function basenameFromAssetKey(key: string): string {
   const parts = key.trim().split("/");
   return parts[parts.length - 1] || key.trim();
@@ -688,6 +698,7 @@ export function HouseStatementPanel({
               >
                 <option value="income">Income</option>
                 <option value="expenditure">Expenditure</option>
+                <option value="mortgage">Mortgage</option>
               </select>
             </div>
             <div className="col-6">
@@ -873,12 +884,8 @@ export function HouseStatementPanel({
                   {formatDateUtc(line.dateUtc)}
                 </td>
                 <td className="small">
-                  <span
-                    className={
-                      line.type === "income" ? "text-success" : "text-danger"
-                    }
-                  >
-                    {line.type === "income" ? "Income" : "Expenditure"}
+                  <span className={statementLineTypeClass(line.type)}>
+                    {statementLineTypeLabel(line.type)}
                   </span>
                 </td>
                 <td className="small">
