@@ -193,45 +193,43 @@ export function PensionDashboardCard() {
   }
 
   return (
-    <div className="col-12 col-lg-6">
-      <div className="card h-100 shadow-sm">
-        <div className="card-body d-flex flex-column">
-          <h2 className="h6 mb-3">
-            <strong>Pension</strong>
-          </h2>
-          <p className="text-muted small mb-3">
-            Total pension (fund rows plus allocations tagged Pension), converted to your chosen
-            display currency—the same total as on the Finance Pension tab.
-          </p>
-          <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
-            <span className="fw-semibold">{pensionTotalBody()}</span>
-            <CurrencySelect
-              id="dashboard-pension-total-ccy"
-              className="form-select form-select-sm w-auto"
-              value={totalDisplayCurrency}
-              onChange={(code) =>
-                setTotalDisplayCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
-              }
-              disabled={fxLoading}
-            />
-          </div>
-          <p className="small text-muted mb-3">
-            <FrankfurterRatesFooterNote
-              needsFx={needsFx}
-              fxError={fxError}
-              fxLoading={fxLoading}
-              ratesQuery={ratesQuery}
-            />
-          </p>
-          <dl className="row small mb-0">
-            <dt className="col-sm-5 text-muted">Year Salary Ratio</dt>
-            <dd className="col-sm-7 mb-0">{yearSalaryRatioDisplay}</dd>
-          </dl>
-          <p className="text-muted small mb-0 mt-2">
-            Annual salary sums Income rows in the Salary category (monthly amounts × 12, yearly
-            amounts as entered), in the same display currency.
-          </p>
+    <div className="card h-100 shadow-sm">
+      <div className="card-body d-flex flex-column">
+        <h2 className="h6 mb-3">
+          <strong>Pension</strong>
+        </h2>
+        <p className="text-muted small mb-3">
+          Total pension (fund rows plus allocations tagged Pension), converted to your chosen
+          display currency—the same total as on the Finance Pension tab.
+        </p>
+        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <span className="fw-semibold">{pensionTotalBody()}</span>
+          <CurrencySelect
+            id="dashboard-pension-total-ccy"
+            className="form-select form-select-sm w-auto"
+            value={totalDisplayCurrency}
+            onChange={(code) =>
+              setTotalDisplayCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+            }
+            disabled={fxLoading}
+          />
         </div>
+        <p className="small text-muted mb-3">
+          <FrankfurterRatesFooterNote
+            needsFx={needsFx}
+            fxError={fxError}
+            fxLoading={fxLoading}
+            ratesQuery={ratesQuery}
+          />
+        </p>
+        <dl className="row small mb-0">
+          <dt className="col-sm-5 text-muted">Year Salary Ratio</dt>
+          <dd className="col-sm-7 mb-0">{yearSalaryRatioDisplay}</dd>
+        </dl>
+        <p className="text-muted small mb-0 mt-2">
+          Annual salary sums Income rows in the Salary category (monthly amounts × 12, yearly
+          amounts as entered), in the same display currency.
+        </p>
       </div>
     </div>
   );
