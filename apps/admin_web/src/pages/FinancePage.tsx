@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FinanceDataLoadOrError, FinanceSaveStatus } from "../components/FinanceDataStatus";
 import { FinanceInvestmentsPanel } from "../components/FinanceInvestmentsPanel";
 import { FinancePensionPanel, FinanceSavingsPanel } from "../components/FinanceSavingsAndPensionPanels";
+import { FinanceAccountsPanel } from "../components/FinanceAccountsPanel";
 import { FinanceAllocationsPanel } from "../components/FinanceAllocationsPanel";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
@@ -22,7 +23,8 @@ type FinanceTab =
   | "pension"
   | "income"
   | "expenses"
-  | "allocations";
+  | "allocations"
+  | "accounts";
 
 export function FinancePage() {
   const {
@@ -33,6 +35,7 @@ export function FinancePage() {
     patchSavingsRecords,
     patchPensionRecords,
     patchAllocationRecords,
+    patchAccountRecords,
     patchExpenseIncomeAllocationPercents,
     isLoading,
     isError,
@@ -50,7 +53,8 @@ export function FinancePage() {
         stored in the admin API (DynamoDB). The Allocations tab lists expenses tagged{" "}
         <strong>Allocate</strong>, derived allocation lines from tagged income (both labeled Allocate
         on Expenses), and <strong>custom</strong> allocation rows you add on Allocations. Any row can
-        be tagged <strong>Income</strong> so it appears on the Income tab with a monthly amount.
+        be tagged <strong>Income</strong> so it appears on the Income tab with a monthly amount. The
+        Accounts tab stores bank and card balances with billing cycle metadata.
       </p>
       <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
       {!isLoading && !isError ? (
@@ -150,6 +154,17 @@ export function FinancePage() {
                 Allocations
               </button>
             </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${tab === "accounts" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "accounts"}
+                onClick={() => setTab("accounts")}
+              >
+                Accounts
+              </button>
+            </li>
           </ul>
 
           <div className="tab-content">
@@ -218,6 +233,9 @@ export function FinancePage() {
                 records={data.allocationRecords}
                 onPatch={patchAllocationRecords}
               />
+            ) : null}
+            {tab === "accounts" ? (
+              <FinanceAccountsPanel records={data.accountRecords} onPatch={patchAccountRecords} />
             ) : null}
           </div>
         </>

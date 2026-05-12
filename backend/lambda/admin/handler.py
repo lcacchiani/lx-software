@@ -55,6 +55,9 @@ INVESTMENT_RECORD_CATEGORIES = frozenset(
     {"Real Estate", "Fixed Term Deposit", "ETF", "Crypto"}
 )
 ASSET_TYPES = frozenset({"Fixed", "Liquid"})
+FINANCE_ACCOUNT_TYPES = frozenset(
+    {"Bank Account", "Credit Card", "Debit Card"}
+)
 MAX_INVESTMENT_PROVIDER_LEN = 500
 MAX_INVESTMENT_TICKER_LEN = 64
 MAX_INVESTMENT_CRYPTO_CURRENCY_LEN = 120
@@ -1281,6 +1284,69 @@ def _merge_pension_last_updated(
     return out
 
 
+def _account_row_signature(row: dict[str, Any]) -> tuple[str, int, float, str]:
+    return (
+        str(row["accountType"]),
+        int(row["billingCycleDay"]),
+        float(row["recordedValue"]),
+        str(row["currency"]),
+    )
+
+
+def _merge_accounts_last_updated(
+    normalized: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+    *,
+    today_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """Attach `lastUpdated` (UTC calendar date) when account fields change."""
+    today = today_iso or datetime.now(timezone.utc).date().isoformat()
+    by_id = {r["id"]: r for r in existing}
+    out: list[dict[str, Any]] = []
+    for row in normalized:
+        merged = dict(row)
+        prev = by_id.get(merged["id"])
+        if prev is None:
+            merged["lastUpdated"] = today
+        elif _account_row_signature(prev) == _account_row_signature(merged):
+            lu = prev.get("lastUpdated")
+            if isinstance(lu, str) and _is_calendar_date_string(lu):
+                merged["lastUpdated"] = lu
+        else:
+            merged["lastUpdated"] = today
+        out.append(merged)
+    return out
+
+
+def _parse_account_billing_cycle_day(raw: Any, field_label: str) -> int:
+    if isinstance(raw, bool):
+        raise ValueError(f"{field_label} must be an integer from 1 to 31")
+    if isinstance(raw, int):
+        d = raw
+    elif isinstance(raw, Decimal):
+        as_int = int(raw)
+        if Decimal(as_int) != raw:
+            raise ValueError(f"{field_label} must be an integer from 1 to 31")
+        d = as_int
+    elif isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError(f"{field_label} must be an integer from 1 to 31")
+        d = int(raw)
+    elif isinstance(raw, str):
+        t = raw.strip()
+        if not t:
+            raise ValueError(f"{field_label} is required")
+        try:
+            d = int(t, 10)
+        except ValueError as exc:
+            raise ValueError(f"{field_label} must be an integer from 1 to 31") from exc
+    else:
+        raise ValueError(f"{field_label} must be an integer from 1 to 31")
+    if d < 1 or d > 31:
+        raise ValueError(f"{field_label} must be between 1 and 31")
+    return d
+
+
 def _ledger_row_monthly_amount(row: dict[str, Any]) -> float:
     amt = float(row["amount"])
     return amt / 12.0 if row.get("amountPeriod") == "year" else amt
@@ -1899,6 +1965,109 @@ def _sanitize_pension_records_list(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _sanitize_accounts_records_list(raw: Any) -> list[dict[str, Any]]:
+    """Best-effort coercion for GET responses (drops invalid rows)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        at_raw = row.get("accountType")
+        if not isinstance(at_raw, str) or at_raw.strip() not in FINANCE_ACCOUNT_TYPES:
+            continue
+        account_type = at_raw.strip()
+        try:
+            bd = _parse_account_billing_cycle_day(row.get("billingCycleDay"), "billingCycleDay")
+        except ValueError:
+            continue
+        amt = row.get("recordedValue")
+        if isinstance(amt, Decimal):
+            amt_f = float(amt)
+        elif isinstance(amt, (int, float)) and not isinstance(amt, bool):
+            amt_f = float(amt)
+        elif isinstance(amt, str):
+            try:
+                amt_f = float(amt)
+            except ValueError:
+                continue
+        else:
+            continue
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            continue
+        cur = _coerce_finance_currency_value(
+            row.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        entry: dict[str, Any] = {
+            "id": rid.strip(),
+            "accountType": account_type,
+            "billingCycleDay": bd,
+            "recordedValue": amt_f,
+            "currency": cur,
+        }
+        lu_raw = row.get("lastUpdated")
+        if isinstance(lu_raw, str) and _is_calendar_date_string(lu_raw.strip()):
+            entry["lastUpdated"] = lu_raw.strip()
+        out.append(entry)
+    return out
+
+
+def _normalize_accounts_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get("accountRecords")
+    if not isinstance(raw, list):
+        raise ValueError("accountRecords must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(
+            f"At most {MAX_LEDGER_RECORDS} records allowed in accountRecords"
+        )
+    allowed_at = ", ".join(sorted(FINANCE_ACCOUNT_TYPES))
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"accountRecords[{i}] must be an object")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"accountRecords[{i}].id is required")
+        at_raw = row.get("accountType")
+        if not isinstance(at_raw, str) or not at_raw.strip():
+            raise ValueError(f"accountRecords[{i}].accountType is required")
+        at_st = at_raw.strip()
+        if at_st not in FINANCE_ACCOUNT_TYPES:
+            raise ValueError(
+                f"accountRecords[{i}].accountType must be one of: {allowed_at}"
+            )
+        bd = _parse_account_billing_cycle_day(
+            row.get("billingCycleDay"), f"accountRecords[{i}].billingCycleDay"
+        )
+        amt = row.get("recordedValue")
+        if isinstance(amt, Decimal):
+            amt = float(amt)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            raise ValueError(f"accountRecords[{i}].recordedValue must be a number")
+        amt_f = float(amt)
+        if amt_f != amt_f or abs(amt_f) > 1e15:
+            raise ValueError(f"accountRecords[{i}].recordedValue out of range")
+        cur = _require_supported_currency(
+            row.get("currency", DEFAULT_FINANCE_CURRENCY),
+            f"accountRecords[{i}].currency",
+        )
+        out.append(
+            {
+                "id": rid.strip(),
+                "accountType": at_st,
+                "billingCycleDay": bd,
+                "recordedValue": amt_f,
+                "currency": cur,
+            }
+        )
+    return out
+
+
 def _normalize_savings_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(body, dict):
         raise ValueError("Body must be a JSON object")
@@ -2046,6 +2215,18 @@ def _load_pension_records(table: Any) -> list[dict[str, Any]]:
     if not isinstance(nested, dict):
         return []
     return _sanitize_pension_records_list(nested.get("records"))
+
+
+def _load_accounts_records(table: Any) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key("accounts"))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_accounts_records_list(nested.get("records"))
 
 
 def _finance_ddb_key(house: str) -> dict[str, str]:
@@ -3277,6 +3458,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 "investmentRecords": _load_investment_records(table),
                 "savingsRecords": _load_savings_records(table),
                 "pensionRecords": _load_pension_records(table),
+                "accountRecords": _load_accounts_records(table),
                 "allocationRecords": allocation_records,
             },
         )
@@ -3368,6 +3550,21 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", "pension", event)
         return _json_response(200, {"pensionRecords": merged})
+
+    if method == "PUT" and path == "/finance/accounts":
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_accounts_sheet_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        existing = _load_accounts_records(table)
+        merged = _merge_accounts_last_updated(normalized, existing)
+        doc = {"records": merged}
+        ddb_item = {**_finance_sheet_ddb_key("accounts"), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "accounts", event)
+        return _json_response(200, {"accountRecords": merged})
 
     if method == "PUT" and path == "/finance/allocations":
         body = _parse_json_body(event)
