@@ -6,6 +6,7 @@ import { DashboardApiHealthCard } from "../components/dashboard/DashboardApiHeal
 import { DashboardSessionCard } from "../components/dashboard/DashboardSessionCard";
 import { HouseSummaryCard } from "../components/dashboard/HouseSummaryCard";
 import { MonthlyViewExpenseAllocationsSection } from "../components/dashboard/MonthlyViewExpenseAllocationsSection";
+import { AvailableBalanceDashboardCard } from "../components/dashboard/AvailableBalanceDashboardCard";
 import { PensionDashboardCard } from "../components/dashboard/PensionDashboardCard";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import { useFinance } from "../hooks/useFinance";
@@ -69,8 +70,13 @@ export function DashboardPage() {
           </div>
           <MonthlyViewExpenseAllocationsSection />
           <div className="row g-3 mb-4">
-            <PensionDashboardCard />
-            <AllocationCoverageDashboardCard />
+            <div className="col-12 col-lg-6 d-flex flex-column gap-3">
+              <PensionDashboardCard />
+              <AvailableBalanceDashboardCard />
+            </div>
+            <div className="col-12 col-lg-6">
+              <AllocationCoverageDashboardCard />
+            </div>
           </div>
         </>
       ) : null}
