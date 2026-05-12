@@ -2976,6 +2976,7 @@ def enqueue_parse_statement_async_job(
     owner_sub: str,
     api_request_id: str | None,
     source: str = "api",
+    mortgage_only: bool = False,
 ) -> str:
     """Persist a pending PARSE_JOB and invoke the worker Lambda (async)."""
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
@@ -2993,6 +2994,7 @@ def enqueue_parse_statement_async_job(
         "expiresAt": _job_expires_at_epoch(),
         "apiRequestId": (api_request_id or "")[:256],
         "source": source[:64],
+        "mortgageOnly": mortgage_only,
     }
     table.put_item(Item=_to_ddb_nested(job_item))
     payload = {
@@ -3002,6 +3004,7 @@ def enqueue_parse_statement_async_job(
         "s3Keys": s3_keys,
         "ownerSub": owner_sub,
         "apiRequestId": api_request_id or "",
+        "mortgageOnly": mortgage_only,
     }
     try:
         _invoke_parse_statement_worker(payload)
@@ -3139,6 +3142,7 @@ def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
             "http": {"requestId": req_token},
         }
     }
+    mortgage_only = payload.get("mortgageOnly") is True
     try:
         result = execute_parse_statement(
             house=house,
@@ -3146,6 +3150,7 @@ def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
             user_sub=owner_sub,
             request_id=req_token,
             event=synthetic_event,
+            mortgage_only=mortgage_only,
         )
     except _ParseStatementError as exc:
         raw_old = table.get_item(Key=key).get("Item") or {}
@@ -3749,6 +3754,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     )
                 },
             )
+        mortgage_only = body.get("mortgageOnly") is True
         try:
             job_id = enqueue_parse_statement_async_job(
                 house=house,
@@ -3756,6 +3762,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 owner_sub=user_sub,
                 api_request_id=_request_id(event),
                 source="api",
+                mortgage_only=mortgage_only,
             )
         except Exception as exc:
             _log_event(
@@ -3822,12 +3829,16 @@ def execute_parse_statement(
     user_sub: str | None,
     request_id: str,
     event: dict[str, Any],
+    mortgage_only: bool = False,
 ) -> dict[str, Any]:
     """Run OpenRouter on one or more assets and append parsed lines.
 
     Each new line gets ``sourceAssetKeys`` set to the full ordered list of
     ``s3_keys`` (same idea as attaching every PDF from one import to every
     extracted line in the admin UI). Used by the HTTP API and inbound-email.
+
+    When ``mortgage_only`` is true, only parsed lines with ``type`` ``mortgage``
+    are appended; all other extracted rows are discarded.
 
     Raises ``_ParseStatementError`` on user-facing failures.
 
@@ -3859,6 +3870,7 @@ def execute_parse_statement(
         house=house,
         key=",".join(keys_ordered)[:512],
         request_id=request_id,
+        mortgage_only=mortgage_only,
     )
 
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
@@ -3944,6 +3956,14 @@ def execute_parse_statement(
         for raw_line in parsed.get("lines") or []:
             if isinstance(raw_line, dict):
                 all_parsed_raw_lines.append(raw_line)
+
+    if mortgage_only:
+        all_parsed_raw_lines = [
+            ln
+            for ln in all_parsed_raw_lines
+            if isinstance(ln, dict)
+            and str(ln.get("type", "")).strip().lower() == "mortgage"
+        ]
 
     new_lines: list[dict[str, Any]] = []
     for raw_line in all_parsed_raw_lines:

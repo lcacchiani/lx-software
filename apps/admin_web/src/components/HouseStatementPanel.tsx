@@ -220,6 +220,7 @@ export function HouseStatementPanel({
   const linePdfInputRef = useRef<HTMLInputElement | null>(null);
   const lineDescriptionRef = useRef<HTMLInputElement | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [importMortgageOnly, setImportMortgageOnly] = useState(false);
   const [parseSuccess, setParseSuccess] = useState<string | null>(null);
   const [openingPdfKey, setOpeningPdfKey] = useState<string | null>(null);
   const parseStatement = useParseStatement(houseKey);
@@ -555,19 +556,22 @@ export function HouseStatementPanel({
               onClick={() => {
                 if (!pdfFile) return;
                 setParseSuccess(null);
-                parseStatement.mutate(pdfFile, {
-                  onSuccess: (res) => {
-                    setParseSuccess(
-                      res.addedLines === 0
-                        ? "No transactions were extracted from this document."
-                        : `Imported ${res.addedLines} statement line${res.addedLines === 1 ? "" : "s"}.`,
-                    );
-                    setPdfFile(null);
-                    if (fileInputRef.current) {
-                      fileInputRef.current.value = "";
-                    }
+                parseStatement.mutate(
+                  { file: pdfFile, mortgageOnly: importMortgageOnly },
+                  {
+                    onSuccess: (res) => {
+                      setParseSuccess(
+                        res.addedLines === 0
+                          ? "No transactions were extracted from this document."
+                          : `Imported ${res.addedLines} statement line${res.addedLines === 1 ? "" : "s"}.`,
+                      );
+                      setPdfFile(null);
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = "";
+                      }
+                    },
                   },
-                });
+                );
               }}
             >
               {parseStatement.isPending ? "Parsing…" : "Upload & parse"}
@@ -579,6 +583,7 @@ export function HouseStatementPanel({
               onClick={() => {
                 setPdfFile(null);
                 setParseSuccess(null);
+                setImportMortgageOnly(false);
                 if (fileInputRef.current) {
                   fileInputRef.current.value = "";
                 }
@@ -611,6 +616,26 @@ export function HouseStatementPanel({
               }}
             />
           </div>
+        </div>
+        <div className="form-check mt-2">
+          <input
+            id={`${houseKey}-statement-import-mortgage-only`}
+            className="form-check-input"
+            type="checkbox"
+            checked={importMortgageOnly}
+            disabled={parseStatement.isPending}
+            onChange={(ev) => setImportMortgageOnly(ev.target.checked)}
+          />
+          <label
+            className="form-check-label small"
+            htmlFor={`${houseKey}-statement-import-mortgage-only`}
+          >
+            Mortgage
+          </label>
+          <p className="form-text small mb-0 mt-1">
+            When checked, only lines classified as Mortgage are imported; all other
+            extracted transactions are discarded.
+          </p>
         </div>
         {parseStatement.isPending ? (
           <p className="small text-muted mt-2 mb-0">

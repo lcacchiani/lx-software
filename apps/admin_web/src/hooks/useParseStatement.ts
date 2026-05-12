@@ -61,6 +61,11 @@ export type ParseStatementResult = {
   readonly sourceAssetKeys: readonly string[];
 };
 
+export type ParseStatementVariables = {
+  readonly file: File;
+  readonly mortgageOnly?: boolean;
+};
+
 /**
  * Re-exported from `uploadFinanceAsset` for backward compatibility with tests
  * and call sites that imported it from this module.
@@ -106,11 +111,13 @@ async function pollParseJob(
  * finance record. Parsing runs asynchronously on the server (avoids API
  * Gateway timeouts); this hook polls until the job completes then refreshes
  * finance data.
+ *
+ * Pass `{ mortgageOnly: true }` to append only parser rows with type `mortgage`.
  */
 export function useParseStatement(house: HouseKey) {
   const qc = useQueryClient();
-  return useMutation<ParseStatementResult, Error, File>({
-    mutationFn: async (file: File) => {
+  return useMutation<ParseStatementResult, Error, ParseStatementVariables>({
+    mutationFn: async ({ file, mortgageOnly = false }) => {
       if (!file) {
         throw new Error("No file selected");
       }
@@ -144,6 +151,7 @@ export function useParseStatement(house: HouseKey) {
         fileType: file.type,
         contentTypeRequested: contentType,
         fileSize: file.size,
+        mortgageOnly,
       });
 
       const uploadKey = await uploadFinanceAsset(file, house, qc);
@@ -158,7 +166,10 @@ export function useParseStatement(house: HouseKey) {
           `/finance/${house}/parse-statement`,
           {
             method: "POST",
-            body: JSON.stringify({ key: uploadKey }),
+            body: JSON.stringify({
+              key: uploadKey,
+              ...(mortgageOnly ? { mortgageOnly: true } : {}),
+            }),
           },
         );
       } catch (err) {
