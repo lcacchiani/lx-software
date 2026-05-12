@@ -853,6 +853,40 @@ class TestAccountsSheetPayload(unittest.TestCase):
         self.assertEqual(out[0]["billingCycleDay"], 15)
         self.assertEqual(out[0]["recordedValue"], -1200.5)
         self.assertEqual(out[0]["currency"], "HKD")
+        self.assertEqual(out[0]["lastStatementAmount"], 0.0)
+
+    def test_normalize_credit_card_last_statement_amount(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "description": "Household Visa",
+                    "accountType": "Credit Card",
+                    "billingCycleDay": 15,
+                    "recordedValue": -1200.5,
+                    "lastStatementAmount": 2500.0,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_accounts_sheet_payload(body)
+        self.assertEqual(out[0]["lastStatementAmount"], 2500.0)
+
+    def test_normalize_rejects_bad_credit_card_last_statement(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "accountType": "Credit Card",
+                    "billingCycleDay": 15,
+                    "recordedValue": 1,
+                    "lastStatementAmount": "not-a-number",
+                    "currency": "HKD",
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            _normalize_accounts_sheet_payload(body)
 
     def test_normalize_rejects_bad_account_type(self) -> None:
         body = {
@@ -883,6 +917,21 @@ class TestAccountsSheetPayload(unittest.TestCase):
         }
         out = _normalize_accounts_sheet_payload(body)
         self.assertEqual(out[0]["description"], "")
+
+    def test_normalize_bank_omits_last_statement_amount(self) -> None:
+        body = {
+            "accountRecords": [
+                {
+                    "id": "a1",
+                    "accountType": "Bank Account",
+                    "billingCycleDay": 1,
+                    "recordedValue": 1,
+                    "currency": "HKD",
+                }
+            ]
+        }
+        out = _normalize_accounts_sheet_payload(body)
+        self.assertNotIn("lastStatementAmount", out[0])
 
     def test_normalize_rejects_non_string_description(self) -> None:
         body = {
@@ -930,6 +979,22 @@ class TestAccountsSheetPayload(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["lastUpdated"], "2024-06-15")
         self.assertEqual(out[0]["description"], "")
+        self.assertNotIn("lastStatementAmount", out[0])
+
+    def test_sanitize_credit_card_includes_last_statement_amount(self) -> None:
+        raw = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 3,
+                "recordedValue": 50,
+                "lastStatementAmount": 120.5,
+                "currency": "USD",
+            }
+        ]
+        out = _sanitize_accounts_records_list(raw)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["lastStatementAmount"], 120.5)
 
 
 class TestMergeAccountsLastUpdated(unittest.TestCase):
@@ -1010,6 +1075,31 @@ class TestMergeAccountsLastUpdated(unittest.TestCase):
                 "accountType": "Credit Card",
                 "billingCycleDay": 10,
                 "recordedValue": 1.0,
+                "currency": "HKD",
+                "lastUpdated": "2025-03-01",
+            }
+        ]
+        out = _merge_accounts_last_updated(normalized, existing, today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_last_statement_change_updates_last_updated(self) -> None:
+        normalized = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "lastStatementAmount": 500.0,
+                "currency": "HKD",
+            }
+        ]
+        existing = [
+            {
+                "id": "a1",
+                "accountType": "Credit Card",
+                "billingCycleDay": 10,
+                "recordedValue": 1.0,
+                "lastStatementAmount": 0.0,
                 "currency": "HKD",
                 "lastUpdated": "2025-03-01",
             }

@@ -1284,13 +1284,33 @@ def _merge_pension_last_updated(
     return out
 
 
-def _account_row_signature(row: dict[str, Any]) -> tuple[str, str, int, float, str]:
+def _account_row_signature(row: dict[str, Any]) -> tuple[str, str, int, float, str, float | None]:
+    at = str(row["accountType"])
+    last_stmt: float | None
+    if at == "Credit Card":
+        raw = row.get("lastStatementAmount", 0.0)
+        if isinstance(raw, Decimal):
+            last_stmt = float(raw)
+        elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            last_stmt = float(raw)
+        elif isinstance(raw, str):
+            try:
+                last_stmt = float(raw)
+            except ValueError:
+                last_stmt = 0.0
+        else:
+            last_stmt = 0.0
+        if last_stmt != last_stmt or abs(last_stmt) > 1e15:
+            last_stmt = 0.0
+    else:
+        last_stmt = None
     return (
         str(row.get("description", "")),
-        str(row["accountType"]),
+        at,
         int(row["billingCycleDay"]),
         float(row["recordedValue"]),
         str(row["currency"]),
+        last_stmt,
     )
 
 
@@ -2018,6 +2038,22 @@ def _sanitize_accounts_records_list(raw: Any) -> list[dict[str, Any]]:
             "recordedValue": amt_f,
             "currency": cur,
         }
+        if account_type == "Credit Card":
+            lsa_raw = row.get("lastStatementAmount", 0.0)
+            if isinstance(lsa_raw, Decimal):
+                lsa_f = float(lsa_raw)
+            elif isinstance(lsa_raw, (int, float)) and not isinstance(lsa_raw, bool):
+                lsa_f = float(lsa_raw)
+            elif isinstance(lsa_raw, str):
+                try:
+                    lsa_f = float(lsa_raw)
+                except ValueError:
+                    lsa_f = 0.0
+            else:
+                lsa_f = 0.0
+            if lsa_f != lsa_f or abs(lsa_f) > 1e15:
+                lsa_f = 0.0
+            entry["lastStatementAmount"] = lsa_f
         lu_raw = row.get("lastUpdated")
         if isinstance(lu_raw, str) and _is_calendar_date_string(lu_raw.strip()):
             entry["lastUpdated"] = lu_raw.strip()
@@ -2074,16 +2110,29 @@ def _normalize_accounts_sheet_payload(body: dict[str, Any]) -> list[dict[str, An
         d = desc_raw.strip()
         if len(d) > MAX_FINANCE_DESCRIPTION:
             raise ValueError(f"accountRecords[{i}].description is too long")
-        out.append(
-            {
-                "id": rid.strip(),
-                "description": d,
-                "accountType": at_st,
-                "billingCycleDay": bd,
-                "recordedValue": amt_f,
-                "currency": cur,
-            }
-        )
+        rec_out: dict[str, Any] = {
+            "id": rid.strip(),
+            "description": d,
+            "accountType": at_st,
+            "billingCycleDay": bd,
+            "recordedValue": amt_f,
+            "currency": cur,
+        }
+        if at_st == "Credit Card":
+            lsa_raw = row.get("lastStatementAmount", 0.0)
+            if isinstance(lsa_raw, Decimal):
+                lsa_raw = float(lsa_raw)
+            if not isinstance(lsa_raw, (int, float)) or isinstance(lsa_raw, bool):
+                raise ValueError(
+                    f"accountRecords[{i}].lastStatementAmount must be a number"
+                )
+            lsa_f = float(lsa_raw)
+            if lsa_f != lsa_f or abs(lsa_f) > 1e15:
+                raise ValueError(
+                    f"accountRecords[{i}].lastStatementAmount out of range"
+                )
+            rec_out["lastStatementAmount"] = lsa_f
+        out.append(rec_out)
     return out
 
 
