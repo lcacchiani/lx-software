@@ -199,6 +199,17 @@ export type FinanceAccountRecord = {
 };
 
 /**
+ * Signed balance for the Accounts tab FX total: bank and debit add; credit card subtracts
+ * (current balance is treated as debt).
+ */
+export function financeAccountSignedValueForTotal(
+  accountType: FinanceAccountType,
+  recordedValue: number,
+): number {
+  return accountType === "Credit Card" ? -recordedValue : recordedValue;
+}
+
+/**
  * One row on the Allocations tab: mirrors an expense tagged Allocate, with a persisted
  * accumulated amount (DynamoDB finance sheet `allocations`).
  */

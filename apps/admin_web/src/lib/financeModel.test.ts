@@ -10,6 +10,7 @@ import {
   investmentDetailsDisplay,
   ledgerMonthlyAmount,
   allocationRecordsToApiPayload,
+  financeAccountSignedValueForTotal,
   normalizeAllocationRecords,
   normalizeExpenseIncomeAllocationPercents,
   normalizeInvestmentRecords,
@@ -1450,5 +1451,13 @@ describe("monthlyLedgerNetByCurrency", () => {
     expect(n.HKD).toBe(60);
     expect(n.USD).toBe(50);
     expect(n.EUR).toBe(-20);
+  });
+});
+
+describe("financeAccountSignedValueForTotal", () => {
+  it("adds bank and debit balances, subtracts credit card", () => {
+    expect(financeAccountSignedValueForTotal("Bank Account", 1000)).toBe(1000);
+    expect(financeAccountSignedValueForTotal("Debit Card", 500)).toBe(500);
+    expect(financeAccountSignedValueForTotal("Credit Card", 200)).toBe(-200);
   });
 });

@@ -9,6 +9,7 @@ import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
   FINANCE_ACCOUNT_TYPES,
+  financeAccountSignedValueForTotal,
   newStatementLineId,
   type FinanceAccountRecord,
   type FinanceAccountType,
@@ -312,7 +313,13 @@ export function FinanceAccountsPanel(props: {
     try {
       return filtered.reduce(
         (sum, r) =>
-          sum + convertAmountToBase(r.recordedValue, r.currency, totalDisplayCurrency, map),
+          sum +
+          convertAmountToBase(
+            financeAccountSignedValueForTotal(r.accountType, r.recordedValue),
+            r.currency,
+            totalDisplayCurrency,
+            map,
+          ),
         0,
       );
     } catch {
