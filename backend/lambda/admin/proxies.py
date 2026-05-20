@@ -6,7 +6,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import Any
-from urllib.parse import parse_qs, quote
+from urllib.parse import quote
 
 from http_common import _json_response, _log_event
 

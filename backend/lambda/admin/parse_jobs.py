@@ -17,7 +17,6 @@ from contract_constants import (
     PARSE_JOB_TTL_SECONDS_DEFAULT,
 )
 from ddb_convert import _from_ddb_nested, _to_ddb_nested
-from finance_store import _load_finance_house
 from http_common import _utc_iso_z
 from runtime import PARSE_JOB_PK_PREFIX, logger
 

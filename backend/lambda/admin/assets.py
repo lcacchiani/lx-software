@@ -8,8 +8,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 import runtime
-from ddb_convert import _from_ddb, _to_ddb
-from http_common import _audit, _json_response, _log_event, _parse_json_body, _request_id
+from http_common import _audit, _json_response, _log_event, _request_id
 from contract_constants import FINANCE_HOUSE_KEYS
 from runtime import ALLOWED_UPLOAD_CONTENT_TYPES
 

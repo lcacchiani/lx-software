@@ -14,7 +14,6 @@ from botocore.exceptions import ClientError
 import parse_jobs as parse_jobs_mod
 import runtime
 from contract_constants import (
-    DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
     EXPENSE_RECORD_CATEGORIES,
     FINANCE_HOUSE_KEYS,
     INCOME_RECORD_CATEGORIES,

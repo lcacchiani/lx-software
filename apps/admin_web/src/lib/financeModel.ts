@@ -1,5 +1,11 @@
 import { GLOBAL_DEFAULT_CURRENCY, coerceSupportedCurrency } from "./currencies";
-import type { CurrencyCode, HouseKey } from "./financeTypes";
+import type {
+  AssetType,
+  CurrencyCode,
+  FinanceAccountType,
+  HouseKey,
+  InvestmentCategory,
+} from "./financeTypes";
 import {
   EXPENSE_CATEGORIES,
   FINANCE_ACCOUNT_TYPES,
@@ -10,6 +16,7 @@ import {
   MAX_ACCOUNT_DESCRIPTION_LEN,
   MAX_PENSION_DESCRIPTION_LEN,
 } from "./financeTypes";
+
 export {
   ASSET_TYPES,
   EXPENSE_CATEGORIES,
@@ -105,8 +112,6 @@ export const EXPENSE_LEDGER_FLAG_FIELDS: ReadonlyArray<{
   readonly field: ExpenseLedgerFlagField;
   readonly label: string;
 }> = [{ field: "isAllocate", label: "Allocate" }];
-
-import type { AssetType, FinanceAccountType, InvestmentCategory } from "./financeTypes";
 
 /** One row in the Investments sheet (DynamoDB finance sheet `investments`). */
 export type FinanceInvestmentRecord = {

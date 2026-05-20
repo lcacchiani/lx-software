@@ -116,7 +116,7 @@ export const MAX_LEDGER_RECORDS = {limits["maxLedgerRecords"]};
 export const MAX_PENSION_DESCRIPTION_LEN = {limits["maxPensionDescriptionLen"]};
 export const MAX_ACCOUNT_DESCRIPTION_LEN = {limits["maxAccountDescriptionLen"]};
 
-export const PARSE_POLL_DEADLINE_MS = {timeouts["parsePollDeadlineMs"]}
+export const PARSE_POLL_DEADLINE_MS = {timeouts["parsePollDeadlineMs"]};
 export const PARSE_POLL_INITIAL_WAIT_MS = {timeouts["parsePollInitialWaitMs"]};
 export const PARSE_POLL_BACKOFF_CAP_MS = {timeouts["parsePollBackoffCapMs"]};
 
