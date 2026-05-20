@@ -22,6 +22,7 @@ from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
+from contract_constants import FINANCE_LINE_TYPES, SUPPORTED_FINANCE_CURRENCIES
 
 _PDF_PLUGIN_ID = "file-parser"
 _DEFAULT_PDF_ENGINE = "mistral-ocr"
@@ -30,8 +31,8 @@ _DEFAULT_MODEL = "mistralai/mistral-medium-3"
 _DEFAULT_MAX_FILE_BYTES = 15 * 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS = 60
 
-_SUPPORTED_CURRENCIES = ("GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED")
-_FINANCE_LINE_TYPES = ("income", "expenditure", "mortgage")
+_SUPPORTED_CURRENCIES = tuple(sorted(SUPPORTED_FINANCE_CURRENCIES))
+_FINANCE_LINE_TYPES = tuple(sorted(FINANCE_LINE_TYPES))
 _DISCARD_DESCRIPTION_NORMALIZED = "payment to landlord"
 _MTG_IN_DESCRIPTION = re.compile(r"(?i)\bmtg\b")
 

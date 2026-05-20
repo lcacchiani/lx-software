@@ -1,0 +1,46 @@
+{
+  "currencies": ["GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED"],
+  "defaultCurrency": "HKD",
+  "houses": ["hillmarton", "morrison"],
+  "lineTypes": ["income", "expenditure", "mortgage"],
+  "incomeCategories": ["Salary", "Rent"],
+  "expenseCategories": [
+    "Utility",
+    "Saving",
+    "Investment",
+    "Rent",
+    "Mortgage",
+    "Insurance",
+    "Retirement",
+    "Tax",
+    "Amenities",
+    "Helper",
+    "Education"
+  ],
+  "investmentCategories": [
+    "Real Estate",
+    "Fixed Term Deposit",
+    "ETF",
+    "Crypto"
+  ],
+  "assetTypes": ["Fixed", "Liquid"],
+  "accountTypes": ["Bank Account", "Credit Card", "Debit Card"],
+  "ledgerAmountPeriods": ["month", "year"],
+  "limits": {
+    "maxFinanceLines": 5000,
+    "maxFinanceDescription": 8000,
+    "maxSourceAssetKeysPerLine": 20,
+    "maxSourceAssetKeyLen": 1024,
+    "maxInvestmentProviderLen": 500,
+    "maxInvestmentTickerLen": 64,
+    "maxInvestmentCryptoCurrencyLen": 120,
+    "maxLedgerRecords": 2000,
+    "maxPensionDescriptionLen": 8000,
+    "maxAccountDescriptionLen": 8000
+  },
+  "defaultExpenseIncomeAllocationPercents": {
+    "taxOnIncomePercent": 0,
+    "investmentOnIncomePercent": 0,
+    "savingOnIncomePercent": 0
+  }
+}

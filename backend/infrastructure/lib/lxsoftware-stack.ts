@@ -16,6 +16,7 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
+import { ADMIN_WEB_HOSTNAME, PARSE_TIMEOUTS } from "./shared-contracts";
 
 /**
  * Consolidated admin backend stack: Cognito user pool (with Pre Token
@@ -26,6 +27,8 @@ import { createPythonLambda } from "./constructs/python-lambda";
  * All physical names use the `lxsoftware-admin-*` prefix.
  */
 export class LxsoftwareStack extends cdk.Stack {
+  /** CloudFormation token for the admin SPA hostname (shared with lxsoftware-admin-web). */
+  public readonly adminWebHostname: string;
   public readonly auth: AuthConstruct;
   public readonly recordsTable: dynamodb.Table;
   public readonly auditLogTable: dynamodb.Table;
@@ -61,8 +64,9 @@ export class LxsoftwareStack extends cdk.Stack {
     const adminWebDomainName = new cdk.CfnParameter(this, "AdminWebDomainName", {
       type: "String",
       description: "Public hostname for the admin SPA (e.g. admin.lx-software.com).",
-      default: "admin.lx-software.com",
+      default: ADMIN_WEB_HOSTNAME,
     });
+    this.adminWebHostname = adminWebDomainName.valueAsString;
 
     const googleClientId = new cdk.CfnParameter(this, "GoogleClientId", {
       type: "String",
@@ -376,10 +380,14 @@ export class LxsoftwareStack extends cdk.Stack {
      * in a consistent order: OpenRouter + cold-start headroom < Lambda ≤ stale
      * ≤ stuck < browser poll < async maxEventAge.
      */
-    const adminStatementParseLambdaTimeout = cdk.Duration.seconds(300);
-    const openRouterHttpTimeoutSeconds = "210";
-    const parseJobStaleSeconds = "330";
-    const parseJobStuckSeconds = "420";
+    const adminStatementParseLambdaTimeout = cdk.Duration.seconds(
+      PARSE_TIMEOUTS.lambdaTimeoutSeconds
+    );
+    const openRouterHttpTimeoutSeconds = String(
+      PARSE_TIMEOUTS.openRouterTimeoutSeconds
+    );
+    const parseJobStaleSeconds = String(PARSE_TIMEOUTS.parseJobStaleSeconds);
+    const parseJobStuckSeconds = String(PARSE_TIMEOUTS.parseJobStuckSeconds);
 
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
@@ -399,7 +407,7 @@ export class LxsoftwareStack extends cdk.Stack {
         OPENROUTER_TIMEOUT_SECONDS: openRouterHttpTimeoutSeconds,
         PARSE_JOB_STALE_SECONDS: parseJobStaleSeconds,
         PARSE_JOB_STUCK_SECONDS: parseJobStuckSeconds,
-        PARSE_JOB_TTL_SECONDS: "604800",
+        PARSE_JOB_TTL_SECONDS: String(PARSE_TIMEOUTS.parseJobTtlSeconds),
       },
     });
 
@@ -549,7 +557,7 @@ export class LxsoftwareStack extends cdk.Stack {
         PARSE_WORKER_FUNCTION_NAME: adminFn.functionName,
         PARSE_JOB_STALE_SECONDS: parseJobStaleSeconds,
         PARSE_JOB_STUCK_SECONDS: parseJobStuckSeconds,
-        PARSE_JOB_TTL_SECONDS: "604800",
+        PARSE_JOB_TTL_SECONDS: String(PARSE_TIMEOUTS.parseJobTtlSeconds),
       },
     });
 

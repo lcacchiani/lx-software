@@ -44,6 +44,7 @@ There are no automated test suites for `apps/public_www` or CDK currently.
 - **Admin UI patterns** (tables, editors, money/date formatting): see [`apps/admin_web/docs/UI_COMPONENTS.md`](apps/admin_web/docs/UI_COMPONENTS.md).
 
 - **Currencies (admin):** supported codes are GBP, HKD, USD, EUR, CNY, SGD, AED. Global default is HKD; each house can set `defaultCurrency` on its finance record. Use `CurrencySelect` and `src/lib/currencies.ts`; the admin Lambda validates the same set on finance writes.
+- **Shared contracts:** cross-app constants live in `contracts/*.json`. After editing, run `python3 scripts/sync-contracts.py` and `python3 scripts/check-contracts.py` (also enforced in CI).
 
 - The public website fetches `/content.json` at runtime (served from `public/content.json` in dev). If you see missing content, ensure that file exists.
 - The admin SPA requires `VITE_*` Cognito and API settings; see `apps/admin_web/.env.example`.
