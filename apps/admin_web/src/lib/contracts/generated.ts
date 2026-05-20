@@ -13,7 +13,18 @@ export const INVESTMENT_CATEGORIES = ["Real Estate", "Fixed Term Deposit", "ETF"
 export const ASSET_TYPES = ["Fixed", "Liquid"] as const;
 export const FINANCE_ACCOUNT_TYPES = ["Bank Account", "Credit Card", "Debit Card"] as const;
 
-export const PARSE_POLL_DEADLINE_MS = 480000;
+export const MAX_FINANCE_LINES = 5000;
+export const MAX_FINANCE_DESCRIPTION = 8000;
+export const MAX_SOURCE_ASSET_KEYS_PER_LINE = 20;
+export const MAX_SOURCE_ASSET_KEY_LEN = 1024;
+export const MAX_INVESTMENT_PROVIDER_LEN = 500;
+export const MAX_INVESTMENT_TICKER_LEN = 64;
+export const MAX_INVESTMENT_CRYPTO_CURRENCY_LEN = 120;
+export const MAX_LEDGER_RECORDS = 2000;
+export const MAX_PENSION_DESCRIPTION_LEN = 8000;
+export const MAX_ACCOUNT_DESCRIPTION_LEN = 8000;
+
+export const PARSE_POLL_DEADLINE_MS = 480000
 export const PARSE_POLL_INITIAL_WAIT_MS = 1000;
 export const PARSE_POLL_BACKOFF_CAP_MS = 5000;
 

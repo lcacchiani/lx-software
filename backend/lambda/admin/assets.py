@@ -2,33 +2,18 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 import os
-import time
-import uuid
-import urllib.error
-import urllib.request
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any
-from urllib.parse import parse_qs, quote
 
 from botocore.exceptions import ClientError
 
 import runtime
-from runtime import (
-    ADMIN_GROUP,
-    ALLOWED_UPLOAD_CONTENT_TYPES,
-    FINANCE_HOUSE_KEYS,
-    PARSE_JOB_PK_PREFIX,
-    RECORD_PK_PREFIX,
-    logger,
-)
-
-from http_common import _audit, _json_response, _log_event, _parse_json_body, _request_id
 from ddb_convert import _from_ddb, _to_ddb
+from http_common import _audit, _json_response, _log_event, _parse_json_body, _request_id
+from contract_constants import FINANCE_HOUSE_KEYS
+from runtime import ALLOWED_UPLOAD_CONTENT_TYPES
+
+
 def _is_allowed_upload_content_type(content_type: str) -> bool:
     if not isinstance(content_type, str):
         return False

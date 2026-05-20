@@ -72,12 +72,14 @@ parameters to enable it:
   `mistral-ocr` (scanned PDFs, paid), or `native` (model-native parsing).
   Defaults to `mistral-ocr`.
 
-Parse/statement timing and the default admin hostname are defined in
-`contracts/parse-timeouts.json` and `contracts/admin-domains.json` (synced to
-CDK, Lambda, and the admin SPA via `scripts/sync-contracts.py`). Only
-**`lxsoftware:AdminWebDomainName`** is deployed from parameters; the admin SPA
-stack receives that value from the `lxsoftware` stack (no duplicate
-`lxsoftware-admin-web:AdminWebDomainName` parameter).
+Hard-coded in `lxsoftware-stack.ts` (sourced from `contracts/parse-timeouts.json`
+via `scripts/sync-contracts.py`): **`AdminApiFn` / `InboundStatementMailFn`
+Lambda timeout 300s**, **`OPENROUTER_TIMEOUT_SECONDS` 210s**, **`PARSE_JOB_STALE_SECONDS` /
+`PARSE_JOB_STUCK_SECONDS`**, and **async `maxEventAge` 10 minutes** for self-invoked parse
+workers. The admin SPA `PARSE_POLL_DEADLINE_MS` must stay above those windows.
+
+Set **`lxsoftware:AdminWebDomainName`** and **`lxsoftware-admin-web:AdminWebDomainName`**
+to the same hostname (default in `contracts/admin-domains.json`).
 
 Secrets and bootstrap passwords should not live in git; pass them via CI secrets
 or a private parameter file stored outside of git.

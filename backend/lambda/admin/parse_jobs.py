@@ -2,40 +2,26 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import os
 import time
 import uuid
-import urllib.error
-import urllib.request
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import parse_qs, quote
-
-from botocore.exceptions import ClientError
 
 import runtime
-from runtime import (
-    ADMIN_GROUP,
-    ALLOWED_UPLOAD_CONTENT_TYPES,
-    FINANCE_HOUSE_KEYS,
-    PARSE_JOB_PK_PREFIX,
-    RECORD_PK_PREFIX,
-    logger,
-)
-
 from admin_runtime import _get_lambda_client
 from contract_constants import (
     PARSE_JOB_STALE_SECONDS_DEFAULT,
     PARSE_JOB_STUCK_SECONDS_DEFAULT,
     PARSE_JOB_TTL_SECONDS_DEFAULT,
 )
-from ddb_convert import _from_ddb, _from_ddb_nested, _to_ddb, _to_ddb_nested
+from ddb_convert import _from_ddb_nested, _to_ddb_nested
 from finance_store import _load_finance_house
-from http_common import _json_response, _log_event, _utc_iso_z
+from http_common import _utc_iso_z
+from runtime import PARSE_JOB_PK_PREFIX, logger
+
+
 def _parse_job_key(job_id: str) -> dict[str, str]:
     return {"pk": f"{PARSE_JOB_PK_PREFIX}{job_id}", "sk": "META"}
 

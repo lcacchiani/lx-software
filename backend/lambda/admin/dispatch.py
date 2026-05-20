@@ -2,31 +2,17 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import os
-import time
 import uuid
-import urllib.error
-import urllib.request
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs
 
 from botocore.exceptions import ClientError
 
+import parse_jobs as parse_jobs_mod
 import runtime
-from runtime import (
-    ADMIN_GROUP,
-    ALLOWED_UPLOAD_CONTENT_TYPES,
-    FINANCE_HOUSE_KEYS,
-    PARSE_JOB_PK_PREFIX,
-    RECORD_PK_PREFIX,
-    logger,
-)
-
 from contract_constants import (
     DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
     EXPENSE_RECORD_CATEGORIES,
@@ -81,7 +67,6 @@ from http_common import (
     _route,
     _utc_iso_z,
 )
-import parse_jobs as parse_jobs_mod
 from parse_jobs import (
     _finalize_stuck_processing_job,
     _parse_job_key,
@@ -91,6 +76,9 @@ from parse_jobs import (
 )
 from parse_statement import _path_finance_house_for_parse, _statement_basename_already_imported
 from proxies import _proxy_finance_quotes, _proxy_fx_v2_rates
+from runtime import RECORD_PK_PREFIX, logger
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if isinstance(event, dict) and event.get("internal") == "parse_statement_async":
         parse_jobs_mod._handle_parse_statement_async_worker(event)

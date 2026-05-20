@@ -1,26 +1,36 @@
 import * as cdk from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
-import { StaticSiteDistribution } from "./constructs/static-site-distribution";
 
 export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
-  /** Admin SPA hostname (from lxsoftware stack AdminWebDomainName parameter). */
-  readonly adminWebDomainName: string;
-  /** Admin HTTP API origin for CSP connect-src */
+  /** Admin HTTP API origin (https://{api-id}.execute-api.{region}.amazonaws.com) for CSP connect-src */
   readonly cspApiConnectOrigin: string;
   /**
-   * Space-delimited S3 origins for presigned asset uploads (legacy + regional
-   * virtual-hosted bucket URLs).
+   * Space-delimited origins for the private assets bucket the admin SPA
+   * uploads PDFs / images to via presigned POST. Must include **both**:
+   *
+   *   * `https://<bucket>.s3.amazonaws.com`          (legacy global virtual-hosted)
+   *   * `https://<bucket>.s3.<region>.amazonaws.com` (regional virtual-hosted)
+   *
+   * boto3 in the admin Lambda (default config) currently signs the legacy
+   * global form; a future SDK / endpoint upgrade may switch to the regional
+   * form without notice. Allow-listing both prevents the browser CSP from
+   * blocking the upload `fetch()` either way.
    */
   readonly cspAssetsConnectOrigins: string;
 }
 
 /**
  * Admin SPA delivery: private S3 origin + CloudFront distribution + WAF/CSP.
+ *
+ * All physical names use the `lxsoftware-admin-*` prefix.
  */
 export class LxsoftwareAdminWebStack extends cdk.Stack {
-  public readonly bucket: s3.IBucket;
+  public readonly bucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
   public readonly accessLogsBucket: s3.Bucket;
 
@@ -28,6 +38,12 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
     super(scope, id, props);
 
     const resourcePrefix = "lxsoftware-admin";
+
+    const domainName = new cdk.CfnParameter(this, "AdminWebDomainName", {
+      type: "String",
+      description: "Custom domain for the admin SPA (CloudFront alias).",
+      default: "admin.lx-software.com",
+    });
 
     const certificateArn = new cdk.CfnParameter(this, "AdminWebCertificateArn", {
       type: "String",
@@ -61,6 +77,47 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
 
     const bucketName = [resourcePrefix, "web", cdk.Aws.ACCOUNT_ID, cdk.Aws.REGION].join(
       "-"
+    );
+
+    const logsBucketName = [
+      resourcePrefix,
+      "web-logs",
+      cdk.Aws.ACCOUNT_ID,
+      cdk.Aws.REGION,
+    ].join("-");
+
+    this.accessLogsBucket = new s3.Bucket(this, "CloudFrontAccessLogsBucket", {
+      bucketName: logsBucketName,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      versioned: true,
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      lifecycleRules: [
+        {
+          id: "ExpireOldLogs",
+          enabled: true,
+          expiration: cdk.Duration.days(90),
+        },
+      ],
+    });
+
+    this.bucket = new s3.Bucket(this, "AdminWebBucket", {
+      bucketName,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      serverAccessLogsBucket: this.accessLogsBucket,
+      serverAccessLogsPrefix: "s3-web-origin/",
+    });
+
+    const certificate = acm.Certificate.fromCertificateArn(
+      this,
+      "AdminWebCertificate",
+      certificateArn.valueAsString
     );
 
     const spaRewrite = new cloudfront.Function(this, "SpaRewrite", {
@@ -120,24 +177,42 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
       }
     );
 
-    const site = new StaticSiteDistribution(this, "AdminSite", {
-      resourcePrefix,
-      domainName: props.adminWebDomainName,
-      certificateArn: certificateArn.valueAsString,
-      createBucketName: bucketName,
-      spaMode: "admin",
-      responseHeadersPolicy: securityHeadersPolicy,
-      functionAssociations: [
-        {
-          function: spaRewrite,
-          eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
-        },
-      ],
-    });
+    const origin = origins.S3BucketOrigin.withOriginAccessControl(this.bucket);
 
-    this.bucket = site.bucket;
-    this.distribution = site.distribution;
-    this.accessLogsBucket = site.accessLogsBucket;
+    this.distribution = new cloudfront.Distribution(
+      this,
+      "AdminWebDistribution",
+      {
+        defaultRootObject: "index.html",
+        domainNames: [domainName.valueAsString],
+        certificate,
+        defaultBehavior: {
+          origin,
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          responseHeadersPolicy: securityHeadersPolicy,
+          functionAssociations: [
+            {
+              function: spaRewrite,
+              eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+            },
+          ],
+        },
+        errorResponses: [
+          {
+            httpStatus: 404,
+            responseHttpStatus: 200,
+            responsePagePath: "/index.html",
+            ttl: cdk.Duration.minutes(5),
+          },
+        ],
+        enableLogging: true,
+        logBucket: this.accessLogsBucket,
+        logFilePrefix: "cloudfront/",
+      }
+    );
 
     const cfnDist = this.distribution.node.defaultChild as cloudfront.CfnDistribution;
     cfnDist.addPropertyOverride(
@@ -147,6 +222,33 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
         wafWebAclArn.valueAsString,
         cdk.Aws.NO_VALUE
       )
+    );
+
+    const bucketPolicy = new s3.BucketPolicy(this, "AdminWebBucketPolicy", {
+      bucket: this.bucket,
+    });
+
+    bucketPolicy.document.addStatements(
+      new iam.PolicyStatement({
+        sid: "AllowCloudFrontServicePrincipalReadOnly",
+        effect: iam.Effect.ALLOW,
+        actions: ["s3:GetObject"],
+        resources: [this.bucket.arnForObjects("*")],
+        principals: [new iam.ServicePrincipal("cloudfront.amazonaws.com")],
+        conditions: {
+          StringEquals: {
+            "AWS:SourceArn": cdk.Arn.format(
+              {
+                service: "cloudfront",
+                resource: "distribution",
+                resourceName: this.distribution.distributionId,
+                region: "",
+              },
+              this
+            ),
+          },
+        },
+      })
     );
 
     new cdk.CfnOutput(this, "AdminWebBucketName", {

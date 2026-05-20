@@ -75,7 +75,6 @@ const adminWeb = new LxsoftwareAdminWebStack(app, "lxsoftware-admin-web", {
   description: "LX Software admin SPA delivery (S3 + CloudFront).",
   env,
   synthesizer,
-  adminWebDomainName: lxsoftware.adminWebHostname,
   cspApiConnectOrigin: lxsoftware.httpApi.apiEndpoint,
   cspAssetsConnectOrigins: cdk.Fn.join(" ", [
     cdk.Fn.join("", ["https://", lxsoftware.assetsBucket.bucketDomainName]),

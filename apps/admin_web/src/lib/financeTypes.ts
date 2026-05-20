@@ -1,11 +1,5 @@
 /** Finance domain types and category constants (from contracts/finance.json). */
 
-import type {
-  ASSET_TYPES,
-  FINANCE_ACCOUNT_TYPES,
-  INVESTMENT_CATEGORIES,
-} from "./contracts/generated";
-
 export {
   ASSET_TYPES,
   EXPENSE_CATEGORIES,
@@ -14,8 +8,25 @@ export {
   GLOBAL_DEFAULT_CURRENCY,
   INCOME_CATEGORIES,
   INVESTMENT_CATEGORIES,
+  MAX_ACCOUNT_DESCRIPTION_LEN,
+  MAX_INVESTMENT_CRYPTO_CURRENCY_LEN,
+  MAX_INVESTMENT_TICKER_LEN,
+  MAX_PENSION_DESCRIPTION_LEN,
   type CurrencyCode,
   type HouseKey,
+} from "./contracts/generated";
+
+/** Legacy aliases used across finance UI code. */
+export {
+  MAX_INVESTMENT_CRYPTO_CURRENCY_LEN as INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
+  MAX_INVESTMENT_TICKER_LEN as INVESTMENT_TICKER_MAX_LEN,
+} from "./contracts/generated";
+
+import {
+  ASSET_TYPES,
+  FINANCE_ACCOUNT_TYPES,
+  INVESTMENT_CATEGORIES,
+  type CurrencyCode,
 } from "./contracts/generated";
 
 export type FinanceLineType = "income" | "expenditure" | "mortgage";
@@ -38,7 +49,7 @@ export type HouseStatementLine = {
 };
 
 export type HouseFinanceData = {
-  readonly defaultCurrency: import("./contracts/generated").CurrencyCode;
+  readonly defaultCurrency: CurrencyCode;
   readonly float: HouseFloat;
   readonly lines: readonly HouseStatementLine[];
 };
@@ -46,8 +57,3 @@ export type HouseFinanceData = {
 export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
 export type AssetType = (typeof ASSET_TYPES)[number];
 export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
-
-export const INVESTMENT_TICKER_MAX_LEN = 64;
-export const INVESTMENT_CRYPTO_CURRENCY_MAX_LEN = 120;
-export const MAX_PENSION_DESCRIPTION_LEN = 8000;
-export const MAX_ACCOUNT_DESCRIPTION_LEN = 8000;

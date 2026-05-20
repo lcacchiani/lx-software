@@ -2,31 +2,15 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 import os
-import time
 import uuid
-import urllib.error
-import urllib.request
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
-from urllib.parse import parse_qs, quote
 
 from botocore.exceptions import ClientError
 
 import runtime
-from runtime import (
-    ADMIN_GROUP,
-    ALLOWED_UPLOAD_CONTENT_TYPES,
-    FINANCE_HOUSE_KEYS,
-    PARSE_JOB_PK_PREFIX,
-    RECORD_PK_PREFIX,
-    logger,
-)
-
 from contract_constants import (
     ASSET_TYPES,
     DEFAULT_EXPENSE_INCOME_ALLOCATION_PERCENTAGES,
@@ -51,7 +35,10 @@ from contract_constants import (
     SUPPORTED_FINANCE_CURRENCIES,
 )
 from ddb_convert import _from_ddb, _from_ddb_nested, _to_ddb, _to_ddb_nested
-from http_common import _audit, _json_response, _log_event, _utc_iso_z
+from http_common import _log_event, _utc_iso_z
+from runtime import RECORD_PK_PREFIX
+
+
 def _default_finance_house() -> dict[str, Any]:
     return {
         "defaultCurrency": DEFAULT_FINANCE_CURRENCY,
@@ -2198,79 +2185,4 @@ def _path_finance_house(event: dict[str, Any], path: str) -> str | None:
 
 def _validate_record_pk(pk: str) -> bool:
     return isinstance(pk, str) and pk.startswith(RECORD_PK_PREFIX)
-
-
-FRANKFURTER_API_BASE = "https://api.frankfurter.dev"
-
-YAHOO_FINANCE_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
-
-# Maximum number of distinct symbols accepted per /finance/quotes request.
-# Bounds Lambda fan-out and protects Yahoo from runaway requests.
-FINANCE_QUOTES_MAX_SYMBOLS = 50
-
-# Maps the "EXCHANGE:SYMBOL" prefix users type into the admin Investments tab
-# (TradingView style) into the Yahoo Finance suffix convention. Empty string
-# means "no suffix" (US listings on NASDAQ/NYSE/AMEX/BATS use the bare ticker).
-_YAHOO_EXCHANGE_SUFFIX_BY_PREFIX: dict[str, str] = {
-    "US": "",
-    "USA": "",
-    "NASDAQ": "",
-    "NYSE": "",
-    "NYSEARCA": "",
-    "ARCA": "",
-    "AMEX": "",
-    "BATS": "",
-    "CBOE": "",
-    "OTC": "",
-    "LON": ".L",
-    "LSE": ".L",
-    "LSIN": ".IL",
-    "HK": ".HK",
-    "HKG": ".HK",
-    "HKEX": ".HK",
-    "TYO": ".T",
-    "TSE": ".T",  # Tokyo Stock Exchange
-    "JPX": ".T",
-    "ASX": ".AX",
-    "TSX": ".TO",
-    "TSXV": ".V",
-    "FRA": ".F",
-    "ETR": ".DE",
-    "XETRA": ".DE",
-    "GER": ".DE",
-    "PAR": ".PA",
-    "EPA": ".PA",
-    "AMS": ".AS",
-    "EBR": ".BR",
-    "BIT": ".MI",
-    "MIL": ".MI",
-    "BME": ".MC",
-    "MAD": ".MC",
-    "SWX": ".SW",
-    "VIE": ".VI",
-    "STO": ".ST",
-    "OSL": ".OL",
-    "CSE": ".CO",
-    "HEL": ".HE",
-    "SGX": ".SI",
-    "KRX": ".KS",
-    "KOSDAQ": ".KQ",
-    "TWSE": ".TW",
-    "SHA": ".SS",
-    "SSE": ".SS",
-    "SHE": ".SZ",
-    "SZSE": ".SZ",
-    "BSE": ".BO",
-    "NSE": ".NS",
-    "JSE": ".JO",
-    "B3": ".SA",
-    "BMV": ".MX",
-    "BCBA": ".BA",
-}
-
-# Crypto codes that should be quoted against USD when the user enters just the
-# ticker (e.g. ``BTC`` rather than ``BTC-USD``). The list is intentionally
-# permissive — anything we don't recognise still gets a ``-USD`` suffix as a
-# default, which is how Yahoo represents crypto pairs.
-
 

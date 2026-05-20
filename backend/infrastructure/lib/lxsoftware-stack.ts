@@ -27,8 +27,6 @@ import { ADMIN_WEB_HOSTNAME, PARSE_TIMEOUTS } from "./shared-contracts";
  * All physical names use the `lxsoftware-admin-*` prefix.
  */
 export class LxsoftwareStack extends cdk.Stack {
-  /** CloudFormation token for the admin SPA hostname (shared with lxsoftware-admin-web). */
-  public readonly adminWebHostname: string;
   public readonly auth: AuthConstruct;
   public readonly recordsTable: dynamodb.Table;
   public readonly auditLogTable: dynamodb.Table;
@@ -66,7 +64,6 @@ export class LxsoftwareStack extends cdk.Stack {
       description: "Public hostname for the admin SPA (e.g. admin.lx-software.com).",
       default: ADMIN_WEB_HOSTNAME,
     });
-    this.adminWebHostname = adminWebDomainName.valueAsString;
 
     const googleClientId = new cdk.CfnParameter(this, "GoogleClientId", {
       type: "String",

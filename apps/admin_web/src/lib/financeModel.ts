@@ -7,6 +7,8 @@ import {
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
   INVESTMENT_TICKER_MAX_LEN,
+  MAX_ACCOUNT_DESCRIPTION_LEN,
+  MAX_PENSION_DESCRIPTION_LEN,
 } from "./financeTypes";
 export {
   ASSET_TYPES,
@@ -17,6 +19,8 @@ export {
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
   INVESTMENT_TICKER_MAX_LEN,
+  MAX_ACCOUNT_DESCRIPTION_LEN,
+  MAX_PENSION_DESCRIPTION_LEN,
   type AssetType,
   type FinanceAccountType,
   type HouseKey,
@@ -140,9 +144,6 @@ export type FinanceSavingsRecord = {
   readonly currency: string;
 };
 
-/** Max UTF-8 length for pension description (aligned with admin Lambda `MAX_FINANCE_DESCRIPTION`). */
-export const MAX_PENSION_DESCRIPTION_LEN = 8000;
-
 /** One row in the Pension sheet (DynamoDB finance sheet `pension`). */
 export type FinancePensionRecord = {
   readonly id: string;
@@ -153,10 +154,6 @@ export type FinancePensionRecord = {
   /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
   readonly lastUpdated?: string;
 };
-
-import { MAX_ACCOUNT_DESCRIPTION_LEN } from "./financeTypes";
-
-export { MAX_ACCOUNT_DESCRIPTION_LEN };
 
 /** One row in the Accounts sheet (DynamoDB finance sheet `accounts`). */
 export type FinanceAccountRecord = {
