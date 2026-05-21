@@ -1,19 +1,12 @@
-/** Admin-supported ISO 4217 codes (fixed list; managed in admin UI as dropdowns). */
+/** Admin-supported ISO 4217 codes (from contracts/finance.json). */
 
-export const SUPPORTED_CURRENCIES = [
-  "GBP",
-  "HKD",
-  "USD",
-  "EUR",
-  "CNY",
-  "SGD",
-  "AED",
-] as const;
+import {
+  GLOBAL_DEFAULT_CURRENCY,
+  SUPPORTED_CURRENCIES,
+  type CurrencyCode,
+} from "./contracts/generated";
 
-export type CurrencyCode = (typeof SUPPORTED_CURRENCIES)[number];
-
-/** Platform default when no house-specific default is set. */
-export const GLOBAL_DEFAULT_CURRENCY: CurrencyCode = "HKD";
+export { GLOBAL_DEFAULT_CURRENCY, SUPPORTED_CURRENCIES, type CurrencyCode };
 
 const SUPPORTED_SET = new Set<string>(SUPPORTED_CURRENCIES);
 

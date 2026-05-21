@@ -11,14 +11,11 @@ import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 const DUPLICATE_STATEMENT_BASE_MSG =
   "Remove its imported lines or rename the file, then try again.";
 
-const PARSE_POLL_INITIAL_WAIT_MS = 1000;
-const PARSE_POLL_BACKOFF_CAP_MS = 5000;
-/**
- * Must exceed the admin Lambda statement-parse worker timeout (300s in CDK) and
- * the PARSE_JOB_STUCK_SECONDS window (420s) so polling can observe terminal job
- * states instead of giving up while DynamoDB still shows `processing`.
- */
-const PARSE_POLL_DEADLINE_MS = 480_000;
+import {
+  PARSE_POLL_BACKOFF_CAP_MS,
+  PARSE_POLL_DEADLINE_MS,
+  PARSE_POLL_INITIAL_WAIT_MS,
+} from "../lib/contracts/generated";
 
 /**
  * Collects exact filenames (S3 key basenames) already used by lines with

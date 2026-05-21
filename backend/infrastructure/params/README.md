@@ -72,12 +72,14 @@ parameters to enable it:
   `mistral-ocr` (scanned PDFs, paid), or `native` (model-native parsing).
   Defaults to `mistral-ocr`.
 
-Hard-coded in `lxsoftware-stack.ts` (not parameter files): **`AdminApiFn` /
-`InboundStatementMailFn` Lambda timeout 300s**, **`OPENROUTER_TIMEOUT_SECONDS`
-210s** (urllib cap for the OpenRouter HTTP call), **`PARSE_JOB_STALE_SECONDS` /
-`PARSE_JOB_STUCK_SECONDS`** for DynamoDB parse-job reclaim / finalize, and
-**async `maxEventAge` 10 minutes** for self-invoked parse workers. The admin SPA
-`PARSE_POLL_DEADLINE_MS` must stay above those windows.
+Hard-coded in `lxsoftware-stack.ts` (sourced from `contracts/parse-timeouts.json`
+via `scripts/sync-contracts.py`): **`AdminApiFn` / `InboundStatementMailFn`
+Lambda timeout 300s**, **`OPENROUTER_TIMEOUT_SECONDS` 210s**, **`PARSE_JOB_STALE_SECONDS` /
+`PARSE_JOB_STUCK_SECONDS`**, and **async `maxEventAge` 10 minutes** for self-invoked parse
+workers. The admin SPA `PARSE_POLL_DEADLINE_MS` must stay above those windows.
+
+Set **`lxsoftware:AdminWebDomainName`** and **`lxsoftware-admin-web:AdminWebDomainName`**
+to the same hostname (default in `contracts/admin-domains.json`).
 
 Secrets and bootstrap passwords should not live in git; pass them via CI secrets
 or a private parameter file stored outside of git.

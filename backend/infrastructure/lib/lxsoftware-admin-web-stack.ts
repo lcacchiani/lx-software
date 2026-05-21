@@ -5,6 +5,7 @@ import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
+import { ADMIN_WEB_HOSTNAME } from "./shared-contracts";
 
 export interface LxsoftwareAdminWebStackProps extends cdk.StackProps {
   /** Admin HTTP API origin (https://{api-id}.execute-api.{region}.amazonaws.com) for CSP connect-src */
@@ -42,7 +43,7 @@ export class LxsoftwareAdminWebStack extends cdk.Stack {
     const domainName = new cdk.CfnParameter(this, "AdminWebDomainName", {
       type: "String",
       description: "Custom domain for the admin SPA (CloudFront alias).",
-      default: "admin.lx-software.com",
+      default: ADMIN_WEB_HOSTNAME,
     });
 
     const certificateArn = new cdk.CfnParameter(this, "AdminWebCertificateArn", {

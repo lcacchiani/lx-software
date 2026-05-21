@@ -1,0 +1,10 @@
+{
+  "lambdaTimeoutSeconds": 300,
+  "openRouterTimeoutSeconds": 210,
+  "parseJobStaleSeconds": 330,
+  "parseJobStuckSeconds": 420,
+  "parseJobTtlSeconds": 604800,
+  "parsePollDeadlineMs": 480000,
+  "parsePollInitialWaitMs": 1000,
+  "parsePollBackoffCapMs": 5000
+}

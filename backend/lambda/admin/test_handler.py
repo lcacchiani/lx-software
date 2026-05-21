@@ -1868,8 +1868,10 @@ class TestLambdaInternalAsyncDispatch(unittest.TestCase):
         def capture(payload: dict) -> None:
             captured.append(payload)
 
+        import parse_jobs as parse_jobs_mod
+
         with patch.object(
-            handler_mod, "_handle_parse_statement_async_worker", side_effect=capture
+            parse_jobs_mod, "_handle_parse_statement_async_worker", side_effect=capture
         ):
             out = handler_mod.lambda_handler(
                 {"internal": "parse_statement_async", "jobId": "jid"},

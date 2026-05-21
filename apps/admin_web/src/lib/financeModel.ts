@@ -1,8 +1,38 @@
+import { GLOBAL_DEFAULT_CURRENCY, coerceSupportedCurrency } from "./currencies";
+import type {
+  AssetType,
+  CurrencyCode,
+  FinanceAccountType,
+  HouseKey,
+  InvestmentCategory,
+} from "./financeTypes";
 import {
-  GLOBAL_DEFAULT_CURRENCY,
-  coerceSupportedCurrency,
-  type CurrencyCode,
-} from "./currencies";
+  EXPENSE_CATEGORIES,
+  FINANCE_ACCOUNT_TYPES,
+  INCOME_CATEGORIES,
+  INVESTMENT_CATEGORIES,
+  INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
+  INVESTMENT_TICKER_MAX_LEN,
+  MAX_ACCOUNT_DESCRIPTION_LEN,
+  MAX_PENSION_DESCRIPTION_LEN,
+} from "./financeTypes";
+
+export {
+  ASSET_TYPES,
+  EXPENSE_CATEGORIES,
+  FINANCE_ACCOUNT_TYPES,
+  FINANCE_HOUSE_KEYS,
+  INCOME_CATEGORIES,
+  INVESTMENT_CATEGORIES,
+  INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
+  INVESTMENT_TICKER_MAX_LEN,
+  MAX_ACCOUNT_DESCRIPTION_LEN,
+  MAX_PENSION_DESCRIPTION_LEN,
+  type AssetType,
+  type FinanceAccountType,
+  type HouseKey,
+  type InvestmentCategory,
+} from "./financeTypes";
 
 export type FinanceLineType = "income" | "expenditure" | "mortgage";
 
@@ -63,9 +93,6 @@ export type HouseFinanceData = {
   readonly lines: readonly HouseStatementLine[];
 };
 
-/** Income tab categories (aligned with admin Lambda validation). */
-export const INCOME_CATEGORIES = ["Salary", "Rent"] as const;
-
 /** Optional income ledger toggles (stored on income sheet rows only). */
 export type IncomeLedgerFlagField = "isTax" | "isSaving" | "isInvestment";
 
@@ -85,42 +112,6 @@ export const EXPENSE_LEDGER_FLAG_FIELDS: ReadonlyArray<{
   readonly field: ExpenseLedgerFlagField;
   readonly label: string;
 }> = [{ field: "isAllocate", label: "Allocate" }];
-
-/** Expense tab categories (aligned with admin Lambda validation). */
-export const EXPENSE_CATEGORIES = [
-  "Utility",
-  "Saving",
-  "Investment",
-  "Rent",
-  "Mortgage",
-  "Insurance",
-  "Retirement",
-  "Tax",
-  "Amenities",
-  "Helper",
-  "Education",
-] as const;
-
-/** Investment holdings tab (aligned with admin Lambda validation). */
-export const INVESTMENT_CATEGORIES = [
-  "Real Estate",
-  "Fixed Term Deposit",
-  "ETF",
-  "Crypto",
-] as const;
-
-export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
-
-export const ASSET_TYPES = ["Fixed", "Liquid"] as const;
-
-export type AssetType = (typeof ASSET_TYPES)[number];
-
-export type HouseKey = "hillmarton" | "morrison";
-
-/** Max length for ETF ticker text (aligned with admin Lambda). */
-export const INVESTMENT_TICKER_MAX_LEN = 64;
-/** Max length for crypto “currency” name text (aligned with admin Lambda). */
-export const INVESTMENT_CRYPTO_CURRENCY_MAX_LEN = 120;
 
 /** One row in the Investments sheet (DynamoDB finance sheet `investments`). */
 export type FinanceInvestmentRecord = {
@@ -158,9 +149,6 @@ export type FinanceSavingsRecord = {
   readonly currency: string;
 };
 
-/** Max UTF-8 length for pension description (aligned with admin Lambda `MAX_FINANCE_DESCRIPTION`). */
-export const MAX_PENSION_DESCRIPTION_LEN = 8000;
-
 /** One row in the Pension sheet (DynamoDB finance sheet `pension`). */
 export type FinancePensionRecord = {
   readonly id: string;
@@ -171,13 +159,6 @@ export type FinancePensionRecord = {
   /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
   readonly lastUpdated?: string;
 };
-
-/** Accounts tab (aligned with admin Lambda validation). */
-export const FINANCE_ACCOUNT_TYPES = ["Bank Account", "Credit Card", "Debit Card"] as const;
-
-export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
-
-export const MAX_ACCOUNT_DESCRIPTION_LEN = 8000;
 
 /** One row in the Accounts sheet (DynamoDB finance sheet `accounts`). */
 export type FinanceAccountRecord = {

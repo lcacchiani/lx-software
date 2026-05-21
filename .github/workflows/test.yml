@@ -6,7 +6,10 @@ on:
     paths:
       - "apps/public_www/**"
       - "apps/admin_web/**"
-      - "backend/infrastructure/**"
+      - "backend/**"
+      - "contracts/**"
+      - "scripts/sync-contracts.py"
+      - "scripts/check-contracts.py"
   push:
     branches:
       - main
@@ -16,6 +19,14 @@ on:
       - "backend/infrastructure/**"
 
 jobs:
+  check-contracts:
+    name: Check shared contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify contract artifacts
+        run: python3 scripts/check-contracts.py
+
   test-web:
     name: Test Public Website
     runs-on: ubuntu-latest
