@@ -33,54 +33,13 @@ import {
   TableSortHeaderButton,
 } from "./ui";
 
-type LedgerSortColumnKey = "cat" | "desc" | "house" | "amt" | "ccy";
-
-function relatedHouseSortLabel(
-  record: FinanceLedgerRecord,
-  relatedHouseLabelByValue: ReadonlyMap<HouseKey, string>,
-): string {
-  if (!record.relatedHouse) return "";
-  return relatedHouseLabelByValue.get(record.relatedHouse) ?? record.relatedHouse;
-}
-
-function compareLedgerRecords(
-  a: FinanceLedgerRecord,
-  b: FinanceLedgerRecord,
-  sortKey: LedgerSortColumnKey,
-  sortDir: "asc" | "desc",
-  relatedHouseLabelByValue: ReadonlyMap<HouseKey, string>,
-): number {
-  const dir = sortDir === "asc" ? 1 : -1;
-  let cmp = 0;
-  switch (sortKey) {
-    case "cat":
-      cmp = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
-      break;
-    case "desc":
-      cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
-      break;
-    case "house":
-      cmp = relatedHouseSortLabel(a, relatedHouseLabelByValue).localeCompare(
-        relatedHouseSortLabel(b, relatedHouseLabelByValue),
-        undefined,
-        { sensitivity: "base" },
-      );
-      break;
-    case "amt": {
-      const ma = ledgerMonthlyAmount(a);
-      const mb = ledgerMonthlyAmount(b);
-      cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
-      break;
-    }
-    case "ccy":
-      cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
-      break;
-    default:
-      break;
-  }
-  if (cmp !== 0) return dir * cmp;
-  return a.id.localeCompare(b.id);
-}
+import { FinanceLedgerTaggedIncomeAllocationSection } from "./FinanceLedgerTaggedIncomeAllocationSection";
+import {
+  compareLedgerRecords,
+  expenseLedgerFlagLabels,
+  incomeLedgerFlagLabels,
+  type LedgerSortColumnKey,
+} from "./FinanceLedgerSheetPanel.utils";
 
 type LineFormState = {
   category: string;
@@ -107,170 +66,27 @@ export type FinanceLedgerSheetPanelProps = {
   readonly deleteConfirmMessage: string;
   readonly emptyMessage: string;
   readonly filterPlaceholder?: string;
-  /**
-   * When true (default), table rows are sorted by currency, category, related property, then
-   * description (A–Z). Set false to preserve the records array order from the API.
-   * After you sort via a column header, that single-column order takes precedence until you
-   * reload the page.
-   */
   readonly sortTableRowsByCurrencyCategoryDescription?: boolean;
-  /** When true, category `<select>` options are listed A–Z (default option is first alphabetically). */
   readonly alphabetizeCategoryDropdown?: boolean;
-  /** When set, shows an optional “related property” control and table column. */
   readonly relatedHouseOptions?: ReadonlyArray<{
     readonly value: HouseKey;
     readonly label: string;
   }>;
-  /** Income sheet only: Tax / Saving / Investment toggles stored on each row. */
   readonly incomeFlagFields?: ReadonlyArray<{
     readonly field: IncomeLedgerFlagField;
     readonly label: string;
   }>;
-  /** Expense sheet only: Allocate tag stored on each row. */
   readonly expenseFlagFields?: ReadonlyArray<{
     readonly field: ExpenseLedgerFlagField;
     readonly label: string;
   }>;
-  /** Expenses sheet: persisted allocation rates for derived rows (optional). */
   readonly expenseIncomeAllocationPercents?: ExpenseIncomeAllocationPercents;
   readonly onPatchExpenseIncomeAllocationPercents?: (
     next: ExpenseIncomeAllocationPercents,
   ) => void;
-  /** Expenses sheet: income ledger rows used to compute derived expense amounts. */
   readonly incomeRecordsForDerivedExpenses?: readonly FinanceLedgerRecord[];
-  /** Income sheet: allocation rows tagged as income (synthetic income lines; not persisted on income). */
   readonly allocationRecordsForSyntheticIncome?: readonly FinanceAllocationRecord[];
 };
-
-function incomeLedgerFlagLabels(
-  record: FinanceLedgerRecord,
-  defs: FinanceLedgerSheetPanelProps["incomeFlagFields"],
-): string {
-  if (!defs?.length) return "";
-  const parts: string[] = [];
-  for (const { field, label } of defs) {
-    if (record[field]) parts.push(label);
-  }
-  return parts.join(", ");
-}
-
-function expenseLedgerFlagLabels(
-  record: FinanceLedgerRecord,
-  defs: FinanceLedgerSheetPanelProps["expenseFlagFields"],
-): string {
-  if (!defs?.length) return "";
-  const parts: string[] = [];
-  for (const { field, label } of defs) {
-    if (record[field]) parts.push(label);
-  }
-  return parts.join(", ");
-}
-
-type TaggedIncomeAllocationSectionProps = {
-  readonly sheetId: string;
-  readonly percents: ExpenseIncomeAllocationPercents;
-  readonly onSave: (next: ExpenseIncomeAllocationPercents) => void;
-};
-
-function TaggedIncomeAllocationSection({
-  sheetId,
-  percents,
-  onSave,
-}: TaggedIncomeAllocationSectionProps) {
-  const [draft, setDraft] = useState<ExpenseIncomeAllocationPercents>(percents);
-  return (
-    <AdminEditorSection
-      title="Allocation from tagged income"
-      footer={
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => onSave(draft)}>
-          Save allocation rates
-        </button>
-      }
-    >
-      <p className="small text-muted mb-3">
-        Each rate applies to monthly income on the Income tab using rows marked{" "}
-        <strong>Tax</strong>, <strong>Investment</strong>, or <strong>Saving</strong>. Rows with a
-        related property use that property; rows without one are grouped as &quot;no related
-        property&quot;. Derived expense lines appear in the table below and cannot be edited or
-        deleted.
-      </p>
-      <div className="row g-3">
-        <div className="col-md-4">
-          <label className="form-label small" htmlFor={`${sheetId}-alloc-tax`}>
-            % Tax on Income
-          </label>
-          <input
-            id={`${sheetId}-alloc-tax`}
-            type="number"
-            min={0}
-            max={100}
-            step={0.1}
-            className="form-control form-control-sm"
-            value={draft.taxOnIncomePercent}
-            onChange={(ev) => {
-              const raw = ev.target.value;
-              const n = raw === "" ? 0 : Number.parseFloat(raw);
-              setDraft((d) => ({
-                ...d,
-                taxOnIncomePercent: Number.isFinite(n)
-                  ? Math.min(100, Math.max(0, n))
-                  : d.taxOnIncomePercent,
-              }));
-            }}
-          />
-        </div>
-        <div className="col-md-4">
-          <label className="form-label small" htmlFor={`${sheetId}-alloc-inv`}>
-            % Investments on Income
-          </label>
-          <input
-            id={`${sheetId}-alloc-inv`}
-            type="number"
-            min={0}
-            max={100}
-            step={0.1}
-            className="form-control form-control-sm"
-            value={draft.investmentOnIncomePercent}
-            onChange={(ev) => {
-              const raw = ev.target.value;
-              const n = raw === "" ? 0 : Number.parseFloat(raw);
-              setDraft((d) => ({
-                ...d,
-                investmentOnIncomePercent: Number.isFinite(n)
-                  ? Math.min(100, Math.max(0, n))
-                  : d.investmentOnIncomePercent,
-              }));
-            }}
-          />
-        </div>
-        <div className="col-md-4">
-          <label className="form-label small" htmlFor={`${sheetId}-alloc-save`}>
-            % Savings on Income
-          </label>
-          <input
-            id={`${sheetId}-alloc-save`}
-            type="number"
-            min={0}
-            max={100}
-            step={0.1}
-            className="form-control form-control-sm"
-            value={draft.savingOnIncomePercent}
-            onChange={(ev) => {
-              const raw = ev.target.value;
-              const n = raw === "" ? 0 : Number.parseFloat(raw);
-              setDraft((d) => ({
-                ...d,
-                savingOnIncomePercent: Number.isFinite(n)
-                  ? Math.min(100, Math.max(0, n))
-                  : d.savingOnIncomePercent,
-              }));
-            }}
-          />
-        </div>
-      </div>
-    </AdminEditorSection>
-  );
-}
 
 export function FinanceLedgerSheetPanel({
   sheetId,
@@ -683,7 +499,7 @@ export function FinanceLedgerSheetPanel({
       {showExpenseAllocationBlock &&
       expenseIncomeAllocationPercents &&
       onPatchExpenseIncomeAllocationPercents ? (
-        <TaggedIncomeAllocationSection
+        <FinanceLedgerTaggedIncomeAllocationSection
           key={JSON.stringify(expenseIncomeAllocationPercents)}
           sheetId={sheetId}
           percents={expenseIncomeAllocationPercents}
