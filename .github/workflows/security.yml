@@ -107,22 +107,32 @@ jobs:
           wait-for-processing: false
 
   codeql:
-    name: CodeQL Analysis
+    name: CodeQL Analysis (${{ matrix.language }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript, python]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Set up Python
+        if: matrix.language == 'python'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: javascript
+          languages: ${{ matrix.language }}
           queries: security-extended
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:javascript"
+          category: /language:${{ matrix.language }}
 
   secrets-scan:
     name: Secret Scanning
