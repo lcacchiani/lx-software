@@ -25,6 +25,7 @@ from assets import (
 )
 from ddb_convert import _from_ddb, _from_ddb_nested, _to_ddb, _to_ddb_nested
 from finance_store import (
+    _allocated_expense_ids_for_allocations,
     _build_allocation_records_for_response,
     _finance_ddb_key,
     _finance_sheet_ddb_key,
