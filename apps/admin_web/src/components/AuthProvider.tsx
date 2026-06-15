@@ -3,7 +3,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -11,7 +10,6 @@ import {
 import { clearStoredSession, getStoredIdToken } from "../lib/auth";
 import { createPkcePair } from "../lib/pkce";
 import { getAdminConfig } from "../lib/config";
-import { getCognitoUserPool } from "../lib/cognitoAuth";
 import { decodeJwtPayload, idTokenHasAdminAccess } from "../lib/jwt";
 
 export interface AuthUser {
@@ -81,10 +79,6 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     return decodeUserFromIdToken(t);
   });
   const [isLoading] = useState(false);
-
-  useEffect(() => {
-    getCognitoUserPool();
-  }, []);
 
   const idToken = getStoredIdToken();
 
