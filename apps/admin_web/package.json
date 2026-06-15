@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
-    "amazon-cognito-identity-js": "^6.3.17",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
     "react": "^19.2.7",
