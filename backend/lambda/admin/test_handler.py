@@ -1858,6 +1858,45 @@ class TestFinalizeStuckProcessing(unittest.TestCase):
         self.assertEqual(out["status"], "processing")
         table.put_item.assert_not_called()
 
+    def test_finalizes_stuck_processing_job(self) -> None:
+        from handler import _finalize_stuck_processing_job
+
+        table = MagicMock()
+        stale = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime(
+            "%Y-%m-%dT%H:%M:%S.%f"
+        )[:-3] + "Z"
+        doc = {"status": "processing", "updatedAt": stale}
+        out = _finalize_stuck_processing_job(
+            table, {"pk": "PARSE_JOB#y", "sk": "META"}, doc
+        )
+        self.assertEqual(out["status"], "failed")
+        table.put_item.assert_called_once()
+
+
+class TestParseJobsImportBindings(unittest.TestCase):
+    """Guard against import-hygiene cleanups dropping in-use names.
+
+    ``timedelta``, ``ClientError`` and ``_log_event`` are referenced inside
+    ``parse_jobs`` but only on code paths the worker hits at runtime, so a stray
+    "unused import" removal silently breaks every async parse job until it runs.
+    """
+
+    def test_runtime_names_are_bound(self) -> None:
+        import parse_jobs as parse_jobs_mod
+
+        for name in ("timedelta", "ClientError", "_log_event"):
+            self.assertTrue(
+                hasattr(parse_jobs_mod, name),
+                f"parse_jobs must import {name}",
+            )
+
+    def test_stale_cutoff_uses_timedelta(self) -> None:
+        import parse_jobs as parse_jobs_mod
+
+        with patch.dict("os.environ", {"PARSE_JOB_STALE_SECONDS": "120"}):
+            cutoff = parse_jobs_mod._parse_job_stale_cutoff_iso()
+        self.assertTrue(cutoff.endswith("Z"))
+
 
 class TestLambdaInternalAsyncDispatch(unittest.TestCase):
     def test_dispatches_internal_worker(self) -> None:
