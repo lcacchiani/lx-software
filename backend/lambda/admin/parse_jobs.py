@@ -6,8 +6,10 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from botocore.exceptions import ClientError
 
 import runtime
 from admin_runtime import _get_lambda_client
@@ -17,7 +19,7 @@ from contract_constants import (
     PARSE_JOB_TTL_SECONDS_DEFAULT,
 )
 from ddb_convert import _from_ddb_nested, _to_ddb_nested
-from http_common import _utc_iso_z
+from http_common import _log_event, _utc_iso_z
 from runtime import PARSE_JOB_PK_PREFIX, logger
 
 
