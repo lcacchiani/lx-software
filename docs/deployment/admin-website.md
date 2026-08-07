@@ -112,6 +112,50 @@ admin DynamoDB tables using the `cursor-cloud-agent` IAM identity, see
 lists the exact inline IAM policy needed and the AWS CLI / Console commands
 to attach it.
 
+## Public read-only API keys
+
+The HTTP API exposes read-only mirrors of the admin GET endpoints under
+`/public/*`, authenticated with a static API key in the `x-api-key` header
+instead of a Cognito JWT:
+
+| Route | Mirrors |
+|-------|---------|
+| `GET /public/finance` | `GET /finance` |
+| `GET /public/finance/quotes` | `GET /finance/quotes` |
+| `GET /public/records` | `GET /records` |
+| `GET /public/fx/v2/rates` | `GET /fx/v2/rates` |
+
+Assets and parse-job endpoints are **not** mirrored (they presign S3 access to
+bank statements / are owner-scoped). Every write route stays on the Cognito
+JWT authorizer, and the Lambda handler enforces the same GET allowlist as
+defense in depth (`PUBLIC_READ_PATHS` in `backend/lambda/admin/dispatch.py`).
+
+Keys are validated by the `PublicApiKeyAuthorizerFn` Lambda authorizer, which
+looks up the SHA-256 hash of the presented key in the records table
+(`pk = APIKEY#<sha256>`, `sk = META`). Only the hash is ever stored or logged.
+API Gateway caches authorizer verdicts for up to **5 minutes**, so revocation
+takes up to that long to propagate.
+
+Manage keys with admin AWS credentials (needs table read/write + CMK access):
+
+```bash
+# Mint (prints the key exactly once; keys look like lxpk_…)
+python3 scripts/manage-public-api-keys.py create --label "reporting" \
+  --expires-at 2027-01-01
+
+# List / revoke
+python3 scripts/manage-public-api-keys.py list
+python3 scripts/manage-public-api-keys.py revoke --key-id <keyId>
+```
+
+Call the API:
+
+```bash
+curl -H "x-api-key: lxpk_..." "$ADMIN_API_BASE_URL/public/finance"
+```
+
+A `.gitleaks.toml` rule flags any `lxpk_…` value committed to the repo.
+
 ## Scripts
 
 Local or CI deploy of static files after a build:

@@ -14,3 +14,10 @@ description = "False positive: generic-api-key vs unittest kwargs in inbound mai
 paths = [
   '''backend/lambda/admin/test_inbound_email_handler\.py''',
 ]
+
+# Public read-only API keys minted by scripts/manage-public-api-keys.py use
+# the ``lxpk_`` prefix precisely so any accidental commit is caught here.
+[[rules]]
+id = "lxsoftware-public-api-key"
+description = "LX Software public read-only API key"
+regex = '''lxpk_[A-Za-z0-9_\-]{30,}'''

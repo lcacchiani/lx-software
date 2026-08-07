@@ -48,6 +48,7 @@ There are no automated test suites for `apps/public_www` or CDK currently.
 
 - The public website fetches `/content.json` at runtime (served from `public/content.json` in dev). If you see missing content, ensure that file exists.
 - The admin SPA requires `VITE_*` Cognito and API settings; see `apps/admin_web/.env.example`.
+- **Public read-only API keys:** `/public/{finance,finance/quotes,records,fx/v2/rates}` GET routes accept an `x-api-key` header validated by `backend/lambda/public_api_authorizer/` (SHA-256 hash lookup in the records table, `pk=APIKEY#<sha256>`). Mint/list/revoke with `scripts/manage-public-api-keys.py`; docs in `docs/deployment/admin-website.md`. Write routes stay Cognito-JWT only.
 - Admin tokens are stored in **sessionStorage**; closing the browser tab ends the session and requires signing in again.
 - CDK synth/deploy requires AWS credentials and is not needed for local website development.
 - `apps/public_www`, `apps/admin_web`, and `backend/infrastructure` use npm (lockfiles are `package-lock.json`).
