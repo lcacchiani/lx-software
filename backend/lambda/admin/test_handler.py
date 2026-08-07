@@ -1,5 +1,6 @@
 """Unit tests for admin API helpers (host has no boto3; stub deps before import)."""
 
+import json
 import sys
 import types
 import unittest
@@ -61,6 +62,7 @@ from handler import (  # noqa: E402
     _statement_basename_already_imported,
     _utc_iso_z,
 )
+from dispatch import lambda_handler  # noqa: E402
 
 
 class TestNormalizePublicAssetKey(unittest.TestCase):
@@ -2087,6 +2089,125 @@ class TestParseFinanceQuotesQuery(unittest.TestCase):
     def test_rejects_too_long_symbol(self) -> None:
         out = _parse_finance_quotes_query({"symbols": "X" * 64})
         self.assertIsInstance(out, str)
+
+
+class TestPublicReadRoutes(unittest.TestCase):
+    """Dispatch of /public/* routes guarded by the API key authorizer."""
+
+    def setUp(self) -> None:
+        import runtime
+
+        self.table = MagicMock()
+        self.table.get_item.return_value = {}
+        self.table.scan.return_value = {"Items": []}
+        patcher_ddb = patch.object(runtime, "_ddb")
+        mock_ddb = patcher_ddb.start()
+        self.addCleanup(patcher_ddb.stop)
+        mock_ddb.Table.return_value = self.table
+        patcher_env = patch.dict(
+            "os.environ",
+            {
+                "RECORDS_TABLE_NAME": "records-test",
+                "AUDIT_LOG_TABLE_NAME": "audit-test",
+                "ASSETS_BUCKET_NAME": "assets-test",
+            },
+        )
+        patcher_env.start()
+        self.addCleanup(patcher_env.stop)
+
+    @staticmethod
+    def _event(
+        path: str,
+        method: str = "GET",
+        key_ctx: dict | None = None,
+    ) -> dict:
+        request_context: dict = {
+            "http": {"method": method, "path": path},
+            "requestId": "req-public-1",
+        }
+        if key_ctx is not None:
+            request_context["authorizer"] = {"lambda": key_ctx}
+        return {"requestContext": request_context, "rawQueryString": ""}
+
+    @staticmethod
+    def _key_ctx() -> dict:
+        return {"keyId": "k123", "label": "test", "scope": "read"}
+
+    def test_missing_key_context_unauthorized(self) -> None:
+        out = lambda_handler(self._event("/public/finance"), None)
+        self.assertEqual(out["statusCode"], 401)
+
+    def test_wrong_scope_unauthorized(self) -> None:
+        ctx = {"keyId": "k123", "scope": "write"}
+        out = lambda_handler(self._event("/public/finance", key_ctx=ctx), None)
+        self.assertEqual(out["statusCode"], 401)
+
+    def test_public_finance_returns_overview(self) -> None:
+        out = lambda_handler(
+            self._event("/public/finance", key_ctx=self._key_ctx()), None
+        )
+        self.assertEqual(out["statusCode"], 200)
+        body = json.loads(out["body"])
+        for key in (
+            "hillmarton",
+            "morrison",
+            "incomeRecords",
+            "expenseRecords",
+            "investmentRecords",
+            "savingsRecords",
+            "pensionRecords",
+            "accountRecords",
+            "allocationRecords",
+        ):
+            self.assertIn(key, body)
+
+    def test_public_records_returns_items(self) -> None:
+        out = lambda_handler(
+            self._event("/public/records", key_ctx=self._key_ctx()), None
+        )
+        self.assertEqual(out["statusCode"], 200)
+        body = json.loads(out["body"])
+        self.assertEqual(body["items"], [])
+        self.assertIsNone(body["nextCursor"])
+
+    def test_unlisted_public_path_not_found(self) -> None:
+        out = lambda_handler(
+            self._event("/public/finance/hillmarton", key_ctx=self._key_ctx()),
+            None,
+        )
+        self.assertEqual(out["statusCode"], 404)
+
+    def test_non_get_method_not_found(self) -> None:
+        out = lambda_handler(
+            self._event("/public/finance", method="PUT", key_ctx=self._key_ctx()),
+            None,
+        )
+        self.assertEqual(out["statusCode"], 404)
+
+    def test_bare_public_prefix_not_found(self) -> None:
+        out = lambda_handler(
+            self._event("/public", key_ctx=self._key_ctx()), None
+        )
+        self.assertEqual(out["statusCode"], 404)
+
+    def test_key_context_cannot_reach_admin_routes(self) -> None:
+        # An API-key principal hitting a non-/public route has no JWT claims,
+        # so the admin gate must reject it.
+        out = lambda_handler(
+            self._event("/finance", key_ctx=self._key_ctx()), None
+        )
+        self.assertEqual(out["statusCode"], 401)
+
+    def test_admin_get_finance_still_works(self) -> None:
+        event = self._event("/finance")
+        event["requestContext"]["authorizer"] = {
+            "jwt": {
+                "claims": {"sub": "admin-sub", "cognito:groups": "[admin]"}
+            }
+        }
+        out = lambda_handler(event, None)
+        self.assertEqual(out["statusCode"], 200)
+        self.assertIn("hillmarton", json.loads(out["body"]))
 
 
 if __name__ == "__main__":

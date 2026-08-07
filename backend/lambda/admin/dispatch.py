@@ -55,6 +55,7 @@ from finance_store import (
     _enrich_scan_items_asset_meta,
 )
 from http_common import (
+    _api_key_auth_context,
     _audit,
     _claims,
     _decode_cursor,
@@ -79,6 +80,119 @@ from proxies import _proxy_finance_quotes, _proxy_fx_v2_rates
 from runtime import RECORD_PK_PREFIX, logger
 
 
+# Read-only mirrors of the admin GET endpoints, served under /public/* and
+# authenticated by the API key Lambda authorizer instead of Cognito. Assets
+# and parse-job endpoints are deliberately excluded (they presign S3 access
+# to bank statements / are owner-scoped).
+PUBLIC_READ_PATHS = frozenset(
+    {
+        "/public/finance",
+        "/public/finance/quotes",
+        "/public/records",
+        "/public/fx/v2/rates",
+    }
+)
+
+
+def _records_get_response(event: dict[str, Any]) -> dict[str, Any]:
+    qs = event.get("rawQueryString") or ""
+    cursor_raw = parse_qs(qs).get("cursor", [""])[0]
+    start_key = _decode_cursor(cursor_raw)
+    table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    kwargs: dict[str, Any] = {"Limit": 50}
+    if start_key:
+        kwargs["ExclusiveStartKey"] = start_key
+    result = table.scan(**kwargs)
+    items = [_from_ddb(i) for i in result.get("Items", [])]
+    bucket = os.environ.get("ASSETS_BUCKET_NAME") or ""
+    items = _enrich_scan_items_asset_meta(items, table=table, bucket=bucket)
+    last = result.get("LastEvaluatedKey")
+    next_cursor = _encode_cursor(last) if last else None
+    return _json_response(200, {"items": items, "nextCursor": next_cursor})
+
+
+def _finance_get_response() -> dict[str, Any]:
+    table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+    exp_rows, exp_pct = _load_finance_expenses_ledger_with_allocation(table)
+    alloc_stored = _load_allocation_stored_records(table)
+    income_rows = _load_finance_sheet(table, "income", INCOME_RECORD_CATEGORIES)
+    allocation_records = _build_allocation_records_for_response(
+        exp_rows, alloc_stored, income_rows, exp_pct
+    )
+    return _json_response(
+        200,
+        {
+            "hillmarton": _load_finance_house(table, "hillmarton"),
+            "morrison": _load_finance_house(table, "morrison"),
+            "incomeRecords": income_rows,
+            "expenseRecords": exp_rows,
+            "expenseIncomeAllocationPercents": exp_pct,
+            "investmentRecords": _load_investment_records(table),
+            "savingsRecords": _load_savings_records(table),
+            "pensionRecords": _load_pension_records(table),
+            "accountRecords": _load_accounts_records(table),
+            "allocationRecords": allocation_records,
+        },
+    )
+
+
+def _handle_public_read(
+    event: dict[str, Any], method: str, path: str
+) -> dict[str, Any]:
+    """Serve /public/* routes for API key principals (read-only, GET only).
+
+    API Gateway already enforced the key via the Lambda authorizer; the
+    context check here is defense in depth against direct Lambda invocation
+    or a route being wired to the wrong authorizer.
+    """
+    key_ctx = _api_key_auth_context(event)
+    key_id = key_ctx.get("keyId")
+    if not key_id or key_ctx.get("scope") != "read":
+        _log_event(
+            "warning",
+            tag="public_api_denied",
+            reason="missing_key_context",
+            method=method,
+            path=path,
+            request_id=_request_id(event),
+        )
+        return _json_response(401, {"message": "Unauthorized"})
+
+    if method != "GET" or path not in PUBLIC_READ_PATHS:
+        _log_event(
+            "warning",
+            tag="public_api_denied",
+            reason="not_allowlisted",
+            key_id=key_id,
+            method=method,
+            path=path,
+            request_id=_request_id(event),
+        )
+        return _json_response(404, {"message": "Not found"})
+
+    _log_event(
+        "info",
+        tag="public_api_access",
+        key_id=key_id,
+        path=path,
+        request_id=_request_id(event),
+    )
+
+    if path == "/public/finance":
+        return _finance_get_response()
+    if path == "/public/finance/quotes":
+        return _proxy_finance_quotes(
+            event.get("queryStringParameters"),
+            _request_id(event),
+        )
+    if path == "/public/fx/v2/rates":
+        return _proxy_fx_v2_rates(
+            event.get("queryStringParameters"),
+            _request_id(event),
+        )
+    return _records_get_response(event)
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     if isinstance(event, dict) and event.get("internal") == "parse_statement_async":
         parse_jobs_mod._handle_parse_statement_async_worker(event)
@@ -88,6 +202,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     if method == "GET" and path == "/health":
         return _json_response(200, {"status": "ok"})
+
+    if path == "/public" or path.startswith("/public/"):
+        return _handle_public_read(event, method, path)
 
     admin_claims = _require_admin(event)
     if admin_claims is None:
@@ -319,22 +436,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _asset_delete_response(event, user_sub, body.get("key"))
 
     if method == "GET" and path == "/records":
-        qs = event.get("rawQueryString") or ""
-        cursor_raw = parse_qs(qs).get("cursor", [""])[0]
-        start_key = _decode_cursor(cursor_raw)
-        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        kwargs: dict[str, Any] = {"Limit": 50}
-        if start_key:
-            kwargs["ExclusiveStartKey"] = start_key
-        result = table.scan(**kwargs)
-        items = [_from_ddb(i) for i in result.get("Items", [])]
-        bucket = os.environ.get("ASSETS_BUCKET_NAME") or ""
-        items = _enrich_scan_items_asset_meta(items, table=table, bucket=bucket)
-        last = result.get("LastEvaluatedKey")
-        next_cursor = _encode_cursor(last) if last else None
-        return _json_response(
-            200, {"items": items, "nextCursor": next_cursor}
-        )
+        return _records_get_response(event)
 
     if method == "POST" and path == "/records":
         body = _parse_json_body(event)
@@ -405,28 +507,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _json_response(200, {"item": _from_ddb(item)})
 
     if method == "GET" and path == "/finance":
-        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        exp_rows, exp_pct = _load_finance_expenses_ledger_with_allocation(table)
-        alloc_stored = _load_allocation_stored_records(table)
-        income_rows = _load_finance_sheet(table, "income", INCOME_RECORD_CATEGORIES)
-        allocation_records = _build_allocation_records_for_response(
-            exp_rows, alloc_stored, income_rows, exp_pct
-        )
-        return _json_response(
-            200,
-            {
-                "hillmarton": _load_finance_house(table, "hillmarton"),
-                "morrison": _load_finance_house(table, "morrison"),
-                "incomeRecords": income_rows,
-                "expenseRecords": exp_rows,
-                "expenseIncomeAllocationPercents": exp_pct,
-                "investmentRecords": _load_investment_records(table),
-                "savingsRecords": _load_savings_records(table),
-                "pensionRecords": _load_pension_records(table),
-                "accountRecords": _load_accounts_records(table),
-                "allocationRecords": allocation_records,
-            },
-        )
+        return _finance_get_response()
 
     if method == "PUT" and path in ("/finance/income", "/finance/expenses"):
         sheet_routes: dict[str, tuple[str, frozenset[str], str]] = {
