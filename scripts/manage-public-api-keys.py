@@ -2,9 +2,10 @@
 """Mint, list, and revoke public read-only API keys.
 
 Keys authenticate the /public/* GET routes on the admin HTTP API via the
-`x-api-key` header. Only the SHA-256 digest of a key is stored (as
-``pk = APIKEY#<sha256>``, ``sk = META`` in the records table); the plaintext
-key is printed exactly once by ``create``.
+`x-api-key` header. Plaintext keys look like ``lxpk_<keyId>_<secret>``.
+Only a scrypt digest of the secret is stored (as ``pk = APIKEY#<keyId>``,
+``sk = META`` in the records table); the plaintext is printed exactly once
+by ``create``.
 
 Requires AWS credentials with GetItem/PutItem/UpdateItem/Scan on the records
 table (plus kms:Decrypt/GenerateDataKey on its CMK) — i.e. an admin identity,
@@ -20,17 +21,30 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
-import secrets
 import sys
-import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError
 
-API_KEY_PK_PREFIX = "APIKEY#"
-KEY_PLAINTEXT_PREFIX = "lxpk_"
+# Reuse the authorizer's crypto helpers so mint + verify stay in lockstep.
+_AUTH_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "backend"
+    / "lambda"
+    / "public_api_authorizer"
+)
+sys.path.insert(0, str(_AUTH_DIR))
+from api_key_crypto import (  # noqa: E402
+    API_KEY_PK_PREFIX,
+    ddb_key,
+    hash_secret,
+    mint_key_id,
+    mint_plaintext,
+    parse_api_key,
+)
+
 DEFAULT_TABLE = "lxsoftware-admin-records"
 DEFAULT_REGION = "ap-southeast-1"
 
@@ -55,16 +69,19 @@ def _validate_expires_at(raw: str | None) -> str | None:
 
 def cmd_create(args: argparse.Namespace) -> None:
     expires_at = _validate_expires_at(args.expires_at)
-    plaintext = KEY_PLAINTEXT_PREFIX + secrets.token_urlsafe(36)
-    digest = hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
-    key_id = uuid.uuid4().hex[:12]
+    key_id = mint_key_id()
+    plaintext = mint_plaintext(key_id)
+    parsed = parse_api_key(plaintext)
+    if parsed is None:
+        sys.exit("error: minted key failed to parse (internal bug)")
+    _, secret = parsed
     item = {
-        "pk": f"{API_KEY_PK_PREFIX}{digest}",
-        "sk": "META",
+        **ddb_key(key_id),
         "keyId": key_id,
         "label": args.label,
         "scope": "read",
         "revoked": False,
+        "secretHash": hash_secret(secret),
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
     if expires_at:
@@ -77,7 +94,7 @@ def cmd_create(args: argparse.Namespace) -> None:
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code")
         if code == "ConditionalCheckFailedException":
-            sys.exit("error: hash collision (retry)")
+            sys.exit("error: keyId collision (retry)")
         raise
     print(f"keyId:  {key_id}")
     print(f"label:  {args.label}")
@@ -121,17 +138,33 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def cmd_revoke(args: argparse.Namespace) -> None:
-    matches = [i for i in _scan_keys(args) if i.get("keyId") == args.key_id]
-    if not matches:
-        sys.exit(f"error: no API key with keyId {args.key_id!r}")
+    key = ddb_key(args.key_id)
     table = _table(args)
-    for it in matches:
+    try:
+        res = table.get_item(Key=key)
+    except ClientError:
+        raise
+    item = res.get("Item")
+    if not item:
+        # Fall back to a scan in case an older SHA-256-keyed record exists
+        # from an earlier revision of this script.
+        matches = [i for i in _scan_keys(args) if i.get("keyId") == args.key_id]
+        if not matches:
+            sys.exit(f"error: no API key with keyId {args.key_id!r}")
+        for it in matches:
+            table.update_item(
+                Key={"pk": it["pk"], "sk": it["sk"]},
+                UpdateExpression="SET revoked = :t",
+                ExpressionAttributeValues={":t": True},
+            )
+            print(f"revoked keyId {args.key_id} (label={it.get('label')!r})")
+    else:
         table.update_item(
-            Key={"pk": it["pk"], "sk": it["sk"]},
+            Key=key,
             UpdateExpression="SET revoked = :t",
             ExpressionAttributeValues={":t": True},
         )
-        print(f"revoked keyId {args.key_id} (label={it.get('label')!r})")
+        print(f"revoked keyId {args.key_id} (label={item.get('label')!r})")
     print("note: API Gateway caches authorizer verdicts for up to 5 minutes")
 
 

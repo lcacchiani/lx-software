@@ -1,6 +1,5 @@
 """Unit tests for the public API key authorizer (boto3 stubbed before import)."""
 
-import hashlib
 import sys
 import types
 import unittest
@@ -27,11 +26,20 @@ def _install_stubs() -> None:
 
 _install_stubs()
 
+from api_key_crypto import (  # noqa: E402
+    hash_secret,
+    mint_key_id,
+    mint_plaintext,
+    parse_api_key,
+    verify_secret,
+)
 import handler  # noqa: E402
 from handler import _is_expired, lambda_handler  # noqa: E402
 
-_KEY = "lxpk_test-key-value"
-_DIGEST = hashlib.sha256(_KEY.encode("utf-8")).hexdigest()
+_KEY_ID = "a1b2c3d4e5f6"
+_SECRET = "super-secret-token-value-xx"
+_KEY = f"lxpk_{_KEY_ID}_{_SECRET}"
+_SECRET_HASH = hash_secret(_SECRET)
 
 
 def _event(key: str | None = _KEY) -> dict:
@@ -41,15 +49,38 @@ def _event(key: str | None = _KEY) -> dict:
 
 def _valid_item(**overrides) -> dict:
     item = {
-        "pk": f"APIKEY#{_DIGEST}",
+        "pk": f"APIKEY#{_KEY_ID}",
         "sk": "META",
-        "keyId": "k123",
+        "keyId": _KEY_ID,
         "label": "test key",
         "scope": "read",
         "revoked": False,
+        "secretHash": _SECRET_HASH,
     }
     item.update(overrides)
     return item
+
+
+class TestApiKeyCrypto(unittest.TestCase):
+    def test_mint_roundtrip(self) -> None:
+        key_id = mint_key_id()
+        plaintext = mint_plaintext(key_id)
+        parsed = parse_api_key(plaintext)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        got_id, secret = parsed
+        self.assertEqual(got_id, key_id)
+        stored = hash_secret(secret)
+        self.assertTrue(verify_secret(secret, stored))
+        self.assertFalse(verify_secret("wrong-secret-value!!", stored))
+
+    def test_parse_rejects_malformed(self) -> None:
+        self.assertIsNone(parse_api_key(""))
+        self.assertIsNone(parse_api_key("not-a-key"))
+        self.assertIsNone(parse_api_key("lxpk_short_secret"))
+        self.assertIsNone(parse_api_key("lxpk_NOTHEXLENGTH_secretsecret"))
+        self.assertIsNone(parse_api_key(f"lxpk_{_KEY_ID}_short"))
+        self.assertIsNone(parse_api_key("x" * 300))
 
 
 class TestAuthorizer(unittest.TestCase):
@@ -70,10 +101,10 @@ class TestAuthorizer(unittest.TestCase):
         self.assertFalse(lambda_handler(_event(key=None), None)["isAuthorized"])
         self.table.get_item.assert_not_called()
 
-    def test_blank_or_oversized_key_denied(self) -> None:
+    def test_malformed_key_denied(self) -> None:
         self.assertFalse(lambda_handler(_event(key="   "), None)["isAuthorized"])
         self.assertFalse(
-            lambda_handler(_event(key="x" * 300), None)["isAuthorized"]
+            lambda_handler(_event(key="lxpk_notvalid"), None)["isAuthorized"]
         )
         self.table.get_item.assert_not_called()
 
@@ -85,11 +116,16 @@ class TestAuthorizer(unittest.TestCase):
         self.table.get_item.return_value = {"Item": _valid_item()}
         out = lambda_handler(_event(), None)
         self.assertTrue(out["isAuthorized"])
-        self.assertEqual(out["context"]["keyId"], "k123")
+        self.assertEqual(out["context"]["keyId"], _KEY_ID)
         self.assertEqual(out["context"]["scope"], "read")
         self.table.get_item.assert_called_once_with(
-            Key={"pk": f"APIKEY#{_DIGEST}", "sk": "META"}
+            Key={"pk": f"APIKEY#{_KEY_ID}", "sk": "META"}
         )
+
+    def test_wrong_secret_denied(self) -> None:
+        self.table.get_item.return_value = {"Item": _valid_item()}
+        bad = f"lxpk_{_KEY_ID}_totally-different-secret!!"
+        self.assertFalse(lambda_handler(_event(key=bad), None)["isAuthorized"])
 
     def test_revoked_key_denied(self) -> None:
         self.table.get_item.return_value = {"Item": _valid_item(revoked=True)}

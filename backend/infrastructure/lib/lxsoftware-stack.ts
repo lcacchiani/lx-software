@@ -376,8 +376,8 @@ export class LxsoftwareStack extends cdk.Stack {
 
     /**
      * Public read-only API key authorizer. Validates the `x-api-key` header
-     * against SHA-256 key hashes stored in the records table
-     * (`pk = APIKEY#<sha256>`, `sk = META`; minted via
+     * (`lxpk_<keyId>_<secret>`) against a scrypt digest stored in the
+     * records table (`pk = APIKEY#<keyId>`, `sk = META`; minted via
      * scripts/manage-public-api-keys.py). Guards only the /public/* GET
      * routes below — every write route stays on the Cognito JWT authorizer,
      * so a leaked key can never mutate state even if the handler-level
