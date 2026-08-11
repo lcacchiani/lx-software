@@ -92,6 +92,14 @@ def cmd_create(args: argparse.Namespace) -> None:
     print(f"keyId:  {key_id}")
     print(f"label:  {args.label}")
     print(f"expires: {expires_at or 'never'}")
+    if args.plaintext_out:
+        # CI mode (public repo — logs are world-readable): never print the
+        # key; write it to a file for the caller to encrypt/deliver.
+        out_path = Path(args.plaintext_out)
+        out_path.touch(mode=0o600, exist_ok=False)
+        out_path.write_text(plaintext + "\n", encoding="utf-8")
+        print(f"API key written to {out_path} (shown nowhere else)")
+        return
     print()
     print("API key (shown once, store it now):")
     print(f"  {plaintext}")
@@ -158,6 +166,12 @@ def main() -> None:
     p_create.add_argument("--label", required=True, help="human-readable key name")
     p_create.add_argument(
         "--expires-at", default=None, help="ISO date/datetime, e.g. 2027-01-01"
+    )
+    p_create.add_argument(
+        "--plaintext-out",
+        default=None,
+        help="write the key to this file (mode 0600) instead of printing it; "
+        "used by CI where logs must not contain the key",
     )
     p_create.set_defaults(func=cmd_create)
 

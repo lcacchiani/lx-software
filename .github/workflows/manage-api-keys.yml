@@ -1,0 +1,141 @@
+name: Manage Public API Keys
+
+# Mint / list / revoke the public read-only API keys served by the /public/*
+# routes (see docs/deployment/admin-website.md, "Public read-only API keys").
+#
+# SECURITY: this repository is PUBLIC, so workflow logs are world-readable.
+# A newly minted key is therefore never printed; it is written to a file and
+# symmetrically encrypted (gpg AES256) with the PUBLIC_API_KEY_GPG_PASSPHRASE
+# secret before the armored ciphertext is shown. Decrypt locally with:
+#
+#   pbpaste > key.asc   # or paste the block into key.asc
+#   gpg --decrypt key.asc
+#
+# entering the same passphrase. Configure the secret once under
+# Settings > Environments > production > Secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        required: true
+        type: choice
+        options: [create, list, revoke]
+      label:
+        description: "Key label (create only)"
+        required: false
+        type: string
+      expires_at:
+        description: "Expiry, ISO date e.g. 2027-01-01 (create only, optional)"
+        required: false
+        type: string
+      key_id:
+        description: "keyId to revoke (revoke only)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: manage-api-keys
+  cancel-in-progress: false
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Validate inputs
+        env:
+          ACTION: ${{ inputs.action }}
+          LABEL: ${{ inputs.label }}
+          KEY_ID: ${{ inputs.key_id }}
+          HAS_PASSPHRASE: ${{ secrets.PUBLIC_API_KEY_GPG_PASSPHRASE != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$ACTION" = "create" ]; then
+            if [ -z "$LABEL" ]; then
+              echo "::error::'label' is required for action=create"
+              exit 1
+            fi
+            if [ "$HAS_PASSPHRASE" != "true" ]; then
+              echo "::error::Secret PUBLIC_API_KEY_GPG_PASSPHRASE is not set. Add it under Settings > Environments > production > Secrets; it is needed to encrypt the minted key in this public repo's logs."
+              exit 1
+            fi
+          fi
+          if [ "$ACTION" = "revoke" ] && [ -z "$KEY_ID" ]; then
+            echo "::error::'key_id' is required for action=revoke"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      - name: Install boto3
+        run: pip install --quiet boto3
+
+      - name: Create key
+        if: ${{ inputs.action == 'create' }}
+        env:
+          LABEL: ${{ inputs.label }}
+          EXPIRES_AT: ${{ inputs.expires_at }}
+          GPG_PASSPHRASE: ${{ secrets.PUBLIC_API_KEY_GPG_PASSPHRASE }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$(mktemp -u)"
+          ARGS=(create --label "$LABEL" --plaintext-out "$KEY_FILE" --region "$AWS_REGION")
+          if [ -n "$EXPIRES_AT" ]; then
+            ARGS+=(--expires-at "$EXPIRES_AT")
+          fi
+          python3 scripts/manage-public-api-keys.py "${ARGS[@]}"
+
+          # Defense in depth: even though the key is never echoed, register it
+          # with the log masker in case a later step accidentally prints it.
+          echo "::add-mask::$(tr -d '\n' < "$KEY_FILE")"
+
+          gpg --batch --yes --symmetric --cipher-algo AES256 --armor \
+            --passphrase "$GPG_PASSPHRASE" \
+            --output key.asc "$KEY_FILE"
+          rm -f "$KEY_FILE"
+
+          {
+            echo "## Encrypted API key"
+            echo ""
+            echo "Copy the block below into \`key.asc\`, then run"
+            echo "\`gpg --decrypt key.asc\` and enter the"
+            echo "\`PUBLIC_API_KEY_GPG_PASSPHRASE\` value."
+            echo ""
+            echo '```'
+            cat key.asc
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f key.asc
+          echo "Encrypted key emitted to the job summary."
+
+      - name: List keys
+        if: ${{ inputs.action == 'list' }}
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          python3 scripts/manage-public-api-keys.py list --region "$AWS_REGION" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Revoke key
+        if: ${{ inputs.action == 'revoke' }}
+        env:
+          KEY_ID: ${{ inputs.key_id }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          python3 scripts/manage-public-api-keys.py revoke --key-id "$KEY_ID" --region "$AWS_REGION" | tee -a "$GITHUB_STEP_SUMMARY"
