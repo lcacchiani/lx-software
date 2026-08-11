@@ -1,18 +1,18 @@
 """HTTP API Lambda authorizer for the public read-only API key routes.
 
-Validates the ``x-api-key`` header (``lxpk_<keyId>_<secret>``) against a
-scrypt digest stored in the records DynamoDB table
-(``pk = APIKEY#<keyId>``, ``sk = META``). Only the digest is ever persisted
-or logged; the plaintext key is shown once at mint time (see
-``scripts/manage-public-api-keys.py``).
+Validates the ``x-api-key`` header against hashed key records stored in the
+records DynamoDB table (``pk = APIKEY#<sha256-hex>``, ``sk = META``). Only the
+SHA-256 digest of a key is ever persisted or logged; the plaintext key is
+shown once at mint time (see ``scripts/manage-public-api-keys.py``).
 
 Returns the API Gateway v2 "simple" authorizer response. The authorizer
 result is cached by API Gateway keyed on the ``x-api-key`` header, so the
-DynamoDB lookup / scrypt verify does not run on every request.
+DynamoDB lookup does not run on every request.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -22,9 +22,9 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from api_key_crypto import ddb_key, parse_api_key, verify_secret
-
+API_KEY_PK_PREFIX = "APIKEY#"
 API_KEY_SCOPE_READ = "read"
+MAX_API_KEY_LEN = 256
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -51,7 +51,9 @@ def _extract_api_key(event: dict[str, Any]) -> str | None:
     if not isinstance(raw, str):
         return None
     key = raw.strip()
-    return key or None
+    if not key or len(key) > MAX_API_KEY_LEN:
+        return None
+    return key
 
 
 def _is_expired(expires_at: Any, now: datetime) -> bool:
@@ -72,33 +74,25 @@ def _is_expired(expires_at: Any, now: datetime) -> bool:
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    raw_key = _extract_api_key(event)
+    key = _extract_api_key(event)
     request_id = (event.get("requestContext") or {}).get("requestId")
-    if raw_key is None:
+    if key is None:
         _log("info", tag="public_api_key_denied", reason="missing_key", request_id=request_id)
         return _deny()
 
-    parsed = parse_api_key(raw_key)
-    if parsed is None:
-        _log(
-            "info",
-            tag="public_api_key_denied",
-            reason="malformed_key",
-            request_id=request_id,
-        )
-        return _deny()
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    digest_prefix = digest[:8]
 
-    key_id, secret = parsed
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
     try:
-        res = table.get_item(Key=ddb_key(key_id))
+        res = table.get_item(Key={"pk": f"{API_KEY_PK_PREFIX}{digest}", "sk": "META"})
     except ClientError as exc:
         _log(
             "warning",
             tag="public_api_key_denied",
             reason="ddb_error",
             error_code=exc.response.get("Error", {}).get("Code"),
-            key_id=key_id,
+            digest_prefix=digest_prefix,
             request_id=request_id,
         )
         return _deny()
@@ -109,22 +103,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "info",
             tag="public_api_key_denied",
             reason="unknown_key",
-            key_id=key_id,
+            digest_prefix=digest_prefix,
             request_id=request_id,
         )
         return _deny()
 
-    if item.get("keyId") != key_id:
-        # Defense in depth: pk and attribute must agree.
-        _log(
-            "info",
-            tag="public_api_key_denied",
-            reason="key_id_mismatch",
-            key_id=key_id,
-            request_id=request_id,
-        )
-        return _deny()
-
+    key_id = item.get("keyId")
     if item.get("revoked"):
         _log(
             "info",
@@ -150,16 +134,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "info",
             tag="public_api_key_denied",
             reason="bad_scope",
-            key_id=key_id,
-            request_id=request_id,
-        )
-        return _deny()
-
-    if not verify_secret(secret, item.get("secretHash")):
-        _log(
-            "info",
-            tag="public_api_key_denied",
-            reason="bad_secret",
             key_id=key_id,
             request_id=request_id,
         )

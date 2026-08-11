@@ -130,11 +130,11 @@ bank statements / are owner-scoped). Every write route stays on the Cognito
 JWT authorizer, and the Lambda handler enforces the same GET allowlist as
 defense in depth (`PUBLIC_READ_PATHS` in `backend/lambda/admin/dispatch.py`).
 
-Keys are validated by the `PublicApiKeyAuthorizerFn` Lambda authorizer. The
-plaintext form is `lxpk_<keyId>_<secret>`; the authorizer looks up
-`pk = APIKEY#<keyId>` and verifies the secret with **scrypt** (only the digest
-is ever stored or logged). API Gateway caches authorizer verdicts for up to
-**5 minutes**, so revocation takes up to that long to propagate.
+Keys are validated by the `PublicApiKeyAuthorizerFn` Lambda authorizer, which
+looks up the SHA-256 hash of the presented key in the records table
+(`pk = APIKEY#<sha256>`, `sk = META`). Only the hash is ever stored or logged.
+API Gateway caches authorizer verdicts for up to **5 minutes**, so revocation
+takes up to that long to propagate.
 
 Manage keys with admin AWS credentials (needs table read/write + CMK access):
 
