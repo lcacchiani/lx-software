@@ -11,10 +11,12 @@ import {
   ledgerMonthlyAmount,
   allocationRecordsToApiPayload,
   financeAccountSignedValueForTotal,
+  housePropertyEquityByCurrency,
   normalizeAllocationRecords,
   normalizeExpenseIncomeAllocationPercents,
   normalizeInvestmentRecords,
   normalizeLedgerRecords,
+  normalizeLiabilityRecords,
   normalizePensionRecords,
   normalizeSavingsRecords,
   monthlyLedgerNetByCurrency,
@@ -1493,5 +1495,125 @@ describe("financeAccountSignedValueForTotal", () => {
     expect(financeAccountSignedValueForTotal("Bank Account", 1000)).toBe(1000);
     expect(financeAccountSignedValueForTotal("Debit Card", 500)).toBe(500);
     expect(financeAccountSignedValueForTotal("Credit Card", 200)).toBe(-200);
+  });
+});
+
+describe("normalizeLiabilityRecords", () => {
+  const valid = {
+    id: "l1",
+    description: "HSBC UK mortgage",
+    liabilityType: "Mortgage",
+    outstandingBalance: 150000,
+    currency: "GBP",
+  };
+
+  it("keeps a valid row", () => {
+    const out = normalizeLiabilityRecords([valid]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual({
+      id: "l1",
+      description: "HSBC UK mortgage",
+      liabilityType: "Mortgage",
+      outstandingBalance: 150000,
+      currency: "GBP",
+    });
+  });
+
+  it("keeps optional rate, house, and lastUpdated", () => {
+    const out = normalizeLiabilityRecords([
+      {
+        ...valid,
+        interestRatePercent: 4.25,
+        relatedHouse: "hillmarton",
+        lastUpdated: "2026-01-05",
+      },
+    ]);
+    expect(out[0]?.interestRatePercent).toBe(4.25);
+    expect(out[0]?.relatedHouse).toBe("hillmarton");
+    expect(out[0]?.lastUpdated).toBe("2026-01-05");
+  });
+
+  it("drops rows with bad type, missing description, or negative balance", () => {
+    expect(normalizeLiabilityRecords([{ ...valid, liabilityType: "IOU" }])).toEqual([]);
+    expect(normalizeLiabilityRecords([{ ...valid, description: " " }])).toEqual([]);
+    expect(normalizeLiabilityRecords([{ ...valid, outstandingBalance: -5 }])).toEqual([]);
+  });
+
+  it("drops invalid optional fields but keeps the row", () => {
+    const out = normalizeLiabilityRecords([
+      { ...valid, interestRatePercent: 150, relatedHouse: "atlantis", lastUpdated: "bad" },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.interestRatePercent).toBeUndefined();
+    expect(out[0]?.relatedHouse).toBeUndefined();
+    expect(out[0]?.lastUpdated).toBeUndefined();
+  });
+
+  it("coerces unsupported currency to the global default", () => {
+    const out = normalizeLiabilityRecords([{ ...valid, currency: "JPY" }]);
+    expect(out[0]?.currency).toBe("HKD");
+  });
+
+  it("returns empty for non-array input", () => {
+    expect(normalizeLiabilityRecords(undefined)).toEqual([]);
+    expect(normalizeLiabilityRecords({})).toEqual([]);
+  });
+});
+
+describe("housePropertyEquityByCurrency", () => {
+  const houseInvestment = {
+    id: "i1",
+    category: "Real Estate",
+    currency: "GBP",
+    assetType: "Fixed",
+    provider: "Self",
+    principalAmount: 400000,
+    currentValue: 550000,
+    relatedHouse: "hillmarton",
+  } as const;
+  const mortgage = {
+    id: "l1",
+    description: "HSBC UK mortgage",
+    liabilityType: "Mortgage",
+    outstandingBalance: 150000,
+    currency: "GBP",
+    relatedHouse: "hillmarton",
+  } as const;
+
+  it("subtracts linked liabilities from linked property value", () => {
+    const out = housePropertyEquityByCurrency([houseInvestment], [mortgage], "hillmarton");
+    expect(out.valueByCurrency).toEqual({ GBP: 550000 });
+    expect(out.liabilitiesByCurrency).toEqual({ GBP: 150000 });
+    expect(out.equityByCurrency).toEqual({ GBP: 400000 });
+  });
+
+  it("falls back to principal when currentValue is missing", () => {
+    const inv = { ...houseInvestment, currentValue: undefined };
+    const out = housePropertyEquityByCurrency([inv], [], "hillmarton");
+    expect(out.equityByCurrency).toEqual({ GBP: 400000 });
+  });
+
+  it("ignores rows linked to other houses or without a house", () => {
+    const otherLiability = { ...mortgage, id: "l2", relatedHouse: "morrison" as const };
+    const unlinked = { ...mortgage, id: "l3", relatedHouse: undefined };
+    const out = housePropertyEquityByCurrency(
+      [houseInvestment],
+      [mortgage, otherLiability, unlinked],
+      "hillmarton",
+    );
+    expect(out.liabilitiesByCurrency).toEqual({ GBP: 150000 });
+  });
+
+  it("keeps mixed currencies as separate buckets", () => {
+    const hkdLoan = { ...mortgage, id: "l4", currency: "HKD", outstandingBalance: 100000 };
+    const out = housePropertyEquityByCurrency([houseInvestment], [mortgage, hkdLoan], "hillmarton");
+    expect(out.equityByCurrency).toEqual({ GBP: 400000, HKD: -100000 });
+  });
+
+  it("returns empty records when nothing is linked", () => {
+    const out = housePropertyEquityByCurrency([], [], "morrison");
+    expect(out.valueByCurrency).toEqual({});
+    expect(out.liabilitiesByCurrency).toEqual({});
+    expect(out.equityByCurrency).toEqual({});
   });
 });

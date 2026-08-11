@@ -5,6 +5,7 @@ export {
   EXPENSE_CATEGORIES,
   FINANCE_ACCOUNT_TYPES,
   FINANCE_HOUSE_KEYS,
+  FINANCE_LIABILITY_TYPES,
   GLOBAL_DEFAULT_CURRENCY,
   INCOME_CATEGORIES,
   INVESTMENT_CATEGORIES,
@@ -25,6 +26,7 @@ export {
 import {
   ASSET_TYPES,
   FINANCE_ACCOUNT_TYPES,
+  FINANCE_LIABILITY_TYPES,
   INVESTMENT_CATEGORIES,
   type CurrencyCode,
 } from "./contracts/generated";
@@ -57,3 +59,4 @@ export type HouseFinanceData = {
 export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
 export type AssetType = (typeof ASSET_TYPES)[number];
 export type FinanceAccountType = (typeof FINANCE_ACCOUNT_TYPES)[number];
+export type FinanceLiabilityType = (typeof FINANCE_LIABILITY_TYPES)[number];

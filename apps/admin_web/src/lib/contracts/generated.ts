@@ -12,6 +12,7 @@ export const EXPENSE_CATEGORIES = ["Utility", "Saving", "Investment", "Rent", "M
 export const INVESTMENT_CATEGORIES = ["Real Estate", "Fixed Term Deposit", "ETF", "Crypto"] as const;
 export const ASSET_TYPES = ["Fixed", "Liquid"] as const;
 export const FINANCE_ACCOUNT_TYPES = ["Bank Account", "Credit Card", "Debit Card"] as const;
+export const FINANCE_LIABILITY_TYPES = ["Mortgage", "Loan", "Credit Line", "Other"] as const;
 
 export const MAX_FINANCE_LINES = 5000;
 export const MAX_FINANCE_DESCRIPTION = 8000;

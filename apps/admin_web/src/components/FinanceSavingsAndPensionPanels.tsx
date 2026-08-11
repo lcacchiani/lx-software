@@ -26,6 +26,7 @@ import {
   CurrencySelect,
   FrankfurterRatesFooterNote,
   MoneyAmount,
+  StaleValuationBadge,
   TableIconButton,
   TableSortHeaderButton,
 } from "./ui";
@@ -771,6 +772,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                 const lastUpdatedCellPension = (
                   <td className="small text-nowrap">
                     {pensionLastUpdatedDisplay(r.lastUpdated)}
+                    <StaleValuationBadge lastUpdated={r.lastUpdated} />
                   </td>
                 );
                 const cellsValueFirst = (

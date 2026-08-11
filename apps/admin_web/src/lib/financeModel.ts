@@ -3,12 +3,14 @@ import type {
   AssetType,
   CurrencyCode,
   FinanceAccountType,
+  FinanceLiabilityType,
   HouseKey,
   InvestmentCategory,
 } from "./financeTypes";
 import {
   EXPENSE_CATEGORIES,
   FINANCE_ACCOUNT_TYPES,
+  FINANCE_LIABILITY_TYPES,
   INCOME_CATEGORIES,
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
@@ -22,6 +24,7 @@ export {
   EXPENSE_CATEGORIES,
   FINANCE_ACCOUNT_TYPES,
   FINANCE_HOUSE_KEYS,
+  FINANCE_LIABILITY_TYPES,
   INCOME_CATEGORIES,
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
@@ -30,6 +33,7 @@ export {
   MAX_PENSION_DESCRIPTION_LEN,
   type AssetType,
   type FinanceAccountType,
+  type FinanceLiabilityType,
   type HouseKey,
   type InvestmentCategory,
 } from "./financeTypes";
@@ -178,6 +182,56 @@ export type FinanceAccountRecord = {
   /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
   readonly lastUpdated?: string;
 };
+
+/** One row in the Liabilities sheet (DynamoDB finance sheet `liabilities`). */
+export type FinanceLiabilityRecord = {
+  readonly id: string;
+  readonly description: string;
+  readonly liabilityType: FinanceLiabilityType;
+  /** Remaining principal owed in `currency` (always ≥ 0). */
+  readonly outstandingBalance: number;
+  readonly currency: string;
+  /** Optional annual interest rate, 0–100. */
+  readonly interestRatePercent?: number;
+  /** Optional link to a house (e.g. its mortgage) for per-property equity. */
+  readonly relatedHouse?: HouseKey;
+  /** UTC calendar date `YYYY-MM-DD` when row content last changed (set by admin API). */
+  readonly lastUpdated?: string;
+};
+
+/**
+ * Per-house property equity: Real Estate investments linked to the house
+ * (current value, falling back to principal) minus liabilities linked to the
+ * house, grouped by currency. No FX conversion — houses are normally
+ * single-currency, and mixed currencies stay visible as separate rows.
+ */
+export function housePropertyEquityByCurrency(
+  investments: readonly FinanceInvestmentRecord[],
+  liabilities: readonly FinanceLiabilityRecord[],
+  houseKey: HouseKey,
+): {
+  readonly valueByCurrency: Readonly<Record<string, number>>;
+  readonly liabilitiesByCurrency: Readonly<Record<string, number>>;
+  readonly equityByCurrency: Readonly<Record<string, number>>;
+} {
+  const valueByCurrency: Record<string, number> = {};
+  const liabilitiesByCurrency: Record<string, number> = {};
+  const equityByCurrency: Record<string, number> = {};
+  for (const r of investments) {
+    if (r.category !== "Real Estate" || r.relatedHouse !== houseKey) continue;
+    const v = r.currentValue ?? r.principalAmount;
+    valueByCurrency[r.currency] = (valueByCurrency[r.currency] ?? 0) + v;
+    equityByCurrency[r.currency] = (equityByCurrency[r.currency] ?? 0) + v;
+  }
+  for (const l of liabilities) {
+    if (l.relatedHouse !== houseKey) continue;
+    liabilitiesByCurrency[l.currency] =
+      (liabilitiesByCurrency[l.currency] ?? 0) + l.outstandingBalance;
+    equityByCurrency[l.currency] =
+      (equityByCurrency[l.currency] ?? 0) - l.outstandingBalance;
+  }
+  return { valueByCurrency, liabilitiesByCurrency, equityByCurrency };
+}
 
 /**
  * Signed balance for the Accounts tab FX total: bank and debit add; credit card subtracts
@@ -761,6 +815,7 @@ export type FinancePersistedState = {
   readonly savingsRecords: readonly FinanceSavingsRecord[];
   readonly pensionRecords: readonly FinancePensionRecord[];
   readonly accountRecords: readonly FinanceAccountRecord[];
+  readonly liabilityRecords: readonly FinanceLiabilityRecord[];
   readonly allocationRecords: readonly FinanceAllocationRecord[];
 };
 
@@ -787,6 +842,7 @@ export const DEFAULT_FINANCE_STATE: FinancePersistedState = {
   savingsRecords: [],
   pensionRecords: [],
   accountRecords: [],
+  liabilityRecords: [],
   allocationRecords: [],
 };
 
@@ -796,6 +852,7 @@ function categorySet(categories: readonly string[]): Set<string> {
 
 const INVESTMENT_CATEGORY_SET = categorySet(INVESTMENT_CATEGORIES);
 const FINANCE_ACCOUNT_TYPE_SET = categorySet(FINANCE_ACCOUNT_TYPES);
+const FINANCE_LIABILITY_TYPE_SET = categorySet(FINANCE_LIABILITY_TYPES);
 
 function isAssetType(v: unknown): v is AssetType {
   return v === "Fixed" || v === "Liquid";
@@ -1218,6 +1275,63 @@ export function normalizeAccountRecords(input: unknown): FinanceAccountRecord[] 
       currency,
     };
     out.push(lastUpdated === undefined ? rec : { ...rec, lastUpdated });
+  }
+  return out;
+}
+
+/** Coerces API payloads into liability rows; drops invalid entries. */
+export function normalizeLiabilityRecords(input: unknown): FinanceLiabilityRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const out: FinanceLiabilityRecord[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    const ltRaw = typeof row.liabilityType === "string" ? row.liabilityType.trim() : "";
+    if (!id || !description || !FINANCE_LIABILITY_TYPE_SET.has(ltRaw)) {
+      continue;
+    }
+    const liabilityType = ltRaw as FinanceLiabilityType;
+    const amtRaw = row.outstandingBalance;
+    const outstandingBalance =
+      typeof amtRaw === "number"
+        ? amtRaw
+        : typeof amtRaw === "string"
+          ? Number.parseFloat(amtRaw)
+          : Number.NaN;
+    if (
+      !Number.isFinite(outstandingBalance) ||
+      outstandingBalance < 0 ||
+      outstandingBalance > 1e15
+    ) {
+      continue;
+    }
+    const curRaw = typeof row.currency === "string" ? row.currency : GLOBAL_DEFAULT_CURRENCY;
+    const currency = coerceSupportedCurrency(curRaw, GLOBAL_DEFAULT_CURRENCY);
+    let interestRatePercent: number | undefined;
+    const rateRaw = row.interestRatePercent;
+    if (typeof rateRaw === "number" && Number.isFinite(rateRaw)) {
+      if (rateRaw >= 0 && rateRaw <= 100) {
+        interestRatePercent = rateRaw;
+      }
+    }
+    const rhRaw = row.relatedHouse;
+    const relatedHouse: HouseKey | undefined =
+      rhRaw === "hillmarton" || rhRaw === "morrison" ? rhRaw : undefined;
+    const lastUpdated = parseOptionalFinanceCalendarDateUtc(row.lastUpdated);
+    out.push({
+      id,
+      description,
+      liabilityType,
+      outstandingBalance,
+      currency,
+      ...(interestRatePercent !== undefined ? { interestRatePercent } : {}),
+      ...(relatedHouse ? { relatedHouse } : {}),
+      ...(lastUpdated !== undefined ? { lastUpdated } : {}),
+    });
   }
   return out;
 }

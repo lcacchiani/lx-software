@@ -36,17 +36,20 @@ from finance_store import (
     _load_finance_house,
     _load_finance_sheet,
     _load_investment_records,
+    _load_liabilities_records,
     _load_pension_records,
     _load_savings_records,
     _merge_accounts_last_updated,
     _merge_allocation_stored_last_updated,
     _merge_investment_last_updated,
+    _merge_liabilities_last_updated,
     _merge_pension_last_updated,
     _normalize_accounts_sheet_payload,
     _normalize_allocations_sheet_payload,
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
+    _normalize_liabilities_sheet_payload,
     _normalize_pension_sheet_payload,
     _normalize_savings_sheet_payload,
     _path_finance_house,
@@ -131,6 +134,7 @@ def _finance_get_response() -> dict[str, Any]:
             "savingsRecords": _load_savings_records(table),
             "pensionRecords": _load_pension_records(table),
             "accountRecords": _load_accounts_records(table),
+            "liabilityRecords": _load_liabilities_records(table),
             "allocationRecords": allocation_records,
         },
     )
@@ -611,6 +615,21 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         table.put_item(Item=ddb_item)
         _audit(user_sub, "FINANCE_PUT", "accounts", event)
         return _json_response(200, {"accountRecords": merged})
+
+    if method == "PUT" and path == "/finance/liabilities":
+        body = _parse_json_body(event)
+        try:
+            normalized = _normalize_liabilities_sheet_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        existing = _load_liabilities_records(table)
+        merged = _merge_liabilities_last_updated(normalized, existing)
+        doc = {"records": merged}
+        ddb_item = {**_finance_sheet_ddb_key("liabilities"), **_to_ddb_nested(doc)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "liabilities", event)
+        return _json_response(200, {"liabilityRecords": merged})
 
     if method == "PUT" and path == "/finance/allocations":
         body = _parse_json_body(event)

@@ -24,6 +24,7 @@ EXPENSE_RECORD_CATEGORIES = frozenset(FINANCE_CONTRACT["expenseCategories"])
 INVESTMENT_RECORD_CATEGORIES = frozenset(FINANCE_CONTRACT["investmentCategories"])
 ASSET_TYPES = frozenset(FINANCE_CONTRACT["assetTypes"])
 FINANCE_ACCOUNT_TYPES = frozenset(FINANCE_CONTRACT["accountTypes"])
+FINANCE_LIABILITY_TYPES = frozenset(FINANCE_CONTRACT["liabilityTypes"])
 LEDGER_RECORD_AMOUNT_PERIODS = frozenset(FINANCE_CONTRACT["ledgerAmountPeriods"])
 
 _LIMITS = FINANCE_CONTRACT["limits"]

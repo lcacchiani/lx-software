@@ -8,12 +8,13 @@ import { formatDateUtc } from "../lib/formatDisplay";
 import { parseAmount } from "../lib/formParse";
 import { convertAmountToBase } from "../lib/frankfurterRates";
 import {
-  FINANCE_ACCOUNT_TYPES,
-  financeAccountSignedValueForTotal,
+  FINANCE_LIABILITY_TYPES,
   newStatementLineId,
-  type FinanceAccountRecord,
-  type FinanceAccountType,
+  type FinanceLiabilityRecord,
+  type FinanceLiabilityType,
+  type HouseKey,
 } from "../lib/financeModel";
+import { houseDisplayLabel } from "../lib/houses";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
@@ -29,27 +30,19 @@ import {
   TableSortHeaderButton,
 } from "./ui";
 
-function accountLastUpdatedDisplay(lastUpdated: string | undefined): string {
+function liabilityLastUpdatedDisplay(lastUpdated: string | undefined): string {
   if (!lastUpdated) {
     return "—";
   }
   return formatDateUtc(`${lastUpdated}T00:00:00.000Z`);
 }
 
-function accountTypeUsesBillingCycleDay(t: FinanceAccountType): boolean {
-  return t !== "Bank Account";
-}
+type LiabilitiesSortKey = "desc" | "ltype" | "amt" | "rate" | "ccy" | "house" | "lastUpdated";
 
-function accountTypeIsCreditCard(t: FinanceAccountType): boolean {
-  return t === "Credit Card";
-}
-
-type AccountsSortKey = "desc" | "atype" | "day" | "amt" | "stmt" | "ccy" | "lastUpdated";
-
-function compareAccounts(
-  a: FinanceAccountRecord,
-  b: FinanceAccountRecord,
-  sortKey: AccountsSortKey,
+function compareLiabilities(
+  a: FinanceLiabilityRecord,
+  b: FinanceLiabilityRecord,
+  sortKey: LiabilitiesSortKey,
   sortDir: "asc" | "desc",
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
@@ -58,29 +51,28 @@ function compareAccounts(
     case "desc":
       cmp = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
       break;
-    case "atype":
-      cmp = a.accountType.localeCompare(b.accountType, undefined, { sensitivity: "base" });
+    case "ltype":
+      cmp = a.liabilityType.localeCompare(b.liabilityType, undefined, { sensitivity: "base" });
       break;
-    case "day": {
-      const da = a.billingCycleDay;
-      const db = b.billingCycleDay;
-      cmp = da === db ? 0 : da < db ? -1 : 1;
-      break;
-    }
     case "amt": {
-      const ma = a.recordedValue;
-      const mb = b.recordedValue;
+      const ma = a.outstandingBalance;
+      const mb = b.outstandingBalance;
       cmp = ma === mb ? 0 : ma < mb ? -1 : 1;
       break;
     }
-    case "stmt": {
-      const sa = accountTypeIsCreditCard(a.accountType) ? (a.lastStatementAmount ?? 0) : 0;
-      const sb = accountTypeIsCreditCard(b.accountType) ? (b.lastStatementAmount ?? 0) : 0;
-      cmp = sa === sb ? 0 : sa < sb ? -1 : 1;
+    case "rate": {
+      const ra = a.interestRatePercent ?? -1;
+      const rb = b.interestRatePercent ?? -1;
+      cmp = ra === rb ? 0 : ra < rb ? -1 : 1;
       break;
     }
     case "ccy":
       cmp = a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+      break;
+    case "house":
+      cmp = (a.relatedHouse ?? "").localeCompare(b.relatedHouse ?? "", undefined, {
+        sensitivity: "base",
+      });
       break;
     case "lastUpdated": {
       const sa = a.lastUpdated ?? "";
@@ -103,20 +95,24 @@ function compareAccounts(
   return a.id.localeCompare(b.id);
 }
 
-export function FinanceAccountsPanel(props: {
-  readonly records: readonly FinanceAccountRecord[];
+export function FinanceLiabilitiesPanel(props: {
+  readonly records: readonly FinanceLiabilityRecord[];
   readonly onPatch: (
-    patch: (prev: readonly FinanceAccountRecord[]) => FinanceAccountRecord[],
+    patch: (prev: readonly FinanceLiabilityRecord[]) => FinanceLiabilityRecord[],
   ) => void;
+  readonly relatedHouseOptions: ReadonlyArray<{
+    readonly value: HouseKey;
+    readonly label: string;
+  }>;
 }) {
-  const { records, onPatch } = props;
-  const sheetId = "accounts";
+  const { records, onPatch, relatedHouseOptions } = props;
+  const sheetId = "liabilities";
   const formId = `${sheetId}-form`;
   const recordEditorSectionRef = useRef<HTMLDivElement | null>(null);
 
-  const [sortKey, setSortKey] = useState<AccountsSortKey | null>("atype");
+  const [sortKey, setSortKey] = useState<LiabilitiesSortKey | null>("ltype");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const onSort = useCallback((key: AccountsSortKey) => {
+  const onSort = useCallback((key: LiabilitiesSortKey) => {
     setSortKey((prevKey) => {
       if (prevKey !== key) {
         setSortDir("asc");
@@ -130,10 +126,10 @@ export function FinanceAccountsPanel(props: {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [descriptionInput, setDescriptionInput] = useState("");
-  const [accountTypeInput, setAccountTypeInput] = useState<FinanceAccountType>("Bank Account");
-  const [billingDayStr, setBillingDayStr] = useState("1");
-  const [valueStr, setValueStr] = useState("");
-  const [lastStatementStr, setLastStatementStr] = useState("");
+  const [liabilityTypeInput, setLiabilityTypeInput] = useState<FinanceLiabilityType>("Mortgage");
+  const [balanceStr, setBalanceStr] = useState("");
+  const [rateStr, setRateStr] = useState("");
+  const [relatedHouseInput, setRelatedHouseInput] = useState<HouseKey | "">("");
   const [formCurrency, setFormCurrency] = useState(GLOBAL_DEFAULT_CURRENCY);
   const [tableFilter, setTableFilter] = useState("");
   const [totalDisplayCurrency, setTotalDisplayCurrency] = useState<CurrencyCode>(
@@ -143,13 +139,13 @@ export function FinanceAccountsPanel(props: {
   const tableColumns = useMemo((): AdminDataTableColumn[] => {
     const manualSort = sortKey !== null;
     const thAria = (
-      key: AccountsSortKey,
+      key: LiabilitiesSortKey,
     ): "ascending" | "descending" | "none" | "other" | undefined => {
       if (!manualSort) return undefined;
       if (sortKey === key) return sortDir === "asc" ? "ascending" : "descending";
       return "none";
     };
-    const dirFor = (key: AccountsSortKey): "asc" | "desc" | null =>
+    const dirFor = (key: LiabilitiesSortKey): "asc" | "desc" | null =>
       sortKey === key ? sortDir : null;
 
     return [
@@ -167,23 +163,23 @@ export function FinanceAccountsPanel(props: {
         thAriaSort: thAria("desc"),
       },
       {
-        key: "atype",
+        key: "ltype",
         header: (
           <TableSortHeaderButton
-            label="Account Type"
-            isActive={sortKey === "atype"}
-            direction={dirFor("atype")}
-            onClick={() => onSort("atype")}
+            label="Liability Type"
+            isActive={sortKey === "ltype"}
+            direction={dirFor("ltype")}
+            onClick={() => onSort("ltype")}
           />
         ),
         className: "small",
-        thAriaSort: thAria("atype"),
+        thAriaSort: thAria("ltype"),
       },
       {
         key: "amt",
         header: (
           <TableSortHeaderButton
-            label="Current Balance"
+            label="Outstanding Balance"
             isActive={sortKey === "amt"}
             direction={dirFor("amt")}
             onClick={() => onSort("amt")}
@@ -192,20 +188,6 @@ export function FinanceAccountsPanel(props: {
         className: "small text-end",
         headerClassName: "text-end",
         thAriaSort: thAria("amt"),
-      },
-      {
-        key: "stmt",
-        header: (
-          <TableSortHeaderButton
-            label="Last Statement Amount"
-            isActive={sortKey === "stmt"}
-            direction={dirFor("stmt")}
-            onClick={() => onSort("stmt")}
-          />
-        ),
-        className: "small text-end",
-        headerClassName: "text-end",
-        thAriaSort: thAria("stmt"),
       },
       {
         key: "ccy",
@@ -221,18 +203,31 @@ export function FinanceAccountsPanel(props: {
         thAriaSort: thAria("ccy"),
       },
       {
-        key: "day",
+        key: "rate",
         header: (
           <TableSortHeaderButton
-            label="Billing Cycle Day"
-            isActive={sortKey === "day"}
-            direction={dirFor("day")}
-            onClick={() => onSort("day")}
+            label="Interest Rate"
+            isActive={sortKey === "rate"}
+            direction={dirFor("rate")}
+            onClick={() => onSort("rate")}
           />
         ),
         className: "small text-end",
         headerClassName: "text-end",
-        thAriaSort: thAria("day"),
+        thAriaSort: thAria("rate"),
+      },
+      {
+        key: "house",
+        header: (
+          <TableSortHeaderButton
+            label="Related Property"
+            isActive={sortKey === "house"}
+            direction={dirFor("house")}
+            onClick={() => onSort("house")}
+          />
+        ),
+        className: "small",
+        thAriaSort: thAria("house"),
       },
       {
         key: "lastUpdated",
@@ -265,15 +260,11 @@ export function FinanceAccountsPanel(props: {
       : records.filter((r) => {
           const hay = [
             r.description,
-            r.accountType,
-            ...(accountTypeUsesBillingCycleDay(r.accountType)
-              ? [String(r.billingCycleDay)]
-              : []),
+            r.liabilityType,
             r.currency,
-            String(r.recordedValue),
-            ...(accountTypeIsCreditCard(r.accountType)
-              ? [String(r.lastStatementAmount ?? "")]
-              : []),
+            String(r.outstandingBalance),
+            r.interestRatePercent !== undefined ? String(r.interestRatePercent) : "",
+            houseDisplayLabel(r.relatedHouse),
             r.lastUpdated ?? "",
           ]
             .join(" ")
@@ -281,14 +272,14 @@ export function FinanceAccountsPanel(props: {
           return hay.includes(q);
         });
     if (sortKey !== null) {
-      list.sort((a, b) => compareAccounts(a, b, sortKey, sortDir));
+      list.sort((a, b) => compareLiabilities(a, b, sortKey, sortDir));
     } else {
       list.sort((a, b) => {
-        const byType = a.accountType.localeCompare(b.accountType, undefined, { sensitivity: "base" });
+        const byType = a.liabilityType.localeCompare(b.liabilityType, undefined, {
+          sensitivity: "base",
+        });
         if (byType !== 0) return byType;
-        const byDesc = a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
-        if (byDesc !== 0) return byDesc;
-        return a.currency.localeCompare(b.currency, undefined, { sensitivity: "base" });
+        return a.description.localeCompare(b.description, undefined, { sensitivity: "base" });
       });
     }
     return list;
@@ -314,13 +305,7 @@ export function FinanceAccountsPanel(props: {
     try {
       return filtered.reduce(
         (sum, r) =>
-          sum +
-          convertAmountToBase(
-            financeAccountSignedValueForTotal(r.accountType, r.recordedValue),
-            r.currency,
-            totalDisplayCurrency,
-            map,
-          ),
+          sum + convertAmountToBase(r.outstandingBalance, r.currency, totalDisplayCurrency, map),
         0,
       );
     } catch {
@@ -339,69 +324,56 @@ export function FinanceAccountsPanel(props: {
     setEditingId(null);
     setFormError(null);
     setDescriptionInput("");
-    setAccountTypeInput("Bank Account");
-    setBillingDayStr("1");
-    setValueStr("");
-    setLastStatementStr("");
+    setLiabilityTypeInput("Mortgage");
+    setBalanceStr("");
+    setRateStr("");
+    setRelatedHouseInput("");
     setFormCurrency(GLOBAL_DEFAULT_CURRENCY);
   }
 
-  function openEdit(row: FinanceAccountRecord) {
+  function openEdit(row: FinanceLiabilityRecord) {
     setEditingId(row.id);
     setFormError(null);
     setDescriptionInput(row.description);
-    setAccountTypeInput(row.accountType);
-    setBillingDayStr(String(row.billingCycleDay));
-    setValueStr(String(row.recordedValue));
-    setLastStatementStr(
-      accountTypeIsCreditCard(row.accountType)
-        ? String(row.lastStatementAmount ?? "")
-        : "",
-    );
+    setLiabilityTypeInput(row.liabilityType);
+    setBalanceStr(String(row.outstandingBalance));
+    setRateStr(row.interestRatePercent !== undefined ? String(row.interestRatePercent) : "");
+    setRelatedHouseInput(row.relatedHouse ?? "");
     setFormCurrency(coerceSupportedCurrency(row.currency, GLOBAL_DEFAULT_CURRENCY));
     scheduleFocusRecordEditor(() => recordEditorSectionRef.current);
   }
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const valueNum = parseAmount(valueStr);
-    let billingCycleDay: number;
-    if (accountTypeUsesBillingCycleDay(accountTypeInput)) {
-      const dayParsed = Number.parseInt(billingDayStr.trim(), 10);
-      if (!Number.isInteger(dayParsed) || dayParsed < 1 || dayParsed > 31) {
-        setFormError("Billing cycle day must be a whole number from 1 to 31.");
-        return;
-      }
-      billingCycleDay = dayParsed;
-    } else if (editingId) {
-      const prev = records.find((r) => r.id === editingId);
-      billingCycleDay = prev?.billingCycleDay ?? 1;
-    } else {
-      billingCycleDay = 1;
-    }
-    if (valueNum === null) {
-      setFormError("Current balance must be a valid number.");
+    const description = descriptionInput.trim();
+    if (!description) {
+      setFormError("Description is required.");
       return;
     }
-    let lastStatementNum: number | undefined;
-    if (accountTypeIsCreditCard(accountTypeInput)) {
-      const parsedStmt = parseAmount(lastStatementStr);
-      if (parsedStmt === null) {
-        setFormError("Last Statement Amount must be a valid number.");
+    const balanceNum = parseAmount(balanceStr);
+    if (balanceNum === null || balanceNum < 0) {
+      setFormError("Outstanding balance must be a number ≥ 0.");
+      return;
+    }
+    let interestRatePercent: number | undefined;
+    if (rateStr.trim()) {
+      const rateNum = parseAmount(rateStr);
+      if (rateNum === null || rateNum < 0 || rateNum > 100) {
+        setFormError("Interest rate must be a number between 0 and 100.");
         return;
       }
-      lastStatementNum = parsedStmt;
+      interestRatePercent = rateNum;
     }
     const currency = coerceSupportedCurrency(formCurrency, GLOBAL_DEFAULT_CURRENCY);
     const id = editingId ?? newStatementLineId();
-    const row: FinanceAccountRecord = {
+    const row: FinanceLiabilityRecord = {
       id,
-      description: descriptionInput.trim(),
-      accountType: accountTypeInput,
-      billingCycleDay,
-      recordedValue: valueNum,
-      ...(lastStatementNum !== undefined ? { lastStatementAmount: lastStatementNum } : {}),
+      description,
+      liabilityType: liabilityTypeInput,
+      outstandingBalance: balanceNum,
       currency,
+      ...(interestRatePercent !== undefined ? { interestRatePercent } : {}),
+      ...(relatedHouseInput ? { relatedHouse: relatedHouseInput } : {}),
     };
     onPatch((prev) => {
       if (editingId) {
@@ -413,7 +385,7 @@ export function FinanceAccountsPanel(props: {
   }
 
   function deleteRow(id: string) {
-    if (!window.confirm("Delete this account record?")) return;
+    if (!window.confirm("Delete this liability record?")) return;
     onPatch((prev) => prev.filter((r) => r.id !== id));
     if (editingId === id) {
       resetForm();
@@ -424,7 +396,7 @@ export function FinanceAccountsPanel(props: {
     <div>
       <AdminEditorSection
         containerRef={recordEditorSectionRef}
-        title="Account record"
+        title="Liability record"
         footer={
           <>
             <button type="submit" form={formId} className="btn btn-primary btn-sm">
@@ -451,29 +423,24 @@ export function FinanceAccountsPanel(props: {
                 id={`${sheetId}-description`}
                 type="text"
                 className="form-control form-control-sm"
+                required
                 value={descriptionInput}
                 onChange={(ev) => setDescriptionInput(ev.target.value)}
-                placeholder="e.g. bank or card name"
+                placeholder="e.g. lender and product"
                 autoComplete="off"
               />
             </div>
             <div className="col-2">
-              <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
-                Account Type
+              <label className="form-label small" htmlFor={`${sheetId}-liability-type`}>
+                Liability Type
               </label>
               <select
-                id={`${sheetId}-account-type`}
+                id={`${sheetId}-liability-type`}
                 className="form-select form-select-sm"
-                value={accountTypeInput}
-                onChange={(ev) => {
-                  const next = ev.target.value as FinanceAccountType;
-                  setAccountTypeInput(next);
-                  if (!accountTypeIsCreditCard(next)) {
-                    setLastStatementStr("");
-                  }
-                }}
+                value={liabilityTypeInput}
+                onChange={(ev) => setLiabilityTypeInput(ev.target.value as FinanceLiabilityType)}
               >
-                {FINANCE_ACCOUNT_TYPES.map((t) => (
+                {FINANCE_LIABILITY_TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -481,41 +448,19 @@ export function FinanceAccountsPanel(props: {
               </select>
             </div>
             <div className="col-2">
-              <label className="form-label small" htmlFor={`${sheetId}-value`}>
-                Current Balance
+              <label className="form-label small" htmlFor={`${sheetId}-balance`}>
+                Outstanding Balance
               </label>
               <input
-                id={`${sheetId}-value`}
+                id={`${sheetId}-balance`}
                 type="number"
                 step="0.01"
+                min={0}
                 className="form-control form-control-sm"
                 required
-                value={valueStr}
-                onChange={(ev) => setValueStr(ev.target.value)}
+                value={balanceStr}
+                onChange={(ev) => setBalanceStr(ev.target.value)}
               />
-            </div>
-            <div className="col-2">
-              <label
-                className="form-label small"
-                htmlFor={accountTypeIsCreditCard(accountTypeInput) ? `${sheetId}-last-statement` : undefined}
-              >
-                Last Statement Amount
-              </label>
-              {accountTypeIsCreditCard(accountTypeInput) ? (
-                <input
-                  id={`${sheetId}-last-statement`}
-                  type="number"
-                  step="0.01"
-                  className="form-control form-control-sm"
-                  required
-                  value={lastStatementStr}
-                  onChange={(ev) => setLastStatementStr(ev.target.value)}
-                />
-              ) : (
-                <div className="form-control form-control-sm bg-light text-muted" aria-hidden>
-                  —
-                </div>
-              )}
             </div>
             <div className="col-2">
               <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
@@ -530,43 +475,44 @@ export function FinanceAccountsPanel(props: {
               />
             </div>
             <div className="col-2">
-              <label
-                className="form-label small"
-                htmlFor={
-                  accountTypeUsesBillingCycleDay(accountTypeInput)
-                    ? `${sheetId}-billing-day`
-                    : undefined
-                }
-              >
-                Billing cycle day
+              <label className="form-label small" htmlFor={`${sheetId}-rate`}>
+                Interest Rate %
               </label>
-              {accountTypeUsesBillingCycleDay(accountTypeInput) ? (
-                <input
-                  id={`${sheetId}-billing-day`}
-                  type="number"
-                  min={1}
-                  max={31}
-                  step={1}
-                  className="form-control form-control-sm"
-                  required
-                  value={billingDayStr}
-                  onChange={(ev) => setBillingDayStr(ev.target.value)}
-                />
-              ) : (
-                <div
-                  className="form-control form-control-sm bg-light text-muted"
-                  id={`${sheetId}-billing-day`}
-                  aria-hidden
-                >
-                  —
-                </div>
-              )}
+              <input
+                id={`${sheetId}-rate`}
+                type="number"
+                step="0.01"
+                min={0}
+                max={100}
+                className="form-control form-control-sm"
+                value={rateStr}
+                onChange={(ev) => setRateStr(ev.target.value)}
+                placeholder="optional"
+              />
+            </div>
+            <div className="col-2">
+              <label className="form-label small" htmlFor={`${sheetId}-related-house`}>
+                Related Property
+              </label>
+              <select
+                id={`${sheetId}-related-house`}
+                className="form-select form-select-sm"
+                value={relatedHouseInput}
+                onChange={(ev) => setRelatedHouseInput(ev.target.value as HouseKey | "")}
+              >
+                <option value="">—</option>
+                {relatedHouseOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </form>
       </AdminEditorSection>
 
-      <AdminEditorSection title="Accounts">
+      <AdminEditorSection title="Liabilities">
         <AdminDataTable
           embedded
           columns={tableColumns}
@@ -577,28 +523,18 @@ export function FinanceAccountsPanel(props: {
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.description || "—"}</td>
-                <td className="small">{r.accountType}</td>
+                <td className="small">{r.description}</td>
+                <td className="small">{r.liabilityType}</td>
                 <td className="small text-end">
-                  <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
-                </td>
-                <td className="small text-end">
-                  {accountTypeIsCreditCard(r.accountType) ? (
-                    <MoneyAmount
-                      amount={r.lastStatementAmount ?? 0}
-                      currency={r.currency}
-                      amountOnly
-                    />
-                  ) : (
-                    "—"
-                  )}
+                  <MoneyAmount amount={r.outstandingBalance} currency={r.currency} amountOnly />
                 </td>
                 <td className="small">{r.currency}</td>
                 <td className="small text-end">
-                  {accountTypeUsesBillingCycleDay(r.accountType) ? r.billingCycleDay : "—"}
+                  {r.interestRatePercent !== undefined ? `${r.interestRatePercent}%` : "—"}
                 </td>
+                <td className="small">{houseDisplayLabel(r.relatedHouse)}</td>
                 <td className="small text-nowrap">
-                  {accountLastUpdatedDisplay(r.lastUpdated)}
+                  {liabilityLastUpdatedDisplay(r.lastUpdated)}
                   <StaleValuationBadge lastUpdated={r.lastUpdated} />
                 </td>
                 <td className="small text-end">
@@ -619,12 +555,14 @@ export function FinanceAccountsPanel(props: {
           ) : (
             <AdminDataTableEmptyRow
               colSpan={colSpan}
-              message={records.length ? "No records match the filter." : "No account records yet."}
+              message={
+                records.length ? "No records match the filter." : "No liability records yet."
+              }
             />
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
+              <td className="small">Total owed</td>
               <td className="small text-muted fw-normal">
                 <FrankfurterRatesFooterNote
                   needsFx={needsFx}
@@ -635,16 +573,11 @@ export function FinanceAccountsPanel(props: {
               </td>
               <td className="small text-end">
                 {convertedTotal !== null ? (
-                  <MoneyAmount
-                    amount={convertedTotal}
-                    currency={totalDisplayCurrency}
-                    amountOnly
-                  />
+                  <MoneyAmount amount={convertedTotal} currency={totalDisplayCurrency} amountOnly />
                 ) : (
                   <span className="text-muted">—</span>
                 )}
               </td>
-              <td className="small" />
               <td className="small">
                 <CurrencySelect
                   id={`${sheetId}-total-ccy`}
@@ -654,6 +587,7 @@ export function FinanceAccountsPanel(props: {
                   disabled={fxLoading}
                 />
               </td>
+              <td className="small" />
               <td className="small" />
               <td className="small" />
               <td className="small text-end" />

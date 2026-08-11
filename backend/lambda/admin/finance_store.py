@@ -18,6 +18,7 @@ from contract_constants import (
     EXPENSE_RECORD_CATEGORIES,
     FINANCE_ACCOUNT_TYPES,
     FINANCE_HOUSE_KEYS,
+    FINANCE_LIABILITY_TYPES,
     FINANCE_LINE_TYPES,
     INCOME_RECORD_CATEGORIES,
     INVESTMENT_RECORD_CATEGORIES,
@@ -1953,6 +1954,218 @@ def _load_accounts_records(table: Any) -> list[dict[str, Any]]:
     if not isinstance(nested, dict):
         return []
     return _sanitize_accounts_records_list(nested.get("records"))
+
+
+def _coerce_liability_amount(raw: Any) -> float | None:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, Decimal):
+        f = float(raw)
+    elif isinstance(raw, (int, float)):
+        f = float(raw)
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            f = float(s)
+        except ValueError:
+            return None
+    else:
+        return None
+    if f != f or abs(f) > 1e15:
+        return None
+    return f
+
+
+def _normalize_liabilities_sheet_payload(body: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    raw = body.get("liabilityRecords")
+    if not isinstance(raw, list):
+        raise ValueError("liabilityRecords must be an array")
+    if len(raw) > MAX_LEDGER_RECORDS:
+        raise ValueError(
+            f"At most {MAX_LEDGER_RECORDS} records allowed in liabilityRecords"
+        )
+    allowed_lt = ", ".join(sorted(FINANCE_LIABILITY_TYPES))
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            raise ValueError(f"liabilityRecords[{i}] must be an object")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            raise ValueError(f"liabilityRecords[{i}].id is required")
+        desc = row.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            raise ValueError(f"liabilityRecords[{i}].description is required")
+        if len(desc.strip()) > MAX_INVESTMENT_PROVIDER_LEN:
+            raise ValueError(f"liabilityRecords[{i}].description is too long")
+        lt_raw = row.get("liabilityType")
+        if not isinstance(lt_raw, str) or not lt_raw.strip():
+            raise ValueError(f"liabilityRecords[{i}].liabilityType is required")
+        lt = lt_raw.strip()
+        if lt not in FINANCE_LIABILITY_TYPES:
+            raise ValueError(
+                f"liabilityRecords[{i}].liabilityType must be one of: {allowed_lt}"
+            )
+        amt = row.get("outstandingBalance")
+        if isinstance(amt, Decimal):
+            amt = float(amt)
+        if not isinstance(amt, (int, float)) or isinstance(amt, bool):
+            raise ValueError(
+                f"liabilityRecords[{i}].outstandingBalance must be a number"
+            )
+        amt_f = float(amt)
+        if amt_f != amt_f or amt_f < 0 or amt_f > 1e15:
+            raise ValueError(
+                f"liabilityRecords[{i}].outstandingBalance out of range"
+            )
+        cur = _require_supported_currency(
+            row.get("currency", DEFAULT_FINANCE_CURRENCY),
+            f"liabilityRecords[{i}].currency",
+        )
+        rec: dict[str, Any] = {
+            "id": rid.strip(),
+            "description": desc.strip(),
+            "liabilityType": lt,
+            "outstandingBalance": amt_f,
+            "currency": cur,
+        }
+        rate_raw = row.get("interestRatePercent")
+        if rate_raw is not None and rate_raw != "":
+            if isinstance(rate_raw, bool):
+                raise ValueError(
+                    f"liabilityRecords[{i}].interestRatePercent must be a number"
+                )
+            if isinstance(rate_raw, Decimal):
+                rate_f = float(rate_raw)
+            elif isinstance(rate_raw, (int, float)):
+                rate_f = float(rate_raw)
+            elif isinstance(rate_raw, str):
+                try:
+                    rate_f = float(rate_raw.strip())
+                except ValueError as exc:
+                    raise ValueError(
+                        f"liabilityRecords[{i}].interestRatePercent must be a number"
+                    ) from exc
+            else:
+                raise ValueError(
+                    f"liabilityRecords[{i}].interestRatePercent must be a number"
+                )
+            if rate_f != rate_f or rate_f < 0 or rate_f > 100:
+                raise ValueError(
+                    f"liabilityRecords[{i}].interestRatePercent must be between 0 and 100"
+                )
+            rec["interestRatePercent"] = rate_f
+        house_raw = row.get("relatedHouse")
+        if house_raw is not None and house_raw != "":
+            if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
+                houses = ", ".join(sorted(FINANCE_HOUSE_KEYS))
+                raise ValueError(
+                    f"liabilityRecords[{i}].relatedHouse must be one of: {houses}"
+                )
+            rec["relatedHouse"] = house_raw
+        out.append(rec)
+    return out
+
+
+def _sanitize_liabilities_records_list(raw: Any) -> list[dict[str, Any]]:
+    """Best-effort coercion for GET responses (drops invalid rows)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        desc = row.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            continue
+        d = desc.strip()
+        if len(d) > MAX_INVESTMENT_PROVIDER_LEN:
+            d = d[:MAX_INVESTMENT_PROVIDER_LEN]
+        lt_raw = row.get("liabilityType")
+        if not isinstance(lt_raw, str) or lt_raw.strip() not in FINANCE_LIABILITY_TYPES:
+            continue
+        amt_f = _coerce_liability_amount(row.get("outstandingBalance"))
+        if amt_f is None or amt_f < 0:
+            continue
+        cur = _coerce_finance_currency_value(
+            row.get("currency"), DEFAULT_FINANCE_CURRENCY
+        )
+        entry: dict[str, Any] = {
+            "id": rid.strip(),
+            "description": d,
+            "liabilityType": lt_raw.strip(),
+            "outstandingBalance": amt_f,
+            "currency": cur,
+        }
+        rate_f = _coerce_liability_amount(row.get("interestRatePercent"))
+        if rate_f is not None and 0 <= rate_f <= 100:
+            entry["interestRatePercent"] = rate_f
+        rh = row.get("relatedHouse")
+        if rh in FINANCE_HOUSE_KEYS:
+            entry["relatedHouse"] = rh
+        lu = row.get("lastUpdated")
+        if isinstance(lu, str) and _is_calendar_date_string(lu):
+            entry["lastUpdated"] = lu
+        out.append(entry)
+    return out
+
+
+def _liability_row_signature(
+    row: dict[str, Any],
+) -> tuple[str, str, float, str, float | None, str | None]:
+    rate = _coerce_liability_amount(row.get("interestRatePercent"))
+    rh = row.get("relatedHouse")
+    return (
+        str(row.get("description", "")),
+        str(row["liabilityType"]),
+        float(row["outstandingBalance"]),
+        str(row["currency"]),
+        rate,
+        rh if isinstance(rh, str) else None,
+    )
+
+
+def _merge_liabilities_last_updated(
+    normalized: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+    *,
+    today_iso: str | None = None,
+) -> list[dict[str, Any]]:
+    """Attach `lastUpdated` (UTC calendar date) when liability fields change."""
+    today = today_iso or datetime.now(timezone.utc).date().isoformat()
+    by_id = {r["id"]: r for r in existing}
+    out: list[dict[str, Any]] = []
+    for row in normalized:
+        merged = dict(row)
+        prev = by_id.get(merged["id"])
+        if prev is None:
+            merged["lastUpdated"] = today
+        elif _liability_row_signature(prev) == _liability_row_signature(merged):
+            lu = prev.get("lastUpdated")
+            if isinstance(lu, str) and _is_calendar_date_string(lu):
+                merged["lastUpdated"] = lu
+        else:
+            merged["lastUpdated"] = today
+        out.append(merged)
+    return out
+
+
+def _load_liabilities_records(table: Any) -> list[dict[str, Any]]:
+    res = table.get_item(Key=_finance_sheet_ddb_key("liabilities"))
+    item = res.get("Item")
+    if not item:
+        return []
+    payload = {k: v for k, v in item.items() if k not in ("pk", "sk")}
+    nested = _from_ddb_nested(payload)
+    if not isinstance(nested, dict):
+        return []
+    return _sanitize_liabilities_records_list(nested.get("records"))
 
 
 def _finance_ddb_key(house: str) -> dict[str, str]:

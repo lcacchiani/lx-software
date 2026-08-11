@@ -9,6 +9,7 @@ import {
   sumHouseStatementLinesForFiscalYear,
 } from "../../lib/fiscalYearFinance";
 import {
+  housePropertyEquityByCurrency,
   monthlyLedgerNetByCurrency,
   sumMonthlyFinanceLedgerAmountsByHouse,
   type HouseKey,
@@ -64,6 +65,28 @@ function MonthlyNetByCurrencyList({
   );
 }
 
+function SignedBucketList({
+  buckets,
+  emptyLabel,
+}: {
+  readonly buckets: Readonly<Record<string, number>>;
+  readonly emptyLabel: string;
+}) {
+  const entries = sortedCurrencyEntries(buckets);
+  if (entries.length === 0) {
+    return <span className="text-muted">{emptyLabel}</span>;
+  }
+  return (
+    <ul className="list-unstyled mb-0 small">
+      {entries.map(([currency, amount]) => (
+        <li key={currency} className={amount >= 0 ? "text-success" : "text-danger"}>
+          <MoneyAmount amount={amount} currency={currency} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function HouseSummaryCard({
   houseName,
   houseKey,
@@ -108,6 +131,15 @@ export function HouseSummaryCard({
     () => monthlyLedgerNetByCurrency(monthlySums),
     [monthlySums],
   );
+
+  const equity = useMemo(
+    () =>
+      housePropertyEquityByCurrency(data.investmentRecords, data.liabilityRecords, houseKey),
+    [data.investmentRecords, data.liabilityRecords, houseKey],
+  );
+  const hasEquityData =
+    Object.keys(equity.valueByCurrency).length > 0 ||
+    Object.keys(equity.liabilitiesByCurrency).length > 0;
 
   const fyLabel = formatFiscalYearIdLabel(fiscalYear);
 
@@ -164,6 +196,30 @@ export function HouseSummaryCard({
             <MonthlyNetByCurrencyList netByCurrency={monthlyNetByCurrency} emptyLabel="—" />
           </dd>
         </dl>
+        {hasEquityData ? (
+          <>
+            <hr className="my-3" />
+            <p className="small text-muted mb-2">Property equity</p>
+            <dl className="row small mb-0">
+              <dt className="col-sm-4 text-muted">Value</dt>
+              <dd className="col-sm-8">
+                <FiscalBucketList buckets={equity.valueByCurrency} emptyLabel="—" />
+              </dd>
+              <dt className="col-sm-4 text-muted pt-2">Liabilities</dt>
+              <dd className="col-sm-8 pt-2">
+                <FiscalBucketList buckets={equity.liabilitiesByCurrency} emptyLabel="—" />
+              </dd>
+              <dt className="col-sm-4 text-muted pt-2">Equity</dt>
+              <dd className="col-sm-8 pt-2">
+                <SignedBucketList buckets={equity.equityByCurrency} emptyLabel="—" />
+              </dd>
+            </dl>
+            <p className="text-muted small mb-0 mt-2">
+              Real Estate investment value linked to this property minus linked liability
+              balances.
+            </p>
+          </>
+        ) : null}
       </div>
     </div>
   );

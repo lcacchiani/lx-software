@@ -35,6 +35,7 @@ import {
   CurrencySelect,
   FrankfurterRatesFooterNote,
   MoneyAmount,
+  StaleValuationBadge,
   TableIconButton,
   TableSortHeaderButton,
 } from "./ui";
@@ -1012,7 +1013,10 @@ export function FinanceInvestmentsPanel({
                     );
                   })()}
                 </td>
-                <td className="small text-muted">{investmentLastUpdatedDisplay(r.lastUpdated)}</td>
+                <td className="small text-muted">
+                  {investmentLastUpdatedDisplay(r.lastUpdated)}
+                  <StaleValuationBadge lastUpdated={r.lastUpdated} />
+                </td>
                 <td className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"

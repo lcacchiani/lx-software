@@ -4,6 +4,7 @@ import { FinanceInvestmentsPanel } from "../components/FinanceInvestmentsPanel";
 import { FinancePensionPanel, FinanceSavingsPanel } from "../components/FinanceSavingsAndPensionPanels";
 import { FinanceAccountsPanel } from "../components/FinanceAccountsPanel";
 import { FinanceAllocationsPanel } from "../components/FinanceAllocationsPanel";
+import { FinanceLiabilitiesPanel } from "../components/FinanceLiabilitiesPanel";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { useFinance } from "../hooks/useFinance";
@@ -24,7 +25,8 @@ type FinanceTab =
   | "income"
   | "expenses"
   | "allocations"
-  | "accounts";
+  | "accounts"
+  | "liabilities";
 
 export function FinancePage() {
   const {
@@ -36,6 +38,7 @@ export function FinancePage() {
     patchPensionRecords,
     patchAllocationRecords,
     patchAccountRecords,
+    patchLiabilityRecords,
     patchExpenseIncomeAllocationPercents,
     isLoading,
     isError,
@@ -55,7 +58,8 @@ export function FinancePage() {
         on Expenses), and <strong>custom</strong> allocation rows you add on Allocations. Any row can
         be tagged <strong>Income</strong> so it appears on the Income tab with a monthly amount, or{" "}
         <strong>Pension</strong> so it appears in the Pension tab table (with fund rows). The Accounts
-        tab stores bank and card balances with billing cycle metadata.
+        tab stores bank and card balances with billing cycle metadata. The Liabilities tab tracks
+        outstanding balances (e.g. mortgages), optionally linked to a property for equity.
       </p>
       <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
       {!isLoading && !isError ? (
@@ -166,6 +170,17 @@ export function FinancePage() {
                 Accounts
               </button>
             </li>
+            <li className="nav-item" role="presentation">
+              <button
+                type="button"
+                className={`nav-link ${tab === "liabilities" ? "active" : ""}`}
+                role="tab"
+                aria-selected={tab === "liabilities"}
+                onClick={() => setTab("liabilities")}
+              >
+                Liabilities
+              </button>
+            </li>
           </ul>
 
           <div className="tab-content">
@@ -241,6 +256,13 @@ export function FinancePage() {
             ) : null}
             {tab === "accounts" ? (
               <FinanceAccountsPanel records={data.accountRecords} onPatch={patchAccountRecords} />
+            ) : null}
+            {tab === "liabilities" ? (
+              <FinanceLiabilitiesPanel
+                records={data.liabilityRecords}
+                onPatch={patchLiabilityRecords}
+                relatedHouseOptions={LEDGER_RELATED_HOUSE_OPTIONS}
+              />
             ) : null}
           </div>
         </>
