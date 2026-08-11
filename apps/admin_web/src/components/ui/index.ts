@@ -10,6 +10,8 @@ export { FrankfurterRatesFooterNote } from "./FrankfurterRatesFooterNote";
 export type { FrankfurterRatesFooterNoteProps } from "./FrankfurterRatesFooterNote";
 export { MoneyAmount } from "./MoneyAmount";
 export type { MoneyAmountProps } from "./MoneyAmount";
+export { StaleValuationBadge } from "./StaleValuationBadge";
+export type { StaleValuationBadgeProps } from "./StaleValuationBadge";
 export { TableIconButton } from "./TableIconButton";
 export type { TableIconButtonProps } from "./TableIconButton";
 export { TableSortHeaderButton } from "./TableSortHeaderButton";

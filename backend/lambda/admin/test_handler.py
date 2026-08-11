@@ -37,12 +37,14 @@ from handler import (  # noqa: E402
     _merge_allocation_stored_last_updated,
     _merge_accounts_last_updated,
     _merge_investment_last_updated,
+    _merge_liabilities_last_updated,
     _merge_pension_last_updated,
     _normalize_allocations_sheet_payload,
     _normalize_accounts_sheet_payload,
     _normalize_finance_payload,
     _normalize_investment_sheet_payload,
     _normalize_ledger_sheet_payload,
+    _normalize_liabilities_sheet_payload,
     _normalize_pension_sheet_payload,
     _normalize_public_asset_key,
     _normalize_savings_sheet_payload,
@@ -54,6 +56,7 @@ from handler import (  # noqa: E402
     _path_finance_parse_job,
     _sanitize_accounts_records_list,
     _sanitize_expense_income_allocation_percentages,
+    _sanitize_liabilities_records_list,
     _sanitize_investment_records_list,
     _sanitize_ledger_records_list,
     _sanitize_pension_records_list,
@@ -997,6 +1000,138 @@ class TestAccountsSheetPayload(unittest.TestCase):
         out = _sanitize_accounts_records_list(raw)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["lastStatementAmount"], 120.5)
+
+
+class TestLiabilitiesSheetPayload(unittest.TestCase):
+    def _row(self, **overrides: object) -> dict:
+        base: dict = {
+            "id": "l1",
+            "description": "HSBC UK mortgage",
+            "liabilityType": "Mortgage",
+            "outstandingBalance": 150000.0,
+            "currency": "GBP",
+        }
+        base.update(overrides)
+        return base
+
+    def test_normalize_valid(self) -> None:
+        out = _normalize_liabilities_sheet_payload({"liabilityRecords": [self._row()]})
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["description"], "HSBC UK mortgage")
+        self.assertEqual(out[0]["liabilityType"], "Mortgage")
+        self.assertEqual(out[0]["outstandingBalance"], 150000.0)
+        self.assertEqual(out[0]["currency"], "GBP")
+        self.assertNotIn("interestRatePercent", out[0])
+        self.assertNotIn("relatedHouse", out[0])
+
+    def test_normalize_optional_rate_and_house(self) -> None:
+        out = _normalize_liabilities_sheet_payload(
+            {
+                "liabilityRecords": [
+                    self._row(interestRatePercent=4.25, relatedHouse="hillmarton")
+                ]
+            }
+        )
+        self.assertEqual(out[0]["interestRatePercent"], 4.25)
+        self.assertEqual(out[0]["relatedHouse"], "hillmarton")
+
+    def test_normalize_rejects_bad_liability_type(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_liabilities_sheet_payload(
+                {"liabilityRecords": [self._row(liabilityType="IOU")]}
+            )
+
+    def test_normalize_requires_description(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_liabilities_sheet_payload(
+                {"liabilityRecords": [self._row(description="  ")]}
+            )
+
+    def test_normalize_rejects_negative_balance(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_liabilities_sheet_payload(
+                {"liabilityRecords": [self._row(outstandingBalance=-1.0)]}
+            )
+
+    def test_normalize_rejects_bad_rate(self) -> None:
+        for bad in (-0.1, 100.5, "abc", True):
+            with self.assertRaises(ValueError):
+                _normalize_liabilities_sheet_payload(
+                    {"liabilityRecords": [self._row(interestRatePercent=bad)]}
+                )
+
+    def test_normalize_rejects_unknown_house(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_liabilities_sheet_payload(
+                {"liabilityRecords": [self._row(relatedHouse="atlantis")]}
+            )
+
+    def test_normalize_rejects_unsupported_currency(self) -> None:
+        with self.assertRaises(ValueError):
+            _normalize_liabilities_sheet_payload(
+                {"liabilityRecords": [self._row(currency="JPY")]}
+            )
+
+    def test_normalize_ignores_client_last_updated(self) -> None:
+        out = _normalize_liabilities_sheet_payload(
+            {"liabilityRecords": [self._row(lastUpdated="2020-01-01")]}
+        )
+        self.assertNotIn("lastUpdated", out[0])
+
+    def test_sanitize_keeps_valid_rows_and_last_updated(self) -> None:
+        rows = [
+            self._row(lastUpdated="2026-01-05", interestRatePercent=3.5),
+            {"id": "", "description": "x", "liabilityType": "Loan"},
+            self._row(id="l2", liabilityType="IOU"),
+        ]
+        out = _sanitize_liabilities_records_list(rows)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-05")
+        self.assertEqual(out[0]["interestRatePercent"], 3.5)
+
+    def test_sanitize_drops_negative_balance(self) -> None:
+        out = _sanitize_liabilities_records_list([self._row(outstandingBalance=-5)])
+        self.assertEqual(out, [])
+
+
+class TestMergeLiabilitiesLastUpdated(unittest.TestCase):
+    def _row(self, **overrides: object) -> dict:
+        base: dict = {
+            "id": "l1",
+            "description": "Citi HK mortgage",
+            "liabilityType": "Mortgage",
+            "outstandingBalance": 4000000.0,
+            "currency": "HKD",
+        }
+        base.update(overrides)
+        return base
+
+    def test_new_id_gets_today(self) -> None:
+        out = _merge_liabilities_last_updated([self._row()], [], today_iso="2026-01-10")
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_unchanged_preserves_last_updated(self) -> None:
+        existing = [self._row(lastUpdated="2025-03-01")]
+        out = _merge_liabilities_last_updated(
+            [self._row()], existing, today_iso="2026-01-10"
+        )
+        self.assertEqual(out[0]["lastUpdated"], "2025-03-01")
+
+    def test_balance_change_gets_today(self) -> None:
+        existing = [self._row(lastUpdated="2025-03-01")]
+        out = _merge_liabilities_last_updated(
+            [self._row(outstandingBalance=3900000.0)],
+            existing,
+            today_iso="2026-01-10",
+        )
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
+
+    def test_rate_change_gets_today(self) -> None:
+        existing = [self._row(lastUpdated="2025-03-01", interestRatePercent=2.0)]
+        out = _merge_liabilities_last_updated(
+            [self._row(interestRatePercent=2.5)], existing, today_iso="2026-01-10"
+        )
+        self.assertEqual(out[0]["lastUpdated"], "2026-01-10")
 
 
 class TestMergeAccountsLastUpdated(unittest.TestCase):
@@ -2157,6 +2292,7 @@ class TestPublicReadRoutes(unittest.TestCase):
             "savingsRecords",
             "pensionRecords",
             "accountRecords",
+            "liabilityRecords",
             "allocationRecords",
         ):
             self.assertIn(key, body)

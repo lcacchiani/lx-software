@@ -56,6 +56,7 @@ def write_python(finance: dict, timeouts: dict, domains: dict) -> None:
         "INVESTMENT_RECORD_CATEGORIES = frozenset(FINANCE_CONTRACT[\"investmentCategories\"])",
         "ASSET_TYPES = frozenset(FINANCE_CONTRACT[\"assetTypes\"])",
         "FINANCE_ACCOUNT_TYPES = frozenset(FINANCE_CONTRACT[\"accountTypes\"])",
+        "FINANCE_LIABILITY_TYPES = frozenset(FINANCE_CONTRACT[\"liabilityTypes\"])",
         "LEDGER_RECORD_AMOUNT_PERIODS = frozenset(FINANCE_CONTRACT[\"ledgerAmountPeriods\"])",
         "",
         "_LIMITS = FINANCE_CONTRACT[\"limits\"]",
@@ -104,6 +105,7 @@ export const EXPENSE_CATEGORIES = {json.dumps(finance["expenseCategories"])} as 
 export const INVESTMENT_CATEGORIES = {json.dumps(finance["investmentCategories"])} as const;
 export const ASSET_TYPES = {json.dumps(finance["assetTypes"])} as const;
 export const FINANCE_ACCOUNT_TYPES = {json.dumps(finance["accountTypes"])} as const;
+export const FINANCE_LIABILITY_TYPES = {json.dumps(finance["liabilityTypes"])} as const;
 
 export const MAX_FINANCE_LINES = {limits["maxFinanceLines"]};
 export const MAX_FINANCE_DESCRIPTION = {limits["maxFinanceDescription"]};

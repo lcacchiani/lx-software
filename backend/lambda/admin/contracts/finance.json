@@ -25,6 +25,7 @@
   ],
   "assetTypes": ["Fixed", "Liquid"],
   "accountTypes": ["Bank Account", "Credit Card", "Debit Card"],
+  "liabilityTypes": ["Mortgage", "Loan", "Credit Line", "Other"],
   "ledgerAmountPeriods": ["month", "year"],
   "limits": {
     "maxFinanceLines": 5000,

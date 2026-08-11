@@ -14,6 +14,7 @@ import {
   type FinanceInvestmentRecord,
   type FinanceLedgerRecord,
   type FinanceLedgerSheetKey,
+  type FinanceLiabilityRecord,
   type FinancePensionRecord,
   type FinancePersistedState,
   type FinanceSavingsRecord,
@@ -30,6 +31,7 @@ import {
   normalizeInvestmentRecords,
   normalizeAccountRecords,
   normalizeLedgerRecords,
+  normalizeLiabilityRecords,
   normalizePensionRecords,
   normalizeSavingsRecords,
 } from "../lib/financeModel";
@@ -61,6 +63,7 @@ async function fetchFinance(): Promise<FinancePersistedState> {
     savingsRecords: normalizeSavingsRecords(rawObj.savingsRecords),
     pensionRecords: normalizePensionRecords(rawObj.pensionRecords),
     accountRecords: normalizeAccountRecords(rawObj.accountRecords),
+    liabilityRecords: normalizeLiabilityRecords(rawObj.liabilityRecords),
     allocationRecords: normalizeAllocationRecords(rawObj.allocationRecords),
   };
 }
@@ -74,6 +77,7 @@ type FinanceListStateKey =
   | "savingsRecords"
   | "pensionRecords"
   | "accountRecords"
+  | "liabilityRecords"
   | "allocationRecords";
 
 function financeRecordsPutMutationOptions(
@@ -164,6 +168,14 @@ export function useFinance() {
       path: "/finance/accounts",
       listKey: "accountRecords",
       normalize: normalizeAccountRecords,
+    }),
+  );
+
+  const saveLiabilityRecords = useMutation(
+    financeRecordsPutMutationOptions(qc, {
+      path: "/finance/liabilities",
+      listKey: "liabilityRecords",
+      normalize: normalizeLiabilityRecords,
     }),
   );
 
@@ -298,6 +310,16 @@ export function useFinance() {
     [qc, saveAccountRecords],
   );
 
+  const patchLiabilityRecords = useCallback(
+    (patch: (prev: readonly FinanceLiabilityRecord[]) => FinanceLiabilityRecord[]) => {
+      const state = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const prev = state?.liabilityRecords ?? DEFAULT_FINANCE_STATE.liabilityRecords;
+      const next = patch(prev);
+      saveLiabilityRecords.mutate(next);
+    },
+    [qc, saveLiabilityRecords],
+  );
+
   const patchAllocationRecords = useCallback(
     (
       patch: (
@@ -351,6 +373,7 @@ export function useFinance() {
   const savingsSaveErr = saveSavingsRecords.error;
   const pensionSaveErr = savePensionRecords.error;
   const accountSaveErr = saveAccountRecords.error;
+  const liabilitySaveErr = saveLiabilityRecords.error;
   const allocationSaveErr = saveAllocationRecords.error;
   const saveError =
     houseSaveErr ??
@@ -359,6 +382,7 @@ export function useFinance() {
     savingsSaveErr ??
     pensionSaveErr ??
     accountSaveErr ??
+    liabilitySaveErr ??
     allocationSaveErr;
 
   return {
@@ -372,6 +396,7 @@ export function useFinance() {
     patchSavingsRecords,
     patchPensionRecords,
     patchAccountRecords,
+    patchLiabilityRecords,
     patchAllocationRecords,
     patchExpenseIncomeAllocationPercents,
     isSaving:
@@ -381,6 +406,7 @@ export function useFinance() {
       saveSavingsRecords.isPending ||
       savePensionRecords.isPending ||
       saveAccountRecords.isPending ||
+      saveLiabilityRecords.isPending ||
       saveAllocationRecords.isPending,
     saveError,
     saveErrorDetail: getAdminApiErrorMessage(saveError),
