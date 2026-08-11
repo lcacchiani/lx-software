@@ -5,6 +5,10 @@ import { GLOBAL_DEFAULT_CURRENCY } from "../lib/currencies";
 import { buildQuoteMap } from "../lib/financeQuotes";
 import { convertAmountToBase, convertAmountWithBase } from "../lib/frankfurterRates";
 import {
+  computeAllocationCoverageGroups,
+  type AllocationCoverageRow,
+} from "../lib/allocationCoverage";
+import {
   investmentMarketSourceCurrency,
   investmentRecordCurrentValueInRowCurrency,
   investmentRecordFiatNotionalInQuoteCurrency,
@@ -17,6 +21,11 @@ import { useFinance } from "./useFinance";
  * investments, savings, and bank account balances vs allocation accumulated amounts, all in
  * {@link GLOBAL_DEFAULT_CURRENCY}. FX quote set includes every account row so credit card
  * currencies resolve when other cards need them.
+ *
+ * Rows are also grouped by horizon (`groups`): pension-tagged allocations vs near-term
+ * ones, with coverage assigned by the waterfall in
+ * {@link computeAllocationCoverageGroups} (liquid assets back near-term rows first; fixed
+ * savings deposits only ever back the pension horizon).
  */
 export function useAllocationCoverageDashboardSheet() {
   const { data } = useFinance();
@@ -151,32 +160,50 @@ export function useAllocationCoverageDashboardSheet() {
       needsFx && ratesQuery.data ? ratesQuery.data.rateByQuote : new Map<string, number>();
 
     try {
-      const allocationRows: {
-        readonly key: string;
-        readonly description: string;
-        readonly hkd: number;
-      }[] = [];
+      const allocationRows: AllocationCoverageRow[] = [];
       let allocationsSum = 0;
       for (const a of sortedAllocations) {
-        const hkd = convertAmountToBase(a.accumulatedAmount, a.currency, base, map);
-        allocationRows.push({ key: a.expenseId, description: a.description, hkd });
-        allocationsSum += hkd;
+        const amountInBase = convertAmountToBase(
+          a.accumulatedAmount,
+          a.currency,
+          base,
+          map,
+        );
+        allocationRows.push({
+          key: a.expenseId,
+          description: a.description,
+          amountInBase,
+          isPension: a.isPension === true,
+        });
+        allocationsSum += amountInBase;
       }
 
-      let coverage = 0;
+      let liquidCoverage = 0;
+      let fixedCoverage = 0;
       for (const r of liquidInvestments) {
         const vRow = liquidValueInRowCcy.get(r.id);
         const value =
           vRow !== undefined ? vRow : investmentRecordFiatNotionalInQuoteCurrency(r);
-        coverage += convertAmountToBase(value, r.currency, base, map);
+        liquidCoverage += convertAmountToBase(value, r.currency, base, map);
       }
       for (const s of data.savingsRecords) {
-        coverage += convertAmountToBase(s.value, s.currency, base, map);
+        const value = convertAmountToBase(s.value, s.currency, base, map);
+        if (s.assetType === "Liquid") {
+          liquidCoverage += value;
+        } else {
+          fixedCoverage += value;
+        }
       }
       for (const acc of bankAccounts) {
-        coverage += convertAmountToBase(acc.recordedValue, acc.currency, base, map);
+        liquidCoverage += convertAmountToBase(acc.recordedValue, acc.currency, base, map);
       }
 
+      const coverage = liquidCoverage + fixedCoverage;
+      const groups = computeAllocationCoverageGroups({
+        rows: allocationRows,
+        liquidCoverage,
+        fixedCoverage,
+      });
       const diff = coverage - allocationsSum;
       return {
         status: "ok" as const,
@@ -184,6 +211,7 @@ export function useAllocationCoverageDashboardSheet() {
         allocationsSum,
         coverage,
         diff,
+        groups,
         rateByQuote: map,
       };
     } catch {
