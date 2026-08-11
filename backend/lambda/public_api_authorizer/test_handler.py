@@ -1,6 +1,5 @@
 """Unit tests for the public API key authorizer (boto3 stubbed before import)."""
 
-import hashlib
 import sys
 import types
 import unittest
@@ -28,10 +27,11 @@ def _install_stubs() -> None:
 _install_stubs()
 
 import handler  # noqa: E402
+from api_key_hash import hash_api_key  # noqa: E402
 from handler import _is_expired, lambda_handler  # noqa: E402
 
 _KEY = "lxpk_test-key-value"
-_DIGEST = hashlib.sha256(_KEY.encode("utf-8")).hexdigest()
+_DIGEST = hash_api_key(_KEY)
 
 
 def _event(key: str | None = _KEY) -> dict:
@@ -116,6 +116,18 @@ class TestAuthorizer(unittest.TestCase):
             {"Error": {"Code": "InternalServerError"}}, "GetItem"
         )
         self.assertFalse(lambda_handler(_event(), None)["isAuthorized"])
+
+
+class TestHashApiKey(unittest.TestCase):
+    def test_deterministic(self) -> None:
+        self.assertEqual(hash_api_key(_KEY), _DIGEST)
+
+    def test_distinct_keys_distinct_digests(self) -> None:
+        self.assertNotEqual(hash_api_key("lxpk_other-key"), _DIGEST)
+
+    def test_hex_output(self) -> None:
+        self.assertEqual(len(_DIGEST), 64)
+        self.assertTrue(all(c in "0123456789abcdef" for c in _DIGEST))
 
 
 class TestIsExpired(unittest.TestCase):

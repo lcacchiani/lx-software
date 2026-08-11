@@ -2,8 +2,8 @@
 """Mint, list, and revoke public read-only API keys.
 
 Keys authenticate the /public/* GET routes on the admin HTTP API via the
-`x-api-key` header. Only the SHA-256 digest of a key is stored (as
-``pk = APIKEY#<sha256>``, ``sk = META`` in the records table); the plaintext
+`x-api-key` header. Only the scrypt digest of a key is stored (as
+``pk = APIKEY#<digest>``, ``sk = META`` in the records table); the plaintext
 key is printed exactly once by ``create``.
 
 Requires AWS credentials with GetItem/PutItem/UpdateItem/Scan on the records
@@ -20,14 +20,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import secrets
 import sys
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError
+
+# Reuse the authorizer's digest helper so mint and verify never drift apart.
+_AUTHORIZER_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "backend"
+    / "lambda"
+    / "public_api_authorizer"
+)
+sys.path.insert(0, str(_AUTHORIZER_DIR))
+from api_key_hash import hash_api_key  # noqa: E402
 
 API_KEY_PK_PREFIX = "APIKEY#"
 KEY_PLAINTEXT_PREFIX = "lxpk_"
@@ -56,7 +66,7 @@ def _validate_expires_at(raw: str | None) -> str | None:
 def cmd_create(args: argparse.Namespace) -> None:
     expires_at = _validate_expires_at(args.expires_at)
     plaintext = KEY_PLAINTEXT_PREFIX + secrets.token_urlsafe(36)
-    digest = hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+    digest = hash_api_key(plaintext)
     key_id = uuid.uuid4().hex[:12]
     item = {
         "pk": f"{API_KEY_PK_PREFIX}{digest}",

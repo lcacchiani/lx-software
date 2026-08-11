@@ -1,9 +1,10 @@
 """HTTP API Lambda authorizer for the public read-only API key routes.
 
 Validates the ``x-api-key`` header against hashed key records stored in the
-records DynamoDB table (``pk = APIKEY#<sha256-hex>``, ``sk = META``). Only the
-SHA-256 digest of a key is ever persisted or logged; the plaintext key is
-shown once at mint time (see ``scripts/manage-public-api-keys.py``).
+records DynamoDB table (``pk = APIKEY#<scrypt-hex>``, ``sk = META``). Only
+the scrypt digest of a key is ever persisted or logged (see
+``api_key_hash.py`` for the digest rationale); the plaintext key is shown
+once at mint time (see ``scripts/manage-public-api-keys.py``).
 
 Returns the API Gateway v2 "simple" authorizer response. The authorizer
 result is cached by API Gateway keyed on the ``x-api-key`` header, so the
@@ -12,7 +13,6 @@ DynamoDB lookup does not run on every request.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -21,6 +21,8 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
+
+from api_key_hash import hash_api_key
 
 API_KEY_PK_PREFIX = "APIKEY#"
 API_KEY_SCOPE_READ = "read"
@@ -80,7 +82,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         _log("info", tag="public_api_key_denied", reason="missing_key", request_id=request_id)
         return _deny()
 
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    digest = hash_api_key(key)
     digest_prefix = digest[:8]
 
     table = _ddb.Table(os.environ["RECORDS_TABLE_NAME"])
