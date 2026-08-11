@@ -1,7 +1,20 @@
-import { type ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { FrankfurterRatesFooterNote, MoneyAmount } from "../ui";
 import { useAllocationCoverageDashboardSheet } from "../../hooks/useAllocationCoverageDashboardSheet";
 import { GLOBAL_DEFAULT_CURRENCY } from "../../lib/currencies";
+import { type AllocationCoverageGroup } from "../../lib/allocationCoverage";
+
+function fundedPercentBadge(group: AllocationCoverageGroup): ReactNode {
+  const f = group.fundedFraction;
+  if (f === undefined) {
+    return <span className="text-muted fw-normal">—</span>;
+  }
+  return (
+    <span className={f >= 1 ? "text-success" : "text-danger"}>
+      Funded {Math.round(f * 100)}%
+    </span>
+  );
+}
 
 export function AllocationCoverageDashboardCard() {
   const base = GLOBAL_DEFAULT_CURRENCY;
@@ -43,7 +56,9 @@ export function AllocationCoverageDashboardCard() {
         </h2>
         <p className="text-muted small mb-3">
           Allocation rows (same as the Finance Allocations tab) compared to liquid investments, all
-          savings deposits, and bank account current balances.
+          savings deposits, and bank account current balances, grouped by horizon: near-term rows
+          are backed by liquid coverage first; pension rows by fixed savings deposits plus any
+          liquid remainder.
         </p>
 
         {sheet.status === "empty" ? (
@@ -66,14 +81,45 @@ export function AllocationCoverageDashboardCard() {
                       </td>
                     </tr>
                   ) : sheet.status === "ok" ? (
-                    sheet.allocationRows.map((row) => (
-                      <tr key={row.key}>
-                        <td className="small">{row.description}</td>
-                        <td className="small text-end text-nowrap">
-                          <MoneyAmount amount={row.hkd} currency={base} />
-                        </td>
-                      </tr>
-                    ))
+                    (
+                      [
+                        ["Near-term", sheet.groups.nearTerm],
+                        ["Pension", sheet.groups.pension],
+                      ] as const
+                    )
+                      .filter(([, group]) => group.rows.length > 0)
+                      .map(([label, group]) => (
+                        <Fragment key={label}>
+                          <tr className="table-light">
+                            <th scope="colgroup" className="small">
+                              {label}
+                            </th>
+                            <th className="small text-end text-nowrap">
+                              {fundedPercentBadge(group)}
+                            </th>
+                          </tr>
+                          {group.rows.map((row) => (
+                            <tr key={row.key}>
+                              <td className="small">{row.description}</td>
+                              <td className="small text-end text-nowrap">
+                                <MoneyAmount amount={row.amountInBase} currency={base} />
+                              </td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="small text-muted">Subtotal</td>
+                            <td className="small text-muted text-end text-nowrap">
+                              <MoneyAmount amount={group.allocationsSum} currency={base} />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="small text-muted">Backing</td>
+                            <td className="small text-muted text-end text-nowrap">
+                              <MoneyAmount amount={group.coverageAvailable} currency={base} />
+                            </td>
+                          </tr>
+                        </Fragment>
+                      ))
                   ) : (
                     <tr>
                       <td colSpan={2} className="small">
