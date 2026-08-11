@@ -1,7 +1,11 @@
 import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
-import { HttpJwtAuthorizer } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
+import {
+  HttpJwtAuthorizer,
+  HttpLambdaAuthorizer,
+  HttpLambdaResponseType,
+} from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
@@ -371,6 +375,64 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     /**
+     * Public read-only API key authorizer. Validates the `x-api-key` header
+     * against scrypt key digests stored in the records table
+     * (`pk = APIKEY#<digest>`, `sk = META`; minted via
+     * scripts/manage-public-api-keys.py). Guards only the /public/* GET
+     * routes below — every write route stays on the Cognito JWT authorizer,
+     * so a leaked key can never mutate state even if the handler-level
+     * allowlist regressed.
+     */
+    const publicApiKeyAuthorizerFn = createPythonLambda(
+      this,
+      "PublicApiKeyAuthorizerFn",
+      {
+        entryDir: path.join(__dirname, "..", "..", "lambda", "public_api_authorizer"),
+        timeout: cdk.Duration.seconds(5),
+        memorySize: 256,
+        environmentEncryptionKey: this.sharedEncryptionKey,
+        logEncryptionKey: this.sharedEncryptionKey,
+        deadLetterQueue: this.lambdaDeadLetterQueue,
+        environment: {
+          RECORDS_TABLE_NAME: this.recordsTable.tableName,
+        },
+      }
+    );
+    this.lambdaDeadLetterQueue.grantSendMessages(publicApiKeyAuthorizerFn);
+
+    // Narrow read grant: the authorizer can only GetItem on APIKEY#* rows,
+    // never finance/asset records. The table uses the shared CMK, so a
+    // matching kms:Decrypt grant is required for reads to succeed.
+    new iam.Policy(this, "PublicApiKeyAuthorizerReadPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: ["dynamodb:GetItem"],
+          resources: [this.recordsTable.tableArn],
+          conditions: {
+            "ForAllValues:StringLike": {
+              "dynamodb:LeadingKeys": ["APIKEY#*"],
+            },
+          },
+        }),
+      ],
+    }).attachToRole(publicApiKeyAuthorizerFn.role!);
+    this.sharedEncryptionKey.grantDecrypt(publicApiKeyAuthorizerFn);
+
+    const publicApiKeyAuthorizer = new HttpLambdaAuthorizer(
+      "public-api-key",
+      publicApiKeyAuthorizerFn,
+      {
+        responseTypes: [HttpLambdaResponseType.SIMPLE],
+        identitySource: ["$request.header.x-api-key"],
+        // Cache authorizer verdicts per key so the DynamoDB lookup (and its
+        // KMS decrypt) does not run on every request. Revocation therefore
+        // takes up to this TTL to propagate.
+        resultsCacheTtl: cdk.Duration.minutes(5),
+      }
+    );
+
+    /**
      * Statement PDF parsing runs on async self-invoke of AdminApiFn (HTTP API
      * stays sub-30s). Keep Lambda timeout, OpenRouter urllib timeout, job stale/
      * stuck thresholds, and the admin SPA poll deadline (`useParseStatement.ts`)
@@ -608,7 +670,7 @@ export class LxsoftwareStack extends cdk.Stack {
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
       apiName: "lxsoftware-admin-api",
       corsPreflight: {
-        allowHeaders: ["authorization", "content-type"],
+        allowHeaders: ["authorization", "content-type", "x-api-key"],
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
@@ -804,6 +866,28 @@ export class LxsoftwareStack extends cdk.Stack {
       integration,
       authorizer: jwtAuthorizer,
     });
+
+    /**
+     * Read-only mirrors of the admin GET endpoints under /public/*,
+     * authenticated with a static API key (`x-api-key` header) instead of a
+     * Cognito JWT. The handler enforces the same allowlist
+     * (`PUBLIC_READ_PATHS` in backend/lambda/admin/dispatch.py) as defense
+     * in depth. Assets and parse-job routes are intentionally not mirrored.
+     */
+    const publicReadOnlyPaths = [
+      "/public/finance",
+      "/public/finance/quotes",
+      "/public/records",
+      "/public/fx/v2/rates",
+    ];
+    for (const publicPath of publicReadOnlyPaths) {
+      this.httpApi.addRoutes({
+        path: publicPath,
+        methods: [apigwv2.HttpMethod.GET],
+        integration,
+        authorizer: publicApiKeyAuthorizer,
+      });
+    }
 
     // ------------------------------------------------------------------
     // CloudFormation outputs (export names kept stable for compatibility

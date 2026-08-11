@@ -43,6 +43,17 @@ def _claims(event: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _api_key_auth_context(event: dict[str, Any]) -> dict[str, Any]:
+    """Context set by the public API key Lambda authorizer (simple response).
+
+    API Gateway HTTP API places a Lambda authorizer's ``context`` under
+    ``requestContext.authorizer.lambda``. Returns ``{}`` when the request was
+    not authorized by the API key authorizer (e.g. Cognito JWT routes).
+    """
+    ctx = event.get("requestContext", {}).get("authorizer", {}).get("lambda")
+    return ctx if isinstance(ctx, dict) else {}
+
+
 def _groups_include_admin(claims: dict[str, Any]) -> bool:
     raw = claims.get("cognito:groups")
     if raw is None:
