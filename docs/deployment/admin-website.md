@@ -150,6 +150,28 @@ python3 scripts/manage-public-api-keys.py list
 python3 scripts/manage-public-api-keys.py revoke --key-id <keyId>
 ```
 
+### Via GitHub Actions (no local AWS setup)
+
+The **Manage Public API Keys** workflow (`.github/workflows/manage-api-keys.yml`,
+Actions tab > Run workflow) runs the same script through the `GitHubActionsRole`
+OIDC role and the `production` environment.
+
+One-time setup: add a `PUBLIC_API_KEY_GPG_PASSPHRASE` secret under
+**Settings > Environments > production > Secrets** (any strong passphrase you
+keep locally). Because this repository is public and workflow logs are
+world-readable, a minted key is never printed — the job emits a
+gpg-encrypted block in the run summary instead. Retrieve it with:
+
+```bash
+# paste the armored block from the job summary into key.asc, then:
+gpg --decrypt key.asc   # enter the PUBLIC_API_KEY_GPG_PASSPHRASE value
+```
+
+`list` and `revoke` need no passphrase and print straight to the job summary.
+If the run fails with `AccessDenied` on `dynamodb:PutItem` or `kms:Decrypt`,
+grant `GitHubActionsRole` those actions on the records table and the shared
+CMK.
+
 Call the API:
 
 ```bash
