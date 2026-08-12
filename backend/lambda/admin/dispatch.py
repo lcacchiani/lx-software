@@ -11,6 +11,7 @@ from urllib.parse import parse_qs
 
 from botocore.exceptions import ClientError
 
+import bank_sync as bank_sync_mod
 import parse_jobs as parse_jobs_mod
 import runtime
 from contract_constants import (
@@ -202,6 +203,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         parse_jobs_mod._handle_parse_statement_async_worker(event)
         return {}
 
+    if isinstance(event, dict) and event.get("internal") == "bank_sync":
+        bank_sync_mod.handle_bank_sync_worker(event)
+        return {}
+
     method, path = _route(event)
 
     if method == "GET" and path == "/health":
@@ -269,6 +274,30 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             event.get("queryStringParameters"),
             _request_id(event),
         )
+
+    if method == "GET" and path == "/banking":
+        return bank_sync_mod.handle_banking_get(event)
+
+    if method == "GET" and path == "/banking/banks":
+        return bank_sync_mod.handle_banking_banks(event)
+
+    if method == "POST" and path == "/banking/auth":
+        return bank_sync_mod.handle_banking_auth_start(event, user_sub)
+
+    if method == "POST" and path == "/banking/sessions":
+        return bank_sync_mod.handle_banking_auth_complete(event, user_sub)
+
+    if method == "DELETE" and path.startswith("/banking/sessions/"):
+        session_id = path[len("/banking/sessions/"):]
+        return bank_sync_mod.handle_banking_session_delete(
+            event, user_sub, session_id
+        )
+
+    if method == "PUT" and path == "/banking/mappings":
+        return bank_sync_mod.handle_banking_mappings_put(event, user_sub)
+
+    if method == "POST" and path == "/banking/sync":
+        return bank_sync_mod.handle_banking_sync_post(event, user_sub)
 
     if method == "POST" and path == "/assets/upload-url":
         body = _parse_json_body(event)

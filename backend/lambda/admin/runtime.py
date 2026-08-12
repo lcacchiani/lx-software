@@ -18,3 +18,4 @@ _s3 = boto3.client("s3")
 _ddb = boto3.resource("dynamodb")
 _secretsmanager = None
 _lambda_client = None
+_kms = None

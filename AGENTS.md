@@ -52,4 +52,5 @@ There are no automated test suites for `apps/public_www` or CDK currently.
 - Admin tokens are stored in **sessionStorage**; closing the browser tab ends the session and requires signing in again.
 - CDK synth/deploy requires AWS credentials and is not needed for local website development.
 - `apps/public_www`, `apps/admin_web`, and `backend/infrastructure` use npm (lockfiles are `package-lock.json`).
+- **Enable Banking sync:** the admin Banking page (`/banking`) links PSD2 bank accounts through Enable Banking and refreshes accounts-sheet balances (manual "Sync now" + daily EventBridge rule). JWTs are signed by the `lxsoftware-admin/enable-banking` KMS key (`backend/lambda/admin/bank_sync.py`); the feature is off until the `EnableBankingAppId` stack parameter is set. Setup steps in `docs/deployment/admin-website.md`.
 - **Statement PDF import:** the admin SPA polls parse jobs for up to eight minutes (`useParseStatement.ts`), aligned with the `lxsoftware` stack Lambda timeout (300s), `OPENROUTER_TIMEOUT_SECONDS` (210s), and `PARSE_JOB_STUCK_SECONDS` (420s) on `AdminApiFn`. Change those together if you extend OCR-heavy parsing.

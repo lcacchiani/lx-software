@@ -42,6 +42,15 @@ from finance_store import (  # noqa: F401
     _sanitize_pension_records_list,
     _sanitize_savings_records_list,
 )
+from bank_sync import (  # noqa: F401
+    _build_eb_jwt,
+    _consent_valid_until,
+    _load_bank_sync_state,
+    _pick_balance,
+    _summarize_session_accounts,
+    bank_sync_enabled,
+    run_bank_sync,
+)
 from http_common import _groups_include_admin, _utc_iso_z  # noqa: F401
 from parse_jobs import (  # noqa: F401
     _finalize_stuck_processing_job,

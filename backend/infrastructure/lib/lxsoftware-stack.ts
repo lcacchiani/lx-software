@@ -8,6 +8,8 @@ import {
 } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as events from "aws-cdk-lib/aws-events";
+import * as eventsTargets from "aws-cdk-lib/aws-events-targets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
 import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
@@ -158,6 +160,16 @@ export class LxsoftwareStack extends cdk.Stack {
       default: "mistral-ocr",
       description:
         "OpenRouter file-parser PDF engine: pdf-text (free, text-based PDFs), mistral-ocr (paid, scanned PDFs), or native (model-native parsing).",
+    });
+
+    const enableBankingAppId = new cdk.CfnParameter(this, "EnableBankingAppId", {
+      type: "String",
+      default: "",
+      description:
+        "Enable Banking application id (JWT kid) for the bank account sync. " +
+        "Register the app at enablebanking.com with the public key of the " +
+        "EnableBankingSigningKey KMS key (scripts/export-enable-banking-public-key.py). " +
+        "Leave blank to disable bank sync.",
     });
 
     // ------------------------------------------------------------------
@@ -448,6 +460,23 @@ export class LxsoftwareStack extends cdk.Stack {
     const parseJobStaleSeconds = String(PARSE_TIMEOUTS.parseJobStaleSeconds);
     const parseJobStuckSeconds = String(PARSE_TIMEOUTS.parseJobStuckSeconds);
 
+    /**
+     * Asymmetric RSA key that signs the Enable Banking RS256 JWTs. The
+     * private key never leaves KMS; the admin Lambda calls kms:Sign per
+     * token (tokens are cached for ~1h in the Lambda, so call volume is
+     * negligible). RETAIN: losing the key would orphan the Enable Banking
+     * application registration. Asymmetric KMS keys do not support
+     * automatic rotation.
+     */
+    const enableBankingSigningKey = new kms.Key(this, "EnableBankingSigningKey", {
+      alias: "lxsoftware-admin/enable-banking",
+      description:
+        "RSA signing key for Enable Banking API JWTs (bank account sync).",
+      keySpec: kms.KeySpec.RSA_2048,
+      keyUsage: kms.KeyUsage.SIGN_VERIFY,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     const adminFn = createPythonLambda(this, "AdminApiFn", {
       entryDir: path.join(__dirname, "..", "..", "lambda", "admin"),
       timeout: adminStatementParseLambdaTimeout,
@@ -467,7 +496,28 @@ export class LxsoftwareStack extends cdk.Stack {
         PARSE_JOB_STALE_SECONDS: parseJobStaleSeconds,
         PARSE_JOB_STUCK_SECONDS: parseJobStuckSeconds,
         PARSE_JOB_TTL_SECONDS: String(PARSE_TIMEOUTS.parseJobTtlSeconds),
+        ENABLE_BANKING_APP_ID: enableBankingAppId.valueAsString,
+        ENABLE_BANKING_KMS_KEY_ID: enableBankingSigningKey.keyId,
+        ADMIN_WEB_ORIGIN: cdk.Fn.join("", [
+          "https://",
+          adminWebDomainName.valueAsString,
+        ]),
       },
+    });
+
+    enableBankingSigningKey.grant(adminFn, "kms:Sign", "kms:GetPublicKey");
+
+    // Daily unattended balance refresh (05:30 HKT). The handler no-ops when
+    // ENABLE_BANKING_APP_ID is blank, so the rule is safe to keep enabled.
+    new events.Rule(this, "BankSyncDailyRule", {
+      description:
+        "Daily Enable Banking balance sync into the finance accounts sheet.",
+      schedule: events.Schedule.cron({ minute: "30", hour: "21" }),
+      targets: [
+        new eventsTargets.LambdaFunction(adminFn, {
+          event: events.RuleTargetInput.fromObject({ internal: "bank_sync" }),
+        }),
+      ],
     });
 
     // Self-invoke worker name: handler falls back to the Lambda runtime's
@@ -874,6 +924,57 @@ export class LxsoftwareStack extends cdk.Stack {
       authorizer: jwtAuthorizer,
     });
 
+    // Enable Banking sync management (admin JWT only; never mirrored under
+    // /public/*: these routes can move money-adjacent consent state).
+    this.httpApi.addRoutes({
+      path: "/banking",
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/banking/banks",
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/banking/auth",
+      methods: [apigwv2.HttpMethod.POST],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/banking/sessions",
+      methods: [apigwv2.HttpMethod.POST],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/banking/sessions/{sessionId}",
+      methods: [apigwv2.HttpMethod.DELETE],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/banking/mappings",
+      methods: [apigwv2.HttpMethod.PUT],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/banking/sync",
+      methods: [apigwv2.HttpMethod.POST],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
     /**
      * Read-only mirrors of the admin GET endpoints under /public/*,
      * authenticated with a static API key (`x-api-key` header) instead of a
@@ -993,6 +1094,14 @@ export class LxsoftwareStack extends cdk.Stack {
       value: inboundMailBucket.bucketName,
       description: "S3 bucket where SES stores raw inbound messages before processing.",
       exportName: "lxsoftware-InboundMailBucketName",
+    });
+
+    new cdk.CfnOutput(this, "EnableBankingSigningKeyId", {
+      value: enableBankingSigningKey.keyId,
+      description:
+        "KMS key id whose public key must be registered with Enable Banking " +
+        "(export PEM: scripts/export-enable-banking-public-key.py).",
+      exportName: "lxsoftware-EnableBankingSigningKeyId",
     });
 
     new cdk.CfnOutput(this, "AdminApiBaseUrl", {
