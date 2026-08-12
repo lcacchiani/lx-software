@@ -5,6 +5,8 @@ import { AuthenticatedShell } from "./components/AuthenticatedShell";
 import { RequireAuth } from "./components/RequireAuth";
 import { AssetsPage } from "./pages/AssetsPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
+import { BankingCallbackPage } from "./pages/BankingCallbackPage";
+import { BankingPage } from "./pages/BankingPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { FinancePage } from "./pages/FinancePage";
 import { SiuTinDeiPage } from "./pages/SiuTinDeiPage";
@@ -30,6 +32,8 @@ export function App() {
                 <Route index element={<DashboardPage />} />
                 <Route path="assets" element={<AssetsPage />} />
                 <Route path="finance" element={<FinancePage />} />
+                <Route path="banking" element={<BankingPage />} />
+                <Route path="banking/callback" element={<BankingCallbackPage />} />
                 <Route path="siu-tin-dei" element={<SiuTinDeiPage />} />
               </Route>
             </Route>

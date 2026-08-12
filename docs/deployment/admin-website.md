@@ -180,6 +180,46 @@ curl -H "x-api-key: lxpk_..." "$ADMIN_API_BASE_URL/public/finance"
 
 A `.gitleaks.toml` rule flags any `lxpk_…` value committed to the repo.
 
+## Enable Banking account sync
+
+The admin SPA's **Banking** page links open-banking (PSD2) bank accounts via
+[Enable Banking](https://enablebanking.com) and refreshes `recordedValue` on
+the finance **Accounts** sheet from live balances — manually ("Sync now") and
+on a daily EventBridge schedule (05:30 HKT). Only balances are read; no
+payment scopes are requested.
+
+Authentication to the Enable Banking API uses an RS256 JWT signed by the
+stack's asymmetric KMS key (`lxsoftware-admin/enable-banking`) — no private
+key material is ever stored or exported.
+
+One-time setup:
+
+1. Deploy the stack (the KMS key is created even while the feature is off).
+2. Export the public key with admin AWS credentials:
+
+   ```bash
+   python3 scripts/export-enable-banking-public-key.py
+   ```
+
+3. Create an account at [enablebanking.com](https://enablebanking.com/sign-in/)
+   and register a **production** application, pasting the PEM public key as the
+   certificate. Add the redirect URLs
+   `https://<AdminWebDomainName>/banking/callback` and (for local dev)
+   `http://localhost:5173/banking/callback`.
+4. Activate the inactive production application by linking your own accounts
+   ("Activate by linking accounts" in the Control Panel). Restricted
+   applications can only read accounts you link — which is exactly this use
+   case (no Enable Banking contract needed for individual non-commercial use).
+5. Set the returned application id as the `EnableBankingAppId` parameter
+   (`lxsoftware:EnableBankingAppId` in `backend/infrastructure/params/*.json`)
+   and redeploy. Leaving it blank keeps the feature disabled.
+
+Then, in the admin SPA: **Banking → Connect a bank** (redirects through the
+bank's own consent screen and back to `/banking/callback`), map each linked
+bank account to an Accounts-sheet record, and run **Sync now**. Consents
+expire per PSD2 (90 days for most UK banks; the stack caps requests at 180
+days) — reconnect from the same page when a session expires.
+
 ## Scripts
 
 Local or CI deploy of static files after a build:

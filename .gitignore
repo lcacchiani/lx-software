@@ -57,3 +57,7 @@ coverage/
 # Cursor
 .cursorignore
 .cursorindexingignore
+
+# Python bytecode
+__pycache__/
+*.pyc
