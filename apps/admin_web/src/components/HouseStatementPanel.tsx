@@ -9,8 +9,8 @@ import {
   newStatementLineId,
   type FinanceLineType,
   type HouseFinanceData,
-  type HouseKey,
   type HouseStatementLine,
+  type StatementOwnerKey,
   statementLineAssetKeys,
 } from "../lib/financeModel";
 import { formatDateUtc } from "../lib/formatDisplay";
@@ -51,10 +51,13 @@ function isoFromUtcParts(datePart: string, timePart: string): string {
   return `${datePart}T${t}:00.000Z`;
 }
 
-function statementLineTypeLabel(type: FinanceLineType): string {
-  if (type === "income") return "Income";
+function statementLineTypeLabel(
+  type: FinanceLineType,
+  lockedLineType?: Extract<FinanceLineType, "income" | "expenditure">,
+): string {
+  if (type === "income") return lockedLineType === "income" ? "Gain" : "Income";
   if (type === "mortgage") return "Mortgage";
-  return "Expenditure";
+  return lockedLineType === "expenditure" ? "Expense" : "Expenditure";
 }
 
 function statementLineTypeClass(type: FinanceLineType): string {
@@ -159,9 +162,19 @@ function lineToForm(line: HouseStatementLine): LineFormState {
 }
 
 export type HouseStatementPanelProps = {
-  readonly houseKey: HouseKey;
+  readonly houseKey: StatementOwnerKey;
   readonly data: HouseFinanceData;
   readonly onPatch: (patch: (prev: HouseFinanceData) => HouseFinanceData) => void;
+  /** When set, the editor and table only handle this line type. */
+  readonly lockedLineType?: Extract<FinanceLineType, "income" | "expenditure">;
+  readonly showHouseDetails?: boolean;
+  readonly showMortgageImport?: boolean;
+  readonly importTitle?: string;
+  readonly importDescription?: string;
+  readonly lineSectionTitle?: string;
+  readonly tableSectionTitle?: string;
+  readonly emptyMessage?: string;
+  readonly importFileLabel?: string;
 };
 
 const TABLE_COLUMNS: AdminDataTableColumn[] = [
@@ -201,6 +214,15 @@ export function HouseStatementPanel({
   houseKey,
   data,
   onPatch,
+  lockedLineType,
+  showHouseDetails = true,
+  showMortgageImport = true,
+  importTitle = "Import statement (PDF)",
+  importDescription = "Upload a statement PDF (or image). The file is stored under Assets and the contents are sent to OpenRouter to extract each transaction as a new statement line.",
+  lineSectionTitle = "Statement line",
+  tableSectionTitle = "House statement",
+  emptyMessage = "No statement lines yet.",
+  importFileLabel = "Statement file",
 }: HouseStatementPanelProps) {
   const lineFormId = `${houseKey}-line-form`;
   const [floatAmount, setFloatAmount] = useState(String(data.float.amount));
@@ -211,9 +233,10 @@ export function HouseStatementPanel({
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [lineForm, setLineForm] = useState<LineFormState>(() =>
-    emptyLineForm(data.defaultCurrency),
-  );
+  const [lineForm, setLineForm] = useState<LineFormState>(() => {
+    const next = emptyLineForm(data.defaultCurrency);
+    return lockedLineType ? { ...next, type: lockedLineType } : next;
+  });
   const [tableFilter, setTableFilter] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -254,13 +277,18 @@ export function HouseStatementPanel({
     });
   }, [data.defaultCurrency, editingId, prefillStatementAssetKeys]);
 
+  const scopedLines = useMemo(() => {
+    if (!lockedLineType) return data.lines;
+    return data.lines.filter((line) => line.type === lockedLineType);
+  }, [data.lines, lockedLineType]);
+
   const sortedLines = useMemo(() => {
-    return [...data.lines].sort((a, b) => {
+    return [...scopedLines].sort((a, b) => {
       const ta = new Date(a.dateUtc).getTime();
       const tb = new Date(b.dateUtc).getTime();
       return tb - ta;
     });
-  }, [data.lines]);
+  }, [scopedLines]);
 
   const filteredLines = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
@@ -318,7 +346,8 @@ export function HouseStatementPanel({
   function resetLineForm() {
     setEditingId(null);
     setFormError(null);
-    setLineForm(emptyLineForm(data.defaultCurrency));
+    const next = emptyLineForm(data.defaultCurrency);
+    setLineForm(lockedLineType ? { ...next, type: lockedLineType } : next);
     setPendingLineFiles([]);
     setRemovedAssetKeys([]);
     setPrefillStatementAssetKeys(null);
@@ -415,7 +444,7 @@ export function HouseStatementPanel({
     const row: HouseStatementLine = {
       id: editingId ?? newStatementLineId(),
       dateUtc,
-      type: lineForm.type,
+      type: lockedLineType ?? lineForm.type,
       description: lineForm.description.trim(),
       netAmount: net,
       vat,
@@ -489,6 +518,7 @@ export function HouseStatementPanel({
           {statementPdfOpenError}
         </div>
       ) : null}
+      {showHouseDetails ? (
       <AdminEditorSection
         title="House details"
         footer={
@@ -543,10 +573,11 @@ export function HouseStatementPanel({
           </div>
         </div>
       </AdminEditorSection>
+      ) : null}
 
       <AdminEditorSection
-        title="Import statement (PDF)"
-        description="Upload a statement PDF (or image). The file is stored under Assets and the contents are sent to OpenRouter to extract each transaction as a new statement line."
+        title={importTitle}
+        description={importDescription}
         footer={
           <>
             <button
@@ -557,7 +588,11 @@ export function HouseStatementPanel({
                 if (!pdfFile) return;
                 setParseSuccess(null);
                 parseStatement.mutate(
-                  { file: pdfFile, mortgageOnly: importMortgageOnly },
+                  {
+                    file: pdfFile,
+                    mortgageOnly: showMortgageImport && importMortgageOnly,
+                    ...(lockedLineType ? { lineTypeOnly: lockedLineType } : {}),
+                  },
                   {
                     onSuccess: (res) => {
                       setParseSuccess(
@@ -600,7 +635,7 @@ export function HouseStatementPanel({
               className="form-label small mb-0"
               htmlFor={`${houseKey}-statement-pdf`}
             >
-              Statement file
+              {importFileLabel}
             </label>
             <input
               id={`${houseKey}-statement-pdf`}
@@ -617,6 +652,7 @@ export function HouseStatementPanel({
             />
           </div>
         </div>
+        {showMortgageImport ? (
         <div className="form-check mt-2">
           <input
             id={`${houseKey}-statement-import-mortgage-only`}
@@ -637,6 +673,7 @@ export function HouseStatementPanel({
             extracted transactions are discarded.
           </p>
         </div>
+        ) : null}
         {parseStatement.isPending ? (
           <p className="small text-muted mt-2 mb-0">
             Uploading and parsing — often under a minute; large or scanned PDFs can take several minutes.
@@ -662,7 +699,7 @@ export function HouseStatementPanel({
 
       <AdminEditorSection
         containerRef={lineEditorSectionRef}
-        title="Statement line"
+        title={lineSectionTitle}
         footer={
           <>
             <button
@@ -706,6 +743,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
+            {lockedLineType ? null : (
             <div className="col-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-type`}>
                 Type
@@ -726,6 +764,7 @@ export function HouseStatementPanel({
                 <option value="mortgage">Mortgage</option>
               </select>
             </div>
+            )}
             <div className="col-6">
               <label className="form-label small" htmlFor={`${houseKey}-fin-desc`}>
                 Description
@@ -894,7 +933,7 @@ export function HouseStatementPanel({
         </form>
       </AdminEditorSection>
 
-      <AdminEditorSection title="House statement">
+      <AdminEditorSection title={tableSectionTitle}>
         <AdminDataTable
           embedded
           columns={TABLE_COLUMNS}
@@ -910,7 +949,7 @@ export function HouseStatementPanel({
                 </td>
                 <td className="small">
                   <span className={statementLineTypeClass(line.type)}>
-                    {statementLineTypeLabel(line.type)}
+                    {statementLineTypeLabel(line.type, lockedLineType)}
                   </span>
                 </td>
                 <td className="small">
@@ -979,7 +1018,7 @@ export function HouseStatementPanel({
             <AdminDataTableEmptyRow
               colSpan={COL_SPAN}
               message={
-                sortedLines.length ? "No lines match the filter." : "No statement lines yet."
+                sortedLines.length ? "No lines match the filter." : emptyMessage
               }
             />
           )}

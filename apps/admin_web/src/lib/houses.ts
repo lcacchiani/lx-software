@@ -15,9 +15,10 @@ export const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
   { value: "morrison", label: HOUSE_DISPLAY_LABEL.morrison },
 ];
 
-/** Resolves a stored house key to a label, or returns the raw key / em dash for empty. */
+/** Resolves a stored house or statement-book key to a label. */
 export function houseDisplayLabel(house?: string): string {
   if (!house?.trim()) return "—";
+  if (house === "siuTinDei") return "Siu Tin Dei";
   const label = HOUSE_DISPLAY_LABEL[house as HouseKey];
   return label ?? house;
 }

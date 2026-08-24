@@ -17,6 +17,7 @@ import runtime
 from contract_constants import (
     EXPENSE_RECORD_CATEGORIES,
     FINANCE_HOUSE_KEYS,
+    FINANCE_STATEMENT_OWNER_KEYS,
     INCOME_RECORD_CATEGORIES,
 )
 from assets import (
@@ -29,12 +30,14 @@ from finance_store import (
     _allocated_expense_ids_for_allocations,
     _build_allocation_records_for_response,
     _finance_ddb_key,
+    _finance_owner_ddb_key,
     _finance_sheet_ddb_key,
     _load_accounts_records,
     _load_allocation_stored_records,
     _load_existing_expense_income_allocation_percentages,
     _load_finance_expenses_ledger_with_allocation,
     _load_finance_house,
+    _load_finance_owner,
     _load_finance_sheet,
     _load_investment_records,
     _load_liabilities_records,
@@ -77,9 +80,13 @@ from parse_jobs import (
     _parse_job_key,
     _parse_job_public_doc,
     _path_finance_parse_job,
+    _path_siu_tin_dei_parse_job,
     enqueue_parse_statement_async_job,
 )
-from parse_statement import _path_finance_house_for_parse, _statement_basename_already_imported
+from parse_statement import (
+    _path_finance_house_for_parse,
+    _statement_basename_already_imported,
+)
 from proxies import _proxy_finance_quotes, _proxy_fx_v2_rates
 from runtime import RECORD_PK_PREFIX, logger
 
@@ -385,10 +392,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         house_raw = body.get("house")
         house_val: str | None = None
         if house_raw is not None:
-            if not isinstance(house_raw, str) or house_raw not in FINANCE_HOUSE_KEYS:
+            if (
+                not isinstance(house_raw, str)
+                or house_raw not in FINANCE_STATEMENT_OWNER_KEYS
+            ):
+                owners = ", ".join(sorted(FINANCE_STATEMENT_OWNER_KEYS))
                 return _json_response(
                     400,
-                    {"message": "house must be hillmarton or morrison when provided"},
+                    {"message": f"house must be {owners} when provided"},
                 )
             house_val = house_raw
         prefix = f"uploads/{user_sub}/"
@@ -680,6 +691,112 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             exp_rows, merged_stored, inc_rows, exp_pct
         )
         return _json_response(200, {"allocationRecords": allocation_response})
+
+    if method == "GET" and path == "/siu-tin-dei":
+        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        return _json_response(200, {"data": _load_finance_owner(table, "siuTinDei")})
+
+    if method == "PUT" and path == "/siu-tin-dei":
+        body = _parse_json_body(event)
+        if not isinstance(body, dict):
+            body = {}
+        body = {**body, "defaultCurrency": "HKD"}
+        if not isinstance(body.get("float"), dict):
+            body["float"] = {"amount": 0, "currency": "HKD"}
+        try:
+            normalized = _normalize_finance_payload(body)
+        except ValueError as exc:
+            return _json_response(400, {"message": str(exc)})
+        for i, ln in enumerate(normalized.get("lines") or []):
+            if ln.get("type") == "mortgage":
+                return _json_response(
+                    400,
+                    {"message": f"lines[{i}].type must be income or expenditure"},
+                )
+        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        ddb_item = {**_finance_owner_ddb_key("siuTinDei"), **_to_ddb_nested(normalized)}
+        table.put_item(Item=ddb_item)
+        _audit(user_sub, "FINANCE_PUT", "siuTinDei", event)
+        return _json_response(200, {"data": normalized})
+
+    if method == "GET" and path.startswith("/siu-tin-dei/parse-statement/jobs/"):
+        job_id = _path_siu_tin_dei_parse_job(event, path)
+        if not job_id:
+            return _json_response(404, {"message": "Not found"})
+        if not user_sub:
+            return _json_response(400, {"message": "Missing sub claim"})
+        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        raw = table.get_item(Key=_parse_job_key(job_id))
+        item = raw.get("Item")
+        if not item:
+            return _json_response(404, {"message": "Job not found"})
+        doc = _from_ddb_nested(item)
+        if doc.get("ownerSub") != user_sub:
+            return _json_response(403, {"message": "Forbidden"})
+        if doc.get("house") != "siuTinDei":
+            return _json_response(400, {"message": "Book does not match job"})
+        doc = _finalize_stuck_processing_job(table, _parse_job_key(job_id), doc)
+        return _json_response(200, _parse_job_public_doc(doc))
+
+    if method == "POST" and path == "/siu-tin-dei/parse-statement":
+        if not user_sub:
+            return _json_response(400, {"message": "Missing sub claim"})
+        body = _parse_json_body(event)
+        key = body.get("key")
+        if not isinstance(key, str) or not key.strip():
+            return _json_response(400, {"message": "key is required"})
+        prefix = f"uploads/{user_sub}/"
+        if not key.startswith(prefix):
+            return _json_response(400, {"message": "Invalid key for this user"})
+        line_type_only = body.get("lineTypeOnly")
+        if line_type_only not in ("income", "expenditure"):
+            return _json_response(
+                400,
+                {"message": "lineTypeOnly must be income or expenditure"},
+            )
+        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+        book_data = _load_finance_owner(table, "siuTinDei")
+        file_name = os.path.basename(key)
+        if _statement_basename_already_imported(book_data, file_name):
+            return _json_response(
+                409,
+                {
+                    "message": (
+                        f"A statement file named {file_name!r} was already imported "
+                        "for Siu Tin Dei. Remove its imported lines or rename the "
+                        "file, then try again."
+                    )
+                },
+            )
+        try:
+            job_id = enqueue_parse_statement_async_job(
+                house="siuTinDei",
+                s3_keys=[key],
+                owner_sub=user_sub,
+                api_request_id=_request_id(event),
+                source="api",
+                line_type_only=line_type_only,
+            )
+        except Exception as exc:
+            _log_event(
+                "error",
+                tag="parse_job_enqueue_failed",
+                err=str(exc)[:400],
+                request_id=_request_id(event),
+            )
+            return _json_response(
+                502,
+                {"message": "Could not start statement parse job"},
+            )
+        _log_event(
+            "info",
+            tag="parse_job_enqueued",
+            sub=user_sub,
+            house="siuTinDei",
+            job_id=job_id,
+            request_id=_request_id(event),
+        )
+        return _json_response(202, {"jobId": job_id, "status": "pending"})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"

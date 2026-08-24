@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { adminFetchJson } from "./apiAdminClient";
-import type { HouseKey } from "./financeModel";
+import type { StatementOwnerKey } from "./financeModel";
 
 type PresignedUpload = {
   readonly url: string;
@@ -95,7 +95,7 @@ async function uploadToS3(presigned: PresignedUpload, file: File): Promise<void>
  */
 export async function uploadFinanceAsset(
   file: File,
-  house: HouseKey,
+  house: StatementOwnerKey,
   queryClient: QueryClient,
 ): Promise<string> {
   const lowered = file.name.toLowerCase();

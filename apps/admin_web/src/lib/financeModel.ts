@@ -25,6 +25,7 @@ export {
   FINANCE_ACCOUNT_TYPES,
   FINANCE_HOUSE_KEYS,
   FINANCE_LIABILITY_TYPES,
+  FINANCE_STATEMENT_BOOK_KEYS,
   INCOME_CATEGORIES,
   INVESTMENT_CATEGORIES,
   INVESTMENT_CRYPTO_CURRENCY_MAX_LEN,
@@ -36,6 +37,8 @@ export {
   type FinanceLiabilityType,
   type HouseKey,
   type InvestmentCategory,
+  type StatementBookKey,
+  type StatementOwnerKey,
 } from "./financeTypes";
 
 export type FinanceLineType = "income" | "expenditure" | "mortgage";

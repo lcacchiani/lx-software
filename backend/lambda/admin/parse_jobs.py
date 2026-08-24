@@ -91,6 +91,7 @@ def enqueue_parse_statement_async_job(
     api_request_id: str | None,
     source: str = "api",
     mortgage_only: bool = False,
+    line_type_only: str | None = None,
 ) -> str:
     """Persist a pending PARSE_JOB and invoke the worker Lambda (async)."""
     table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
@@ -110,6 +111,8 @@ def enqueue_parse_statement_async_job(
         "source": source[:64],
         "mortgageOnly": mortgage_only,
     }
+    if isinstance(line_type_only, str) and line_type_only.strip():
+        job_item["lineTypeOnly"] = line_type_only.strip().lower()
     table.put_item(Item=_to_ddb_nested(job_item))
     payload = {
         "internal": "parse_statement_async",
@@ -120,6 +123,8 @@ def enqueue_parse_statement_async_job(
         "apiRequestId": api_request_id or "",
         "mortgageOnly": mortgage_only,
     }
+    if "lineTypeOnly" in job_item:
+        payload["lineTypeOnly"] = job_item["lineTypeOnly"]
     try:
         _invoke_parse_statement_worker(payload)
     except Exception:
@@ -154,6 +159,25 @@ def _path_finance_parse_job(
     ):
         return parts[1].lower(), parts[4]
     return None, None
+
+
+def _path_siu_tin_dei_parse_job(
+    event: dict[str, Any], path: str
+) -> str | None:
+    """Job id from ``/siu-tin-dei/parse-statement/jobs/{jobId}``."""
+    pp = event.get("pathParameters") or {}
+    job_raw = pp.get("jobId")
+    if isinstance(job_raw, str) and job_raw.strip():
+        return job_raw.strip()
+    parts = [p for p in path.split("/") if p]
+    if (
+        len(parts) == 4
+        and parts[0] == "siu-tin-dei"
+        and parts[1] == "parse-statement"
+        and parts[2] == "jobs"
+    ):
+        return parts[3]
+    return None
 
 
 def _invoke_parse_statement_worker(payload: dict[str, Any]) -> None:
@@ -257,6 +281,12 @@ def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
         }
     }
     mortgage_only = payload.get("mortgageOnly") is True
+    raw_type = payload.get("lineTypeOnly")
+    line_type_only = (
+        raw_type.strip().lower()
+        if isinstance(raw_type, str) and raw_type.strip()
+        else None
+    )
     from parse_statement import _ParseStatementError, execute_parse_statement
 
     try:
@@ -267,6 +297,7 @@ def _handle_parse_statement_async_worker(payload: dict[str, Any]) -> None:
             request_id=req_token,
             event=synthetic_event,
             mortgage_only=mortgage_only,
+            line_type_only=line_type_only,
         )
     except _ParseStatementError as exc:
         raw_old = table.get_item(Key=key).get("Item") or {}

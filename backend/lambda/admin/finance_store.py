@@ -19,6 +19,8 @@ from contract_constants import (
     FINANCE_ACCOUNT_TYPES,
     FINANCE_HOUSE_KEYS,
     FINANCE_LIABILITY_TYPES,
+    FINANCE_STATEMENT_BOOK_KEYS,
+    FINANCE_STATEMENT_OWNER_KEYS,
     FINANCE_LINE_TYPES,
     INCOME_RECORD_CATEGORIES,
     INVESTMENT_RECORD_CATEGORIES,
@@ -2172,8 +2174,19 @@ def _finance_ddb_key(house: str) -> dict[str, str]:
     return {"pk": f"FINANCE#house#{house}", "sk": "STATE"}
 
 
-def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
-    res = table.get_item(Key=_finance_ddb_key(house))
+def _statement_book_ddb_key(book: str) -> dict[str, str]:
+    return {"pk": f"FINANCE#book#{book}", "sk": "STATE"}
+
+
+def _finance_owner_ddb_key(owner: str) -> dict[str, str]:
+    """DynamoDB key for a house statement or a named statement book."""
+    if owner in FINANCE_STATEMENT_BOOK_KEYS:
+        return _statement_book_ddb_key(owner)
+    return _finance_ddb_key(owner)
+
+
+def _load_finance_owner(table: Any, owner: str) -> dict[str, Any]:
+    res = table.get_item(Key=_finance_owner_ddb_key(owner))
     item = res.get("Item")
     if not item:
         return _default_finance_house()
@@ -2184,16 +2197,20 @@ def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
     return _sanitize_finance_house(nested)
 
 
+def _load_finance_house(table: Any, house: str) -> dict[str, Any]:
+    return _load_finance_owner(table, house)
+
+
 def _source_key_to_house_map(table: Any) -> dict[str, str]:
     """Map S3 object keys to finance house keys using imported statement lines."""
     out: dict[str, str] = {}
-    for house in FINANCE_HOUSE_KEYS:
-        data = _load_finance_house(table, house)
+    for owner in sorted(FINANCE_STATEMENT_OWNER_KEYS):
+        data = _load_finance_owner(table, owner)
         for ln in data.get("lines") or []:
             if not isinstance(ln, dict):
                 continue
             for raw_key in _line_source_asset_keys_raw(ln):
-                out.setdefault(raw_key, house)
+                out.setdefault(raw_key, owner)
     return out
 
 

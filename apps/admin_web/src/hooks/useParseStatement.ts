@@ -2,10 +2,17 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
   statementLineAssetKeys,
+  type FinanceLineType,
   type FinancePersistedState,
   type HouseFinanceData,
-  type HouseKey,
+  type StatementOwnerKey,
 } from "../lib/financeModel";
+import {
+  isHouseKey,
+  parseStatementJobPath,
+  parseStatementStartPath,
+  statementOwnerQueryKey,
+} from "../lib/statementOwners";
 import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 
 const DUPLICATE_STATEMENT_BASE_MSG =
@@ -61,6 +68,7 @@ export type ParseStatementResult = {
 export type ParseStatementVariables = {
   readonly file: File;
   readonly mortgageOnly?: boolean;
+  readonly lineTypeOnly?: Extract<FinanceLineType, "income" | "expenditure">;
 };
 
 /**
@@ -69,15 +77,25 @@ export type ParseStatementVariables = {
  */
 export { extractS3ErrorCode } from "../lib/uploadFinanceAsset";
 
+function bookDataForOwner(
+  owner: StatementOwnerKey,
+  qc: ReturnType<typeof useQueryClient>,
+): HouseFinanceData | undefined {
+  if (isHouseKey(owner)) {
+    return qc.getQueryData<FinancePersistedState>(["finance"])?.[owner];
+  }
+  return qc.getQueryData<HouseFinanceData>(statementOwnerQueryKey(owner));
+}
+
 async function pollParseJob(
-  house: HouseKey,
+  owner: StatementOwnerKey,
   jobId: string,
 ): Promise<ParseStatementResult> {
   const deadline = Date.now() + PARSE_POLL_DEADLINE_MS;
   let nextWaitMs = PARSE_POLL_INITIAL_WAIT_MS;
   while (Date.now() < deadline) {
     const j = await adminFetchJson<ParseJobPollResponse>(
-      `/finance/${house}/parse-statement/jobs/${encodeURIComponent(jobId)}`,
+      parseStatementJobPath(owner, jobId),
     );
     if (j.status === "succeeded") {
       const keys =
@@ -98,23 +116,24 @@ async function pollParseJob(
     nextWaitMs = Math.min(PARSE_POLL_BACKOFF_CAP_MS, nextWaitMs * 2);
   }
   throw new Error(
-    "Statement parse is taking longer than expected. Reload the finance page and check whether new lines appeared.",
+    "Statement parse is taking longer than expected. Reload the page and check whether new lines appeared.",
   );
 }
 
 /**
  * Upload a PDF (or supported image) statement to S3 then call the admin API
- * to extract statement lines via OpenRouter and append them to the house's
+ * to extract statement lines via OpenRouter and append them to the owner's
  * finance record. Parsing runs asynchronously on the server (avoids API
  * Gateway timeouts); this hook polls until the job completes then refreshes
- * finance data.
+ * cached book data.
  *
  * Pass `{ mortgageOnly: true }` to append only parser rows with type `mortgage`.
+ * Pass `{ lineTypeOnly: "expenditure" | "income" }` for tab-scoped imports.
  */
-export function useParseStatement(house: HouseKey) {
+export function useParseStatement(owner: StatementOwnerKey) {
   const qc = useQueryClient();
   return useMutation<ParseStatementResult, Error, ParseStatementVariables>({
-    mutationFn: async ({ file, mortgageOnly = false }) => {
+    mutationFn: async ({ file, mortgageOnly = false, lineTypeOnly }) => {
       if (!file) {
         throw new Error("No file selected");
       }
@@ -132,26 +151,27 @@ export function useParseStatement(house: HouseKey) {
         throw new Error("Only PDF or image statements are supported.");
       }
 
-      const financeState = qc.getQueryData<FinancePersistedState>(["finance"]);
-      if (financeState) {
-        const basenames = existingImportedStatementBasenames(financeState[house]);
+      const book = bookDataForOwner(owner, qc);
+      if (book) {
+        const basenames = existingImportedStatementBasenames(book);
         if (basenames.has(file.name)) {
           throw new Error(
-            `A statement file named "${file.name}" was already imported for this house. ${DUPLICATE_STATEMENT_BASE_MSG}`,
+            `A statement file named "${file.name}" was already imported. ${DUPLICATE_STATEMENT_BASE_MSG}`,
           );
         }
       }
 
       console.info("[useParseStatement] start", {
-        house,
+        owner,
         fileName: file.name,
         fileType: file.type,
         contentTypeRequested: contentType,
         fileSize: file.size,
         mortgageOnly,
+        lineTypeOnly,
       });
 
-      const uploadKey = await uploadFinanceAsset(file, house, qc);
+      const uploadKey = await uploadFinanceAsset(file, owner, qc);
       console.info("[useParseStatement] upload + confirm ok", {
         key: uploadKey,
         size: file.size,
@@ -160,12 +180,13 @@ export function useParseStatement(house: HouseKey) {
       let jobStart: ParseJobStartResponse;
       try {
         jobStart = await adminFetchJson<ParseJobStartResponse>(
-          `/finance/${house}/parse-statement`,
+          parseStatementStartPath(owner),
           {
             method: "POST",
             body: JSON.stringify({
               key: uploadKey,
               ...(mortgageOnly ? { mortgageOnly: true } : {}),
+              ...(lineTypeOnly ? { lineTypeOnly } : {}),
             }),
           },
         );
@@ -178,8 +199,8 @@ export function useParseStatement(house: HouseKey) {
         throw new Error("Statement parse did not return a job id.");
       }
 
-      const result = await pollParseJob(house, jobStart.jobId.trim());
-      await qc.invalidateQueries({ queryKey: ["finance"] });
+      const result = await pollParseJob(owner, jobStart.jobId.trim());
+      await qc.invalidateQueries({ queryKey: [...statementOwnerQueryKey(owner)] });
 
       console.info("[useParseStatement] parse job ok", {
         key: uploadKey,

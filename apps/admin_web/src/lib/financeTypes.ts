@@ -6,6 +6,7 @@ export {
   FINANCE_ACCOUNT_TYPES,
   FINANCE_HOUSE_KEYS,
   FINANCE_LIABILITY_TYPES,
+  FINANCE_STATEMENT_BOOK_KEYS,
   GLOBAL_DEFAULT_CURRENCY,
   INCOME_CATEGORIES,
   INVESTMENT_CATEGORIES,
@@ -15,6 +16,8 @@ export {
   MAX_PENSION_DESCRIPTION_LEN,
   type CurrencyCode,
   type HouseKey,
+  type StatementBookKey,
+  type StatementOwnerKey,
 } from "./contracts/generated";
 
 /** Legacy aliases used across finance UI code. */

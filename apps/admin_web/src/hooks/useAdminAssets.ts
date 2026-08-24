@@ -4,6 +4,7 @@ import { adminFetchJson } from "../lib/apiAdminClient";
 import {
   statementLineAssetKeys,
   type FinancePersistedState,
+  type HouseFinanceData,
   type HouseKey,
 } from "../lib/financeModel";
 
@@ -39,8 +40,9 @@ export interface AdminAssetMeta {
 export function useAdminAssets() {
   const qc = useQueryClient();
   const financeUpdatedAt = qc.getQueryState(["finance"])?.dataUpdatedAt ?? 0;
+  const siuTinDeiUpdatedAt = qc.getQueryState(["siuTinDei"])?.dataUpdatedAt ?? 0;
   return useInfiniteQuery({
-    queryKey: ["admin", "asset-records", financeUpdatedAt],
+    queryKey: ["admin", "asset-records", financeUpdatedAt, siuTinDeiUpdatedAt],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
       const qs = pageParam
@@ -51,6 +53,7 @@ export function useAdminAssets() {
         nextCursor?: string | null;
       }>(`/records${qs}`);
       const finance = qc.getQueryData<FinancePersistedState>(["finance"]);
+      const siuTinDei = qc.getQueryData<HouseFinanceData>(["siuTinDei"]);
       const items = data.items
         .filter(
           (row) => row.pk.startsWith("ASSET#") && row.sk === "META",
@@ -59,7 +62,16 @@ export function useAdminAssets() {
           if (row.house?.trim()) return row;
           const objectKey = objectKeyFromAssetPk(row.pk);
           const inferred = inferHouseFromFinanceLines(objectKey, finance);
-          return inferred ? { ...row, house: inferred } : row;
+          if (inferred) return { ...row, house: inferred };
+          if (
+            siuTinDei &&
+            siuTinDei.lines.some((line) =>
+              statementLineAssetKeys(line).some((k) => k === objectKey),
+            )
+          ) {
+            return { ...row, house: "siuTinDei" };
+          }
+          return row;
         });
       return { items, nextCursor: data.nextCursor ?? null };
     },
