@@ -48,6 +48,8 @@ def write_python(finance: dict, timeouts: dict, domains: dict) -> None:
         "ADMIN_DOMAINS_CONTRACT = _load(\"admin-domains.json\")",
         "",
         "FINANCE_HOUSE_KEYS = frozenset(FINANCE_CONTRACT[\"houses\"])",
+        "FINANCE_STATEMENT_BOOK_KEYS = frozenset(FINANCE_CONTRACT[\"statementBooks\"])",
+        "FINANCE_STATEMENT_OWNER_KEYS = FINANCE_HOUSE_KEYS | FINANCE_STATEMENT_BOOK_KEYS",
         "FINANCE_LINE_TYPES = frozenset(FINANCE_CONTRACT[\"lineTypes\"])",
         "SUPPORTED_FINANCE_CURRENCIES = frozenset(FINANCE_CONTRACT[\"currencies\"])",
         "DEFAULT_FINANCE_CURRENCY = FINANCE_CONTRACT[\"defaultCurrency\"]",
@@ -99,6 +101,10 @@ export const GLOBAL_DEFAULT_CURRENCY: CurrencyCode = {json.dumps(finance["defaul
 
 export const FINANCE_HOUSE_KEYS = {json.dumps(finance["houses"])} as const;
 export type HouseKey = (typeof FINANCE_HOUSE_KEYS)[number];
+
+export const FINANCE_STATEMENT_BOOK_KEYS = {json.dumps(finance["statementBooks"])} as const;
+export type StatementBookKey = (typeof FINANCE_STATEMENT_BOOK_KEYS)[number];
+export type StatementOwnerKey = HouseKey | StatementBookKey;
 
 export const INCOME_CATEGORIES = {json.dumps(finance["incomeCategories"])} as const;
 export const EXPENSE_CATEGORIES = {json.dumps(finance["expenseCategories"])} as const;

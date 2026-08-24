@@ -57,10 +57,12 @@ from parse_jobs import (  # noqa: F401
     _handle_parse_statement_async_worker,
     _parse_job_public_doc,
     _path_finance_parse_job,
+    _path_siu_tin_dei_parse_job,
     enqueue_parse_statement_async_job,
 )
 from parse_statement import (  # noqa: F401
     _path_finance_house_for_parse,
+    _resolve_parse_line_type_filter,
     _statement_basename_already_imported,
     execute_parse_statement,
 )

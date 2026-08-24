@@ -10,12 +10,16 @@ from botocore.exceptions import ClientError
 
 import runtime
 from admin_runtime import _get_secretsmanager_client
-from contract_constants import DEFAULT_FINANCE_CURRENCY, MAX_SOURCE_ASSET_KEYS_PER_LINE
+from contract_constants import (
+    DEFAULT_FINANCE_CURRENCY,
+    FINANCE_LINE_TYPES,
+    MAX_SOURCE_ASSET_KEYS_PER_LINE,
+)
 from ddb_convert import _to_ddb_nested
 from finance_store import (
-    _finance_ddb_key,
+    _finance_owner_ddb_key,
     _line_source_asset_keys_raw,
-    _load_finance_house,
+    _load_finance_owner,
     _normalize_finance_payload,
     _persist_asset_meta_after_parse,
 )
@@ -42,6 +46,21 @@ def _path_finance_house_for_parse(event: dict[str, Any], path: str) -> str | Non
     return None
 
 
+def _resolve_parse_line_type_filter(
+    *,
+    mortgage_only: bool,
+    line_type_only: str | None,
+) -> str | None:
+    """Return the line type to keep, or None to keep every extracted row."""
+    if mortgage_only:
+        return "mortgage"
+    if isinstance(line_type_only, str) and line_type_only.strip():
+        t = line_type_only.strip().lower()
+        if t in FINANCE_LINE_TYPES:
+            return t
+    return None
+
+
 def _statement_basename_already_imported(
     house_data: dict[str, Any], basename: str
 ) -> bool:
@@ -63,6 +82,7 @@ def execute_parse_statement(
     request_id: str,
     event: dict[str, Any],
     mortgage_only: bool = False,
+    line_type_only: str | None = None,
 ) -> dict[str, Any]:
     """Run OpenRouter on one or more assets and append parsed lines.
 
@@ -71,7 +91,8 @@ def execute_parse_statement(
     extracted line in the admin UI). Used by the HTTP API and inbound-email.
 
     When ``mortgage_only`` is true, only parsed lines with ``type`` ``mortgage``
-    are appended; all other extracted rows are discarded.
+    are appended; all other extracted rows are discarded. ``line_type_only``
+    does the same for any finance line type (used by Siu Tin Dei tabs).
 
     Raises ``_ParseStatementError`` on user-facing failures.
 
@@ -104,10 +125,11 @@ def execute_parse_statement(
         key=",".join(keys_ordered)[:512],
         request_id=request_id,
         mortgage_only=mortgage_only,
+        line_type_only=line_type_only,
     )
 
     table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-    house_data = _load_finance_house(table, house)
+    house_data = _load_finance_owner(table, house)
 
     file_meta: list[tuple[str, str, dict[str, Any]]] = []
     for s3_key in keys_ordered:
@@ -190,12 +212,16 @@ def execute_parse_statement(
             if isinstance(raw_line, dict):
                 all_parsed_raw_lines.append(raw_line)
 
-    if mortgage_only:
+    type_filter = _resolve_parse_line_type_filter(
+        mortgage_only=mortgage_only,
+        line_type_only=line_type_only,
+    )
+    if type_filter:
         all_parsed_raw_lines = [
             ln
             for ln in all_parsed_raw_lines
             if isinstance(ln, dict)
-            and str(ln.get("type", "")).strip().lower() == "mortgage"
+            and str(ln.get("type", "")).strip().lower() == type_filter
         ]
 
     new_lines: list[dict[str, Any]] = []
@@ -234,7 +260,7 @@ def execute_parse_statement(
             500, f"Parsed lines failed validation: {exc}"
         ) from exc
 
-    ddb_item = {**_finance_ddb_key(house), **_to_ddb_nested(normalized)}
+    ddb_item = {**_finance_owner_ddb_key(house), **_to_ddb_nested(normalized)}
     table.put_item(Item=ddb_item)
     for s3_key, file_name, head in file_meta:
         _persist_asset_meta_after_parse(
