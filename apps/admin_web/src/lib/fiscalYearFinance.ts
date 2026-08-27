@@ -95,3 +95,19 @@ export function sumHouseStatementLinesForFiscalYear(
 
   return { incomeByCurrency: income, expensesByCurrency: expenses, mortgageByCurrency: mortgage };
 }
+
+/**
+ * Per-currency net of gains (income) minus expenses. Zero nets are omitted.
+ */
+export function netGainsMinusExpensesByCurrency(
+  gains: Readonly<Record<string, number>>,
+  expenses: Readonly<Record<string, number>>,
+): Record<string, number> {
+  const keys = new Set([...Object.keys(gains), ...Object.keys(expenses)]);
+  const out: Record<string, number> = {};
+  for (const currency of keys) {
+    const net = (gains[currency] ?? 0) - (expenses[currency] ?? 0);
+    if (net !== 0) out[currency] = net;
+  }
+  return out;
+}

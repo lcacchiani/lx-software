@@ -3,6 +3,7 @@ import {
   FISCAL_YEAR_OPTIONS,
   formatFiscalYearIdLabel,
   fiscalYearIdToStartCalendarYear,
+  netGainsMinusExpensesByCurrency,
   sumHouseStatementLinesForFiscalYear,
   type FiscalYearId,
 } from "../lib/fiscalYearFinance";
@@ -44,19 +45,6 @@ function CurrencyBucketList({
   );
 }
 
-function netByCurrency(
-  gains: Readonly<Record<string, number>>,
-  expenses: Readonly<Record<string, number>>,
-): Record<string, number> {
-  const keys = new Set([...Object.keys(gains), ...Object.keys(expenses)]);
-  const out: Record<string, number> = {};
-  for (const currency of keys) {
-    const net = (gains[currency] ?? 0) - (expenses[currency] ?? 0);
-    if (net !== 0) out[currency] = net;
-  }
-  return out;
-}
-
 export function StatementBookDashboardCard({
   title,
   data,
@@ -77,14 +65,15 @@ export function StatementBookDashboardCard({
     [data.lines, fiscalYear],
   );
   const net = useMemo(
-    () => netByCurrency(sums.incomeByCurrency, sums.expensesByCurrency),
+    () =>
+      netGainsMinusExpensesByCurrency(sums.incomeByCurrency, sums.expensesByCurrency),
     [sums.expensesByCurrency, sums.incomeByCurrency],
   );
   const fyLabel = formatFiscalYearIdLabel(fiscalYear);
 
   return (
-    <div className="card shadow-sm">
-      <div className="card-body">
+    <div className="card h-100 shadow-sm">
+      <div className="card-body d-flex flex-column">
         <h2 className="h6 mb-3">
           <strong>{title}</strong>
         </h2>

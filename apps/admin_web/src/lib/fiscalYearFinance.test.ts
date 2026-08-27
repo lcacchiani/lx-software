@@ -4,6 +4,7 @@ import {
   formatFiscalYearIdLabel,
   fiscalYearIdToStartCalendarYear,
   fiscalYearUtcBounds,
+  netGainsMinusExpensesByCurrency,
   sumHouseStatementLinesForFiscalYear,
 } from "./fiscalYearFinance";
 import type { HouseStatementLine } from "./financeModel";
@@ -105,5 +106,20 @@ describe("sumHouseStatementLinesForFiscalYear", () => {
     expect(r.expensesByCurrency.HKD).toBe(100);
     expect(r.mortgageByCurrency.HKD).toBe(3000);
     expect(r.incomeByCurrency.HKD).toBeUndefined();
+  });
+});
+
+describe("netGainsMinusExpensesByCurrency", () => {
+  it("subtracts expenses from gains per currency and omits zeros", () => {
+    expect(
+      netGainsMinusExpensesByCurrency(
+        { HKD: 500, USD: 20 },
+        { HKD: 120, GBP: 5 },
+      ),
+    ).toEqual({ HKD: 380, USD: 20, GBP: -5 });
+  });
+
+  it("omits a currency whose gains and expenses cancel", () => {
+    expect(netGainsMinusExpensesByCurrency({ HKD: 50 }, { HKD: 50 })).toEqual({});
   });
 });
