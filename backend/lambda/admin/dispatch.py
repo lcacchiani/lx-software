@@ -17,6 +17,7 @@ import runtime
 from contract_constants import (
     EXPENSE_RECORD_CATEGORIES,
     FINANCE_HOUSE_KEYS,
+    FINANCE_STATEMENT_BOOK_KEYS,
     FINANCE_STATEMENT_OWNER_KEYS,
     INCOME_RECORD_CATEGORIES,
 )
@@ -80,7 +81,7 @@ from parse_jobs import (
     _parse_job_key,
     _parse_job_public_doc,
     _path_finance_parse_job,
-    _path_siu_tin_dei_parse_job,
+    _path_statement_book_parse_job,
     enqueue_parse_statement_async_job,
 )
 from parse_statement import (
@@ -103,6 +104,33 @@ PUBLIC_READ_PATHS = frozenset(
         "/public/fx/v2/rates",
     }
 )
+
+STATEMENT_BOOK_DISPLAY_LABEL = {
+    "siuTinDei": "Siu Tin Dei",
+    "lxSoftware": "LX Software",
+}
+
+
+def _statement_book_slug(book_key: str) -> str:
+    out: list[str] = []
+    for ch in book_key:
+        if ch.isupper():
+            out.append("-")
+            out.append(ch.lower())
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _match_statement_book_path(path: str) -> tuple[str, str] | None:
+    parts = [p for p in path.split("/") if p]
+    if not parts:
+        return None
+    slug = parts[0]
+    for key in FINANCE_STATEMENT_BOOK_KEYS:
+        if _statement_book_slug(key) == slug:
+            return key, slug
+    return None
 
 
 def _records_get_response(event: dict[str, Any]) -> dict[str, Any]:
@@ -692,111 +720,119 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
         return _json_response(200, {"allocationRecords": allocation_response})
 
-    if method == "GET" and path == "/siu-tin-dei":
-        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        return _json_response(200, {"data": _load_finance_owner(table, "siuTinDei")})
+    book_match = _match_statement_book_path(path)
+    if book_match:
+        book_key, slug = book_match
+        book_label = STATEMENT_BOOK_DISPLAY_LABEL.get(book_key, book_key)
 
-    if method == "PUT" and path == "/siu-tin-dei":
-        body = _parse_json_body(event)
-        if not isinstance(body, dict):
-            body = {}
-        body = {**body, "defaultCurrency": "HKD"}
-        if not isinstance(body.get("float"), dict):
-            body["float"] = {"amount": 0, "currency": "HKD"}
-        try:
-            normalized = _normalize_finance_payload(body)
-        except ValueError as exc:
-            return _json_response(400, {"message": str(exc)})
-        for i, ln in enumerate(normalized.get("lines") or []):
-            if ln.get("type") == "mortgage":
+        if method == "GET" and path == f"/{slug}":
+            table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+            return _json_response(200, {"data": _load_finance_owner(table, book_key)})
+
+        if method == "PUT" and path == f"/{slug}":
+            body = _parse_json_body(event)
+            if not isinstance(body, dict):
+                body = {}
+            body = {**body, "defaultCurrency": "HKD"}
+            if not isinstance(body.get("float"), dict):
+                body["float"] = {"amount": 0, "currency": "HKD"}
+            try:
+                normalized = _normalize_finance_payload(body)
+            except ValueError as exc:
+                return _json_response(400, {"message": str(exc)})
+            for i, ln in enumerate(normalized.get("lines") or []):
+                if ln.get("type") == "mortgage":
+                    return _json_response(
+                        400,
+                        {"message": f"lines[{i}].type must be income or expenditure"},
+                    )
+            table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+            ddb_item = {
+                **_finance_owner_ddb_key(book_key),
+                **_to_ddb_nested(normalized),
+            }
+            table.put_item(Item=ddb_item)
+            _audit(user_sub, "FINANCE_PUT", book_key, event)
+            return _json_response(200, {"data": normalized})
+
+        if method == "GET" and path.startswith(f"/{slug}/parse-statement/jobs/"):
+            job_id = _path_statement_book_parse_job(event, path, slug)
+            if not job_id:
+                return _json_response(404, {"message": "Not found"})
+            if not user_sub:
+                return _json_response(400, {"message": "Missing sub claim"})
+            table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+            raw = table.get_item(Key=_parse_job_key(job_id))
+            item = raw.get("Item")
+            if not item:
+                return _json_response(404, {"message": "Job not found"})
+            doc = _from_ddb_nested(item)
+            if doc.get("ownerSub") != user_sub:
+                return _json_response(403, {"message": "Forbidden"})
+            if doc.get("house") != book_key:
+                return _json_response(400, {"message": "Book does not match job"})
+            doc = _finalize_stuck_processing_job(table, _parse_job_key(job_id), doc)
+            return _json_response(200, _parse_job_public_doc(doc))
+
+        if method == "POST" and path == f"/{slug}/parse-statement":
+            if not user_sub:
+                return _json_response(400, {"message": "Missing sub claim"})
+            body = _parse_json_body(event)
+            key = body.get("key")
+            if not isinstance(key, str) or not key.strip():
+                return _json_response(400, {"message": "key is required"})
+            prefix = f"uploads/{user_sub}/"
+            if not key.startswith(prefix):
+                return _json_response(400, {"message": "Invalid key for this user"})
+            line_type_only = body.get("lineTypeOnly")
+            if line_type_only not in ("income", "expenditure"):
                 return _json_response(
                     400,
-                    {"message": f"lines[{i}].type must be income or expenditure"},
+                    {"message": "lineTypeOnly must be income or expenditure"},
                 )
-        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        ddb_item = {**_finance_owner_ddb_key("siuTinDei"), **_to_ddb_nested(normalized)}
-        table.put_item(Item=ddb_item)
-        _audit(user_sub, "FINANCE_PUT", "siuTinDei", event)
-        return _json_response(200, {"data": normalized})
-
-    if method == "GET" and path.startswith("/siu-tin-dei/parse-statement/jobs/"):
-        job_id = _path_siu_tin_dei_parse_job(event, path)
-        if not job_id:
-            return _json_response(404, {"message": "Not found"})
-        if not user_sub:
-            return _json_response(400, {"message": "Missing sub claim"})
-        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        raw = table.get_item(Key=_parse_job_key(job_id))
-        item = raw.get("Item")
-        if not item:
-            return _json_response(404, {"message": "Job not found"})
-        doc = _from_ddb_nested(item)
-        if doc.get("ownerSub") != user_sub:
-            return _json_response(403, {"message": "Forbidden"})
-        if doc.get("house") != "siuTinDei":
-            return _json_response(400, {"message": "Book does not match job"})
-        doc = _finalize_stuck_processing_job(table, _parse_job_key(job_id), doc)
-        return _json_response(200, _parse_job_public_doc(doc))
-
-    if method == "POST" and path == "/siu-tin-dei/parse-statement":
-        if not user_sub:
-            return _json_response(400, {"message": "Missing sub claim"})
-        body = _parse_json_body(event)
-        key = body.get("key")
-        if not isinstance(key, str) or not key.strip():
-            return _json_response(400, {"message": "key is required"})
-        prefix = f"uploads/{user_sub}/"
-        if not key.startswith(prefix):
-            return _json_response(400, {"message": "Invalid key for this user"})
-        line_type_only = body.get("lineTypeOnly")
-        if line_type_only not in ("income", "expenditure"):
-            return _json_response(
-                400,
-                {"message": "lineTypeOnly must be income or expenditure"},
-            )
-        table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-        book_data = _load_finance_owner(table, "siuTinDei")
-        file_name = os.path.basename(key)
-        if _statement_basename_already_imported(book_data, file_name):
-            return _json_response(
-                409,
-                {
-                    "message": (
-                        f"A statement file named {file_name!r} was already imported "
-                        "for Siu Tin Dei. Remove its imported lines or rename the "
-                        "file, then try again."
-                    )
-                },
-            )
-        try:
-            job_id = enqueue_parse_statement_async_job(
-                house="siuTinDei",
-                s3_keys=[key],
-                owner_sub=user_sub,
-                api_request_id=_request_id(event),
-                source="api",
-                line_type_only=line_type_only,
-            )
-        except Exception as exc:
+            table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
+            book_data = _load_finance_owner(table, book_key)
+            file_name = os.path.basename(key)
+            if _statement_basename_already_imported(book_data, file_name):
+                return _json_response(
+                    409,
+                    {
+                        "message": (
+                            f"A statement file named {file_name!r} was already imported "
+                            f"for {book_label}. Remove its imported lines or rename the "
+                            "file, then try again."
+                        )
+                    },
+                )
+            try:
+                job_id = enqueue_parse_statement_async_job(
+                    house=book_key,
+                    s3_keys=[key],
+                    owner_sub=user_sub,
+                    api_request_id=_request_id(event),
+                    source="api",
+                    line_type_only=line_type_only,
+                )
+            except Exception as exc:
+                _log_event(
+                    "error",
+                    tag="parse_job_enqueue_failed",
+                    err=str(exc)[:400],
+                    request_id=_request_id(event),
+                )
+                return _json_response(
+                    502,
+                    {"message": "Could not start statement parse job"},
+                )
             _log_event(
-                "error",
-                tag="parse_job_enqueue_failed",
-                err=str(exc)[:400],
+                "info",
+                tag="parse_job_enqueued",
+                sub=user_sub,
+                house=book_key,
+                job_id=job_id,
                 request_id=_request_id(event),
             )
-            return _json_response(
-                502,
-                {"message": "Could not start statement parse job"},
-            )
-        _log_event(
-            "info",
-            tag="parse_job_enqueued",
-            sub=user_sub,
-            house="siuTinDei",
-            job_id=job_id,
-            request_id=_request_id(event),
-        )
-        return _json_response(202, {"jobId": job_id, "status": "pending"})
+            return _json_response(202, {"jobId": job_id, "status": "pending"})
 
     if method == "PUT" and path.startswith("/finance/") and not path.endswith(
         "/parse-statement"

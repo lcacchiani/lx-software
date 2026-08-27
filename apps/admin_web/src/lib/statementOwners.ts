@@ -7,6 +7,14 @@ import {
 } from "./financeTypes";
 
 export const SIU_TIN_DEI_BOOK_KEY: StatementBookKey = "siuTinDei";
+export const LX_SOFTWARE_BOOK_KEY: StatementBookKey = "lxSoftware";
+
+export const STATEMENT_BOOK_DISPLAY_LABEL: Readonly<
+  Record<StatementBookKey, string>
+> = {
+  siuTinDei: "Siu Tin Dei",
+  lxSoftware: "LX Software",
+};
 
 export function isHouseKey(value: string): value is HouseKey {
   return (FINANCE_HOUSE_KEYS as readonly string[]).includes(value);
@@ -37,13 +45,16 @@ export function parseStatementJobPath(
     : `/${kebabBookKey(owner)}/parse-statement/jobs/${encodeURIComponent(jobId)}`;
 }
 
-function kebabBookKey(owner: StatementBookKey): string {
-  if (owner === "siuTinDei") return "siu-tin-dei";
-  return owner;
+export function kebabBookKey(owner: StatementBookKey): string {
+  return owner.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`);
+}
+
+export function statementBookApiPath(owner: StatementBookKey): string {
+  return `/${kebabBookKey(owner)}`;
 }
 
 export function financeOwnerDisplayLabel(owner?: string): string {
   if (!owner?.trim()) return "—";
-  if (owner === SIU_TIN_DEI_BOOK_KEY) return "Siu Tin Dei";
+  if (isStatementBookKey(owner)) return STATEMENT_BOOK_DISPLAY_LABEL[owner];
   return owner;
 }

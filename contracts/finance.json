@@ -2,7 +2,7 @@
   "currencies": ["GBP", "HKD", "USD", "EUR", "CNY", "SGD", "AED"],
   "defaultCurrency": "HKD",
   "houses": ["hillmarton", "morrison"],
-  "statementBooks": ["siuTinDei"],
+  "statementBooks": ["siuTinDei", "lxSoftware"],
   "lineTypes": ["income", "expenditure", "mortgage"],
   "incomeCategories": ["Salary", "Rent"],
   "expenseCategories": [

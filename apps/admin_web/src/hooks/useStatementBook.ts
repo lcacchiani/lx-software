@@ -2,13 +2,12 @@ import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminFetchJson, getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import { GLOBAL_DEFAULT_CURRENCY } from "../lib/currencies";
+import type { StatementBookKey } from "../lib/financeTypes";
 import {
   normalizeHouseFinanceData,
   type HouseFinanceData,
 } from "../lib/financeModel";
-import { SIU_TIN_DEI_BOOK_KEY } from "../lib/statementOwners";
-
-const QUERY_KEY = [SIU_TIN_DEI_BOOK_KEY] as const;
+import { statementBookApiPath } from "../lib/statementOwners";
 
 const EMPTY_BOOK: HouseFinanceData = {
   defaultCurrency: GLOBAL_DEFAULT_CURRENCY,
@@ -20,21 +19,21 @@ type PutBookResponse = {
   readonly data: HouseFinanceData;
 };
 
-async function fetchSiuTinDei(): Promise<HouseFinanceData> {
-  const raw = await adminFetchJson<PutBookResponse>("/siu-tin-dei");
-  return normalizeHouseFinanceData(raw.data);
-}
-
-export function useSiuTinDei() {
+export function useStatementBook(bookKey: StatementBookKey) {
   const qc = useQueryClient();
+  const apiPath = statementBookApiPath(bookKey);
+
   const q = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: fetchSiuTinDei,
+    queryKey: [bookKey],
+    queryFn: async (): Promise<HouseFinanceData> => {
+      const raw = await adminFetchJson<PutBookResponse>(apiPath);
+      return normalizeHouseFinanceData(raw.data);
+    },
   });
 
   const saveBook = useMutation({
     mutationFn: async (data: HouseFinanceData) => {
-      const res = await adminFetchJson<PutBookResponse>("/siu-tin-dei", {
+      const res = await adminFetchJson<PutBookResponse>(apiPath, {
         method: "PUT",
         body: JSON.stringify({
           ...data,
@@ -45,16 +44,16 @@ export function useSiuTinDei() {
       return normalizeHouseFinanceData(res.data);
     },
     onSuccess: (data) => {
-      qc.setQueryData<HouseFinanceData>(QUERY_KEY, data);
+      qc.setQueryData<HouseFinanceData>([bookKey], data);
     },
   });
 
   const patchBook = useCallback(
     (patch: (prev: HouseFinanceData) => HouseFinanceData) => {
-      const prev = qc.getQueryData<HouseFinanceData>(QUERY_KEY) ?? EMPTY_BOOK;
+      const prev = qc.getQueryData<HouseFinanceData>([bookKey]) ?? EMPTY_BOOK;
       saveBook.mutate(patch(prev));
     },
-    [qc, saveBook],
+    [bookKey, qc, saveBook],
   );
 
   return {
