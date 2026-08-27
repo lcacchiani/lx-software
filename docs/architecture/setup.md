@@ -17,30 +17,33 @@ In AWS Console: **IAM → Identity providers → Add provider**
 
 ### 2) Update the IAM role trust policy
 
-Apply the following trust policy to the `GitHubActionsRole` (replace
-`<AWS_ACCOUNT_ID>` and `<ORG>/<REPO>`):
+Apply the trust policy in
+[`github-actions-trust-policy.json`](github-actions-trust-policy.json) to the
+`GitHubActionsRole`. It trusts every repository in the `lx-software-ltd`
+organization:
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:<ORG>/<REPO>:*"
-        }
-      }
-    }
-  ]
-}
+```bash
+aws iam update-assume-role-policy \
+  --role-name GitHubActionsRole \
+  --policy-document file://docs/architecture/github-actions-trust-policy.json
+```
+
+The `sub` condition matches two subject formats:
+
+- `repo:lx-software-ltd/*` — the classic name-only format, issued to
+  repositories created before July 15, 2026 that have not been renamed or
+  transferred since.
+- `repo:lx-software-ltd@321652495/*` — the immutable-ID format
+  (`repo:OWNER@OWNER-ID/REPO@REPO-ID:...`), issued to repositories created,
+  renamed, or transferred after July 15, 2026. `321652495` is the
+  `lx-software-ltd` organization ID and never changes.
+
+Both patterns end in `*` after the repo segment, which covers branch
+(`:ref:refs/heads/...`), environment (`:environment:production`), and
+pull-request subjects. To check which format a repository currently issues:
+
+```bash
+gh api repos/lx-software-ltd/<REPO>/actions/oidc/customization/sub
 ```
 
 ### 3) Create the GitHubActionsRole (if missing)
