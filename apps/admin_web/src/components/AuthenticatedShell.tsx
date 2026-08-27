@@ -25,7 +25,7 @@ function AdminNavLinks({ onNavigate }: { readonly onNavigate?: () => void }) {
   return (
     <nav className="nav flex-column gap-1" aria-label="Admin pages">
       {ADMIN_NAV_GROUPS.map((group, groupIndex) => (
-        <div key={group[0].to}>
+        <div key={group[0].to} className="w-100">
           {groupIndex > 0 ? <hr className="my-2" /> : null}
           {group.map((item) => (
             <NavLink
