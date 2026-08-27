@@ -1,5 +1,7 @@
 export { AdminDataTable, AdminDataTableEmptyRow } from "./AdminDataTable";
 export type { AdminDataTableColumn, AdminDataTableProps } from "./AdminDataTable";
+export { AdminTabList } from "./AdminTabList";
+export type { AdminTabItem, AdminTabListProps } from "./AdminTabList";
 export { AdminEditorSection } from "./AdminEditorSection";
 export { CurrencySelect } from "./CurrencySelect";
 export type { CurrencySelectProps } from "./CurrencySelect";

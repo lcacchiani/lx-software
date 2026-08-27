@@ -2,12 +2,19 @@ import { useState } from "react";
 import { FinanceDataLoadOrError, FinanceSaveStatus } from "../components/FinanceDataStatus";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { StatementBookDashboardCard } from "../components/StatementBookDashboardCard";
+import { AdminTabList, type AdminTabItem } from "../components/ui";
 import { useStatementBook } from "../hooks/useStatementBook";
 import { defaultFiscalYearIdForNowUtc, type FiscalYearId } from "../lib/fiscalYearFinance";
 import { STATEMENT_BOOK_DISPLAY_LABEL } from "../lib/statementOwners";
 import type { StatementBookKey } from "../lib/financeTypes";
 
 type StatementBookTab = "dashboard" | "expenses" | "gains";
+
+const STATEMENT_BOOK_TABS: readonly AdminTabItem<StatementBookTab>[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "expenses", label: "Expenses" },
+  { id: "gains", label: "Gains" },
+];
 
 export function StatementBookPage({
   bookKey,
@@ -51,41 +58,11 @@ export function StatementBookPage({
             saveErrorDetail={saveErrorDetail}
           />
 
-          <ul className="nav nav-tabs mb-4" role="tablist">
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "dashboard" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "dashboard"}
-                onClick={() => setTab("dashboard")}
-              >
-                Dashboard
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "expenses" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "expenses"}
-                onClick={() => setTab("expenses")}
-              >
-                Expenses
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "gains" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "gains"}
-                onClick={() => setTab("gains")}
-              >
-                Gains
-              </button>
-            </li>
-          </ul>
+          <AdminTabList
+            tabs={STATEMENT_BOOK_TABS}
+            active={tab}
+            onChange={setTab}
+          />
 
           <div className="tab-content">
             {tab === "dashboard" ? (
