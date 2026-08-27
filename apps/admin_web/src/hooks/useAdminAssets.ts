@@ -34,7 +34,7 @@ export interface AdminAssetMeta {
   /** ISO 8601 UTC instant from S3 LastModified when the asset was confirmed. */
   readonly uploadedAt?: string;
   readonly fileName?: string;
-  /** Finance house key when the upload was tied to a house statement import. */
+  /** House or statement-book key when the upload was tied to a finance import. */
   readonly house?: string;
 }
 

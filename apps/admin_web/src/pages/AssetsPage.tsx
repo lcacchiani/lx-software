@@ -45,10 +45,10 @@ function rowMatchesFilter(
   const q = filterText.trim().toLowerCase();
   if (!q) return true;
   const file = displayFileName(row).toLowerCase();
-  const houseKey = (row.house ?? "").toLowerCase();
-  const houseDisplay = houseDisplayLabel(row.house).toLowerCase();
+  const entityKey = (row.house ?? "").toLowerCase();
+  const entityDisplay = houseDisplayLabel(row.house).toLowerCase();
   return (
-    file.includes(q) || houseKey.includes(q) || houseDisplay.includes(q)
+    file.includes(q) || entityKey.includes(q) || entityDisplay.includes(q)
   );
 }
 
@@ -90,7 +90,7 @@ function AssetOpenLink({
 const ASSET_TABLE_COLUMNS = [
   { key: "uploaded", header: "Uploaded" },
   { key: "file", header: "File" },
-  { key: "house", header: "House" },
+  { key: "entity", header: "Entity" },
   { key: "actions", header: "Actions", className: "text-end text-nowrap" },
 ] as const;
 
@@ -193,7 +193,7 @@ export function AssetsPage() {
               setTableFilter(v);
               setPageError(null);
             }}
-            filterPlaceholder="Filter by file or house…"
+            filterPlaceholder="Filter by file or entity…"
           >
             {displayRows.length ? (
               displayRows.map((row) => {
