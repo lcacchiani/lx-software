@@ -57,11 +57,13 @@ function netByCurrency(
   return out;
 }
 
-export function SiuTinDeiDashboardCard({
+export function StatementBookDashboardCard({
+  title,
   data,
   fiscalYear,
   onFiscalYearChange,
 }: {
+  readonly title: string;
   readonly data: HouseFinanceData;
   readonly fiscalYear: FiscalYearId;
   readonly onFiscalYearChange: (id: FiscalYearId) => void;
@@ -84,14 +86,14 @@ export function SiuTinDeiDashboardCard({
     <div className="card shadow-sm">
       <div className="card-body">
         <h2 className="h6 mb-3">
-          <strong>Siu Tin Dei</strong>
+          <strong>{title}</strong>
         </h2>
         <div className="mb-3">
           <select
             className="form-select form-select-sm"
             value={fiscalYear}
             onChange={(e) => onFiscalYearChange(e.target.value as FiscalYearId)}
-            aria-label={`Siu Tin Dei: ${fyLabel}`}
+            aria-label={`${title}: ${fyLabel}`}
           >
             {FISCAL_YEAR_OPTIONS.map((opt) => (
               <option key={opt.id} value={opt.id}>
@@ -115,7 +117,7 @@ export function SiuTinDeiDashboardCard({
           </dd>
         </dl>
         <p className="text-muted small mb-0 mt-3">
-          Totals use net amounts from Siu Tin Dei lines in this fiscal year.
+          Totals use net amounts from {title} lines in this fiscal year.
           Default currency is HKD.
         </p>
       </div>

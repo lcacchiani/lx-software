@@ -945,6 +945,27 @@ export class LxsoftwareStack extends cdk.Stack {
       authorizer: jwtAuthorizer,
     });
 
+    this.httpApi.addRoutes({
+      path: "/lx-software",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/lx-software/parse-statement",
+      methods: [apigwv2.HttpMethod.POST],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
+    this.httpApi.addRoutes({
+      path: "/lx-software/parse-statement/jobs/{jobId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+      authorizer: jwtAuthorizer,
+    });
+
     // Enable Banking sync management (admin JWT only; never mirrored under
     // /public/*: these routes can move money-adjacent consent state).
     this.httpApi.addRoutes({

@@ -161,10 +161,10 @@ def _path_finance_parse_job(
     return None, None
 
 
-def _path_siu_tin_dei_parse_job(
-    event: dict[str, Any], path: str
+def _path_statement_book_parse_job(
+    event: dict[str, Any], path: str, slug: str
 ) -> str | None:
-    """Job id from ``/siu-tin-dei/parse-statement/jobs/{jobId}``."""
+    """Job id from ``/{slug}/parse-statement/jobs/{jobId}``."""
     pp = event.get("pathParameters") or {}
     job_raw = pp.get("jobId")
     if isinstance(job_raw, str) and job_raw.strip():
@@ -172,12 +172,19 @@ def _path_siu_tin_dei_parse_job(
     parts = [p for p in path.split("/") if p]
     if (
         len(parts) == 4
-        and parts[0] == "siu-tin-dei"
+        and parts[0] == slug
         and parts[1] == "parse-statement"
         and parts[2] == "jobs"
     ):
         return parts[3]
     return None
+
+
+def _path_siu_tin_dei_parse_job(
+    event: dict[str, Any], path: str
+) -> str | None:
+    """Job id from ``/siu-tin-dei/parse-statement/jobs/{jobId}``."""
+    return _path_statement_book_parse_job(event, path, "siu-tin-dei")
 
 
 def _invoke_parse_statement_worker(payload: dict[str, Any]) -> None:

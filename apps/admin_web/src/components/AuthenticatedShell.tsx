@@ -69,6 +69,14 @@ export function AuthenticatedShell() {
             >
               Siu Tin Dei
             </NavLink>
+            <NavLink
+              to="/lx-software"
+              className={({ isActive }) =>
+                `nav-link rounded ${isActive ? "active fw-semibold" : ""}`
+              }
+            >
+              LX Software
+            </NavLink>
           </nav>
         </aside>
         <main className="admin-main flex-grow-1 p-4">

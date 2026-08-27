@@ -7,7 +7,7 @@ export const GLOBAL_DEFAULT_CURRENCY: CurrencyCode = "HKD";
 export const FINANCE_HOUSE_KEYS = ["hillmarton", "morrison"] as const;
 export type HouseKey = (typeof FINANCE_HOUSE_KEYS)[number];
 
-export const FINANCE_STATEMENT_BOOK_KEYS = ["siuTinDei"] as const;
+export const FINANCE_STATEMENT_BOOK_KEYS = ["siuTinDei", "lxSoftware"] as const;
 export type StatementBookKey = (typeof FINANCE_STATEMENT_BOOK_KEYS)[number];
 export type StatementOwnerKey = HouseKey | StatementBookKey;
 

@@ -1,4 +1,8 @@
 import type { HouseKey } from "./financeModel";
+import {
+  STATEMENT_BOOK_DISPLAY_LABEL,
+  isStatementBookKey,
+} from "./statementOwners";
 
 /** Canonical display names for each finance house key. */
 export const HOUSE_DISPLAY_LABEL: Readonly<Record<HouseKey, string>> = {
@@ -18,7 +22,7 @@ export const LEDGER_RELATED_HOUSE_OPTIONS: ReadonlyArray<{
 /** Resolves a stored house or statement-book key to a label. */
 export function houseDisplayLabel(house?: string): string {
   if (!house?.trim()) return "—";
-  if (house === "siuTinDei") return "Siu Tin Dei";
+  if (isStatementBookKey(house)) return STATEMENT_BOOK_DISPLAY_LABEL[house];
   const label = HOUSE_DISPLAY_LABEL[house as HouseKey];
   return label ?? house;
 }

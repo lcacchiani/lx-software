@@ -2,6 +2,7 @@ import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { objectKeyFromAssetPk } from "../lib/adminAssets";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import {
+  FINANCE_STATEMENT_BOOK_KEYS,
   statementLineAssetKeys,
   type FinancePersistedState,
   type HouseFinanceData,
@@ -33,16 +34,18 @@ export interface AdminAssetMeta {
   /** ISO 8601 UTC instant from S3 LastModified when the asset was confirmed. */
   readonly uploadedAt?: string;
   readonly fileName?: string;
-  /** Finance house key when the upload was tied to a house statement import. */
+  /** House or statement-book key when the upload was tied to a finance import. */
   readonly house?: string;
 }
 
 export function useAdminAssets() {
   const qc = useQueryClient();
   const financeUpdatedAt = qc.getQueryState(["finance"])?.dataUpdatedAt ?? 0;
-  const siuTinDeiUpdatedAt = qc.getQueryState(["siuTinDei"])?.dataUpdatedAt ?? 0;
+  const bookUpdatedAt = FINANCE_STATEMENT_BOOK_KEYS.map(
+    (key) => qc.getQueryState([key])?.dataUpdatedAt ?? 0,
+  );
   return useInfiniteQuery({
-    queryKey: ["admin", "asset-records", financeUpdatedAt, siuTinDeiUpdatedAt],
+    queryKey: ["admin", "asset-records", financeUpdatedAt, ...bookUpdatedAt],
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
       const qs = pageParam
@@ -53,7 +56,10 @@ export function useAdminAssets() {
         nextCursor?: string | null;
       }>(`/records${qs}`);
       const finance = qc.getQueryData<FinancePersistedState>(["finance"]);
-      const siuTinDei = qc.getQueryData<HouseFinanceData>(["siuTinDei"]);
+      const books = FINANCE_STATEMENT_BOOK_KEYS.map((key) => ({
+        key,
+        data: qc.getQueryData<HouseFinanceData>([key]),
+      }));
       const items = data.items
         .filter(
           (row) => row.pk.startsWith("ASSET#") && row.sk === "META",
@@ -63,13 +69,14 @@ export function useAdminAssets() {
           const objectKey = objectKeyFromAssetPk(row.pk);
           const inferred = inferHouseFromFinanceLines(objectKey, finance);
           if (inferred) return { ...row, house: inferred };
-          if (
-            siuTinDei &&
-            siuTinDei.lines.some((line) =>
-              statementLineAssetKeys(line).some((k) => k === objectKey),
-            )
-          ) {
-            return { ...row, house: "siuTinDei" };
+          for (const book of books) {
+            if (
+              book.data?.lines.some((line) =>
+                statementLineAssetKeys(line).some((k) => k === objectKey),
+              )
+            ) {
+              return { ...row, house: book.key };
+            }
           }
           return row;
         });
