@@ -23,6 +23,11 @@ body {
   max-width: 260px;
 }
 
+.admin-nav-separator {
+  opacity: 0.55;
+  border-top-color: #94a3b8;
+}
+
 .admin-main {
   min-height: calc(100vh - 56px);
   min-width: 0;
