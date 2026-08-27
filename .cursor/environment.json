@@ -1,6 +1,8 @@
 {
   "name": "LX Software websites",
-  "install": "bash .cursor/install.sh",
+  "build": {
+    "install": "bash .cursor/install.sh"
+  },
   "terminals": [
     {
       "name": "public_www",
@@ -10,6 +12,5 @@
       "name": "admin_web",
       "command": "cd apps/admin_web && npm run dev -- --host --port 5174"
     }
-  ],
-  "ports": [5173, 5174]
+  ]
 }
