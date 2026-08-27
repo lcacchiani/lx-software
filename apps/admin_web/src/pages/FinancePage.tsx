@@ -7,6 +7,7 @@ import { FinanceAllocationsPanel } from "../components/FinanceAllocationsPanel";
 import { FinanceLiabilitiesPanel } from "../components/FinanceLiabilitiesPanel";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
+import { AdminTabList, type AdminTabItem } from "../components/ui";
 import { useFinance } from "../hooks/useFinance";
 import { HOUSE_DISPLAY_LABEL, LEDGER_RELATED_HOUSE_OPTIONS } from "../lib/houses";
 import {
@@ -27,6 +28,19 @@ type FinanceTab =
   | "allocations"
   | "accounts"
   | "liabilities";
+
+const FINANCE_TABS: readonly AdminTabItem<FinanceTab>[] = [
+  { id: "hillmarton", label: HOUSE_DISPLAY_LABEL.hillmarton },
+  { id: "morrison", label: HOUSE_DISPLAY_LABEL.morrison },
+  { id: "investments", label: "Investments" },
+  { id: "savings", label: "Savings" },
+  { id: "pension", label: "Pension" },
+  { id: "income", label: "Income" },
+  { id: "expenses", label: "Expenses" },
+  { id: "allocations", label: "Allocations" },
+  { id: "accounts", label: "Accounts" },
+  { id: "liabilities", label: "Liabilities" },
+];
 
 export function FinancePage() {
   const {
@@ -70,118 +84,7 @@ export function FinancePage() {
             saveErrorDetail={saveErrorDetail}
           />
 
-          <ul className="nav nav-tabs mb-4" role="tablist">
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "hillmarton" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "hillmarton"}
-                onClick={() => setTab("hillmarton")}
-              >
-                {HOUSE_DISPLAY_LABEL.hillmarton}
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "morrison" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "morrison"}
-                onClick={() => setTab("morrison")}
-              >
-                {HOUSE_DISPLAY_LABEL.morrison}
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "investments" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "investments"}
-                onClick={() => setTab("investments")}
-              >
-                Investments
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "savings" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "savings"}
-                onClick={() => setTab("savings")}
-              >
-                Savings
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "pension" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "pension"}
-                onClick={() => setTab("pension")}
-              >
-                Pension
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "income" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "income"}
-                onClick={() => setTab("income")}
-              >
-                Income
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "expenses" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "expenses"}
-                onClick={() => setTab("expenses")}
-              >
-                Expenses
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "allocations" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "allocations"}
-                onClick={() => setTab("allocations")}
-              >
-                Allocations
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "accounts" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "accounts"}
-                onClick={() => setTab("accounts")}
-              >
-                Accounts
-              </button>
-            </li>
-            <li className="nav-item" role="presentation">
-              <button
-                type="button"
-                className={`nav-link ${tab === "liabilities" ? "active" : ""}`}
-                role="tab"
-                aria-selected={tab === "liabilities"}
-                onClick={() => setTab("liabilities")}
-              >
-                Liabilities
-              </button>
-            </li>
-          </ul>
+          <AdminTabList tabs={FINANCE_TABS} active={tab} onChange={setTab} />
 
           <div className="tab-content">
             {tab === "hillmarton" ? (

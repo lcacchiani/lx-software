@@ -57,8 +57,8 @@ export function DashboardPage() {
     <div>
       <h1 className="h3 mb-3">Dashboard</h1>
       <p className="text-muted">
-        Welcome to the LX Software admin console. Use the sidebar to manage assets
-        and records.
+        Welcome to the LX Software admin console. Use the navigation menu to
+        manage assets and records.
       </p>
 
       <FinanceDataLoadOrError

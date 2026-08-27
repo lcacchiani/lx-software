@@ -18,6 +18,7 @@ This document defines **reusable patterns** for the LX Software admin SPA (`apps
 | `DateTimeDisplay` | Formats an ISO instant for **Hong Kong** wall time, e.g. `May 26, 2026 at 10:12pm HKT`. Uses `formatDateTimeHKT` in `src/lib/formatDisplay.ts`. |
 | `AdminEditorSection` | Card wrapper for editor blocks: optional title/description, body content, optional **footer** for Save/Update/Clear. |
 | `AdminDataTable` | Card + single filter field + standard table (`table-sm`, `table-striped`). Pass columns and row `<tr>` children. Use `AdminDataTableEmptyRow` for empty/filter-empty states. |
+| `AdminTabList` | Horizontally scrollable Bootstrap tab list for page sections. Use this instead of a wrapping `nav-tabs` row so every tab stays reachable on mobile. |
 | `TableIconButton` | Icon-only button for the operations column. |
 
 Import from the barrel: `import { MoneyAmount, … } from "../components/ui"` (adjust path).

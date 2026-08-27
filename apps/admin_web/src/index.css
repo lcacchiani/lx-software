@@ -25,4 +25,51 @@ body {
 
 .admin-main {
   min-height: calc(100vh - 56px);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.admin-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  padding: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.admin-mobile-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1045;
+  width: min(280px, 86vw);
+  height: 100%;
+  padding: 1rem;
+  overflow-y: auto;
+  background: #fff;
+  box-shadow: 0 0.5rem 1rem rgba(15, 23, 42, 0.18);
+  transform: translateX(-100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.2s ease-out,
+    visibility 0.2s ease-out;
+}
+
+.admin-mobile-nav.is-open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.admin-tab-list {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.admin-tab-list .nav-link {
+  white-space: nowrap;
 }
