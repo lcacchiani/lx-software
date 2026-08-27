@@ -2,34 +2,45 @@ import { useEffect, useId, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "./AuthProvider";
 
-const ADMIN_NAV_LINKS: readonly {
+type AdminNavItem = {
   readonly to: string;
   readonly label: string;
   readonly end?: boolean;
-}[] = [
-  { to: "/", label: "Dashboard", end: true },
-  { to: "/finance", label: "Finance" },
-  { to: "/banking", label: "Banking" },
-  { to: "/assets", label: "Assets" },
-  { to: "/siu-tin-dei", label: "Siu Tin Dei" },
-  { to: "/lx-software", label: "LX Software" },
+};
+
+const ADMIN_NAV_GROUPS: readonly (readonly AdminNavItem[])[] = [
+  [{ to: "/", label: "Dashboard", end: true }],
+  [
+    { to: "/finance", label: "House Finance" },
+    { to: "/lx-software", label: "LX Software" },
+    { to: "/siu-tin-dei", label: "Siu Tin Dei" },
+  ],
+  [
+    { to: "/banking", label: "Banking" },
+    { to: "/assets", label: "Assets" },
+  ],
 ];
 
 function AdminNavLinks({ onNavigate }: { readonly onNavigate?: () => void }) {
   return (
     <nav className="nav flex-column gap-1" aria-label="Admin pages">
-      {ADMIN_NAV_LINKS.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          className={({ isActive }) =>
-            `nav-link rounded ${isActive ? "active fw-semibold" : ""}`
-          }
-          onClick={onNavigate}
-        >
-          {item.label}
-        </NavLink>
+      {ADMIN_NAV_GROUPS.map((group, groupIndex) => (
+        <div key={group[0].to}>
+          {groupIndex > 0 ? <hr className="my-2" /> : null}
+          {group.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `nav-link rounded ${isActive ? "active fw-semibold" : ""}`
+              }
+              onClick={onNavigate}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
       ))}
     </nav>
   );
