@@ -143,12 +143,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Use the MIT-licensed gitleaks CLI instead of gitleaks-action.
+      # The action requires GITLEAKS_LICENSE on organization repos, and
+      # Dependabot pull_request runs cannot read Actions secrets
+      # (Secret source: Dependabot), so the action fails with
+      # "missing gitleaks license" on every Dependabot PR. The CLI
+      # needs no license and still scans the checked-out history.
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Repo/org secret; required for organization repos (gitleaks-action v2+).
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o /tmp/gitleaks.tgz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --verbose --redact --no-banner
 
   semgrep:
     name: Semgrep SAST
