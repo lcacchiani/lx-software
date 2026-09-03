@@ -16,6 +16,8 @@ import * as lambdaEventSources from "aws-cdk-lib/aws-lambda-event-sources";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as scheduler from "aws-cdk-lib/aws-scheduler";
+import * as schedulerTargets from "aws-cdk-lib/aws-scheduler-targets";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import * as sqs from "aws-cdk-lib/aws-sqs";
@@ -23,6 +25,24 @@ import type { Construct } from "constructs";
 import { AuthConstruct } from "./constructs/auth";
 import { createPythonLambda } from "./constructs/python-lambda";
 import { ADMIN_WEB_HOSTNAME, PARSE_TIMEOUTS } from "./shared-contracts";
+
+/**
+ * Lambda proxy integration that does NOT add an `AWS::Lambda::Permission`
+ * per route. `HttpLambdaIntegration` grants API Gateway invoke rights one
+ * route at a time, and with 60+ routes on one function those statements
+ * pushed the function's resource-based policy past Lambda's fixed 20 KB
+ * limit ("The final policy size (20525) is bigger than the limit (20480)").
+ *
+ * The stack instead grants a single API-wide permission — see
+ * `AdminApiInvoke` below — whose statement is deliberately short so it fits
+ * next to the legacy per-route statements during the deployment that
+ * removes them (CloudFormation creates before it deletes).
+ */
+class SharedPermissionLambdaIntegration extends HttpLambdaIntegration {
+  protected completeBind(_options: apigwv2.HttpRouteIntegrationBindOptions): void {
+    // Intentionally empty: invoke permission is granted once for the whole API.
+  }
+}
 
 /**
  * Consolidated admin backend stack: Cognito user pool (with Pre Token
@@ -546,34 +566,38 @@ export class LxsoftwareStack extends cdk.Stack {
 
     // Executive Board scheduled meetings. The handler checks the board
     // settings (morning / evening toggles) and no-ops when disabled, so both
-    // rules are safe to keep enabled. 06:00 HKT = 22:00 UTC (previous day);
-    // 18:00 HKT = 10:00 UTC.
-    new events.Rule(this, "BoardMorningMeetingRule", {
-      description: "Executive Board morning stand-up (06:00 HKT) when enabled in settings.",
-      schedule: events.Schedule.cron({ minute: "0", hour: "22" }),
-      targets: [
-        new eventsTargets.LambdaFunction(adminFn, {
-          event: events.RuleTargetInput.fromObject({
+    // schedules are safe to keep enabled.
+    //
+    // EventBridge Scheduler (not an events.Rule) on purpose: Scheduler invokes
+    // the function through an IAM role, whereas a Rule target adds another
+    // statement to the Lambda resource-based policy that is already close to
+    // its 20 KB limit (see `SharedPermissionLambdaIntegration`). Scheduler also
+    // takes the cron in Hong Kong time directly.
+    const boardMeetingSchedule = (
+      id: string,
+      slot: "morning" | "evening",
+      hour: string
+    ) =>
+      new scheduler.Schedule(this, id, {
+        description: `Executive Board ${slot} stand-up (${hour.padStart(2, "0")}:00 HKT) when enabled in settings.`,
+        schedule: scheduler.ScheduleExpression.cron({
+          minute: "0",
+          hour,
+          timeZone: cdk.TimeZone.ASIA_HONG_KONG,
+        }),
+        target: new schedulerTargets.LambdaInvoke(adminFn, {
+          input: scheduler.ScheduleTargetInput.fromObject({
             internal: "board_meeting",
             trigger: "schedule",
-            slot: "morning",
+            slot,
           }),
+          // A retried trigger would start a second meeting; the handler is
+          // cheap to miss once and runs again at the next slot.
+          retryAttempts: 0,
         }),
-      ],
-    });
-    new events.Rule(this, "BoardEveningMeetingRule", {
-      description: "Executive Board evening stand-up (18:00 HKT) when enabled in settings.",
-      schedule: events.Schedule.cron({ minute: "0", hour: "10" }),
-      targets: [
-        new eventsTargets.LambdaFunction(adminFn, {
-          event: events.RuleTargetInput.fromObject({
-            internal: "board_meeting",
-            trigger: "schedule",
-            slot: "evening",
-          }),
-        }),
-      ],
-    });
+      });
+    boardMeetingSchedule("BoardMorningMeetingSchedule", "morning", "6");
+    boardMeetingSchedule("BoardEveningMeetingSchedule", "evening", "18");
 
     // Daily unattended balance refresh (05:30 HKT). The handler no-ops when
     // ENABLE_BANKING_APP_ID is blank, so the rule is safe to keep enabled.
@@ -802,7 +826,10 @@ export class LxsoftwareStack extends cdk.Stack {
 
     // AWS::ApiGatewayV2::Integration TimeoutInMillis must be 50–30000 ms in this
     // account/region; CDK defaults (~29s). Do not raise via L1 overrides.
-    const integration = new HttpLambdaIntegration("AdminIntegration", adminFn);
+    const integration = new SharedPermissionLambdaIntegration(
+      "AdminIntegration",
+      adminFn
+    );
 
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
       apiName: "lxsoftware-admin-api",
@@ -820,6 +847,18 @@ export class LxsoftwareStack extends cdk.Stack {
         ],
         allowCredentials: false,
       },
+    });
+
+    // One invoke permission for every route of this API (any stage, method
+    // and path), scoped to this API's execute-api ARN so no other API
+    // Gateway can invoke the function. Keep the construct id short and at
+    // stack scope: CloudFormation uses "<stack>-<logicalId>-<random>" as the
+    // policy statement id, and the statement must fit in the ~400 bytes left
+    // in the 20 KB policy while the old per-route statements still exist.
+    adminFn.addPermission("AdminApiInvoke", {
+      scope: this,
+      principal: new iam.ServicePrincipal("apigateway.amazonaws.com"),
+      sourceArn: this.httpApi.arnForExecuteApi(),
     });
 
     const accessLogGroup = new logs.LogGroup(this, "HttpApiAccessLogs", {

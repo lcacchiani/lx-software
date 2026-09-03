@@ -259,11 +259,21 @@ GitHub token setup (only if you want repository context):
    redeploy. The stack adds a conditional `secretsmanager:GetSecretValue`
    grant to `AdminApiFn`.
 
-Scheduled stand-ups: two EventBridge rules fire `AdminApiFn` with
-`{ internal: "board_meeting", trigger: "schedule", slot: "morning" | "evening" }`
-at 06:00 HKT and 18:00 HKT. Both are off until the owner turns them on in
-**Executive Board → Settings**; the handler also refuses to start a meeting
-when the daily budget is exhausted or another meeting is still running.
+Scheduled stand-ups: two EventBridge Scheduler schedules invoke `AdminApiFn`
+with `{ internal: "board_meeting", trigger: "schedule", slot: "morning" | "evening" }`
+at 06:00 HKT and 18:00 HKT (`Asia/Hong_Kong` cron, no DST maths). Both are
+off until the owner turns them on in **Executive Board → Settings**; the
+handler also refuses to start a meeting when the daily budget is exhausted or
+another meeting is still running.
+
+Lambda invoke permissions: `AdminApiFn` is fronted by 60+ HTTP API routes.
+API Gateway is granted **one** API-wide invoke permission (`AdminApiInvoke`,
+source ARN `arn:aws:execute-api:…:<api-id>/*/*/*`) instead of one
+`AWS::Lambda::Permission` per route — per-route statements exceeded Lambda's
+fixed 20 KB resource-based policy limit. Scheduler targets use an IAM role
+for the same reason. When adding new triggers for `AdminApiFn`, prefer
+role-based invocation (Scheduler, Step Functions) or widen an existing
+statement rather than adding new resource-policy statements.
 
 Cost controls: every OpenRouter call records usage under the board's daily
 usage row, and chats/meetings stop when the configured daily budget
