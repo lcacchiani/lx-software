@@ -78,3 +78,115 @@ body {
 .admin-tab-list .nav-link {
   white-space: nowrap;
 }
+
+/* Executive Board */
+.board-section-nav {
+  scrollbar-width: thin;
+}
+
+.board-section-nav .nav-link {
+  white-space: nowrap;
+}
+
+.board-avatar {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: linear-gradient(135deg, #0d6efd, #6610f2);
+  flex-shrink: 0;
+}
+
+.board-avatar-sm {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.7rem;
+}
+
+.board-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.board-clamp-1 {
+  max-width: 28rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-offcanvas {
+  width: min(100vw, 520px);
+}
+
+.board-offcanvas-wide {
+  width: min(100vw, 680px);
+}
+
+.board-offcanvas .offcanvas-body {
+  overflow-y: auto;
+}
+
+.board-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.board-markdown p {
+  margin-bottom: 0.5rem;
+}
+
+.board-markdown ul,
+.board-markdown ol {
+  padding-left: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.board-markdown h1,
+.board-markdown h2,
+.board-markdown h3,
+.board-markdown h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.board-chat-row {
+  display: flex;
+}
+
+.board-chat-row-user {
+  justify-content: flex-end;
+}
+
+.board-chat-bubble {
+  max-width: 92%;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.75rem;
+  background: var(--bs-light);
+  border: 1px solid var(--bs-border-color);
+}
+
+.board-chat-bubble-user {
+  background: #e7f1ff;
+  border-color: #cfe2ff;
+}
+
+.board-chat-meta {
+  font-size: 0.7rem;
+  margin-top: 0.25rem;
+}
+
+.board-brief-preview {
+  max-height: 28rem;
+  overflow-y: auto;
+}

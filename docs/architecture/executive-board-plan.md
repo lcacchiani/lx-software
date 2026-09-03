@@ -337,7 +337,7 @@ creation from chat).
 | `AdminApiFn` env | `BOARD_CHAT_MODEL`, `BOARD_MEETING_MODEL`, `BOARD_DEEP_DIVE_MODEL`, `GITHUB_READ_TOKEN_SECRET_ARN`, `BOARD_*` timeouts from the new contract |
 | IAM | Conditional `secretsmanager:GetSecretValue` on the GitHub secret (copy of `AdminOpenRouterSecretPolicy` pattern) |
 | EventBridge | `BoardDailyMeetingRule` and `BoardSecondMeetingRule` targeting `AdminApiFn` with `{ internal: "board_meeting", trigger: "schedule", slot: 1|2 }` |
-| Routes | The 15 routes in 4.2 with `jwtAuthorizer` |
+| Routes | The 18 routes in 4.2 with `jwtAuthorizer` |
 | Contracts | New `contracts/executive-board.json` (roster) and `contracts/board-timeouts.json` (`chatPollDeadlineMs`, `meetingPollIntervalMs`, `phaseTimeoutSeconds`, `openRouterCallTimeoutSeconds`, `maxParallelPersonaCalls`, `chatJobTtlSeconds`); `scripts/sync-contracts.py` and `check-contracts.py` extended to emit them to Python, TS and CDK |
 
 No new Lambda, table, or bucket. Lambda timeout and memory stay as they are
