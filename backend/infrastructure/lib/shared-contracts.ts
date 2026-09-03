@@ -10,3 +10,13 @@ export const PARSE_TIMEOUTS = {
   parseJobTtlSeconds: 604800,
   parsePollDeadlineMs: 480000,
 } as const;
+
+export const BOARD_TIMEOUTS = {
+  chatOpenRouterTimeoutSeconds: 90,
+  phaseOpenRouterTimeoutSeconds: 100,
+  maxParallelPersonaCalls: 4,
+  chatJobTtlSeconds: 604800,
+  chatJobStuckSeconds: 180,
+  meetingStuckSeconds: 900,
+  repoSnapshotStaleSeconds: 72000,
+} as const;

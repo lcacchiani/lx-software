@@ -15,6 +15,8 @@ ARTIFACTS = [
     ROOT / "apps" / "admin_web" / "src" / "lib" / "contracts" / "generated.ts",
     ROOT / "backend" / "infrastructure" / "lib" / "shared-contracts.ts",
     ROOT / "backend" / "lambda" / "admin" / "contracts" / "finance.json",
+    ROOT / "backend" / "lambda" / "admin" / "contracts" / "executive-board.json",
+    ROOT / "backend" / "lambda" / "admin" / "contracts" / "board-timeouts.json",
 ]
 
 
