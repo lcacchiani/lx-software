@@ -69,8 +69,10 @@ export function useStartBoardMeeting() {
       return res.meeting;
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: BOARD_MEETINGS_KEY });
-      void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY, exact: true });
+      // A meeting may already be finished by the time the start call returns
+      // (fast runs, or inline execution without async self-invocation), so
+      // refresh every board query, including the actions list.
+      void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY });
     },
   });
 }

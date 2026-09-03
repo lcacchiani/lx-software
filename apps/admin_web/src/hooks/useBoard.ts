@@ -21,7 +21,18 @@ export function useBoard() {
 
   const overview = useQuery({
     queryKey: BOARD_QUERY_KEY,
-    queryFn: () => adminFetchJson<BoardOverview>(BOARD_API_BASE),
+    queryFn: async () => {
+      const wasRunning = Boolean(qc.getQueryData<BoardOverview>(BOARD_QUERY_KEY)?.runningMeeting);
+      const next = await adminFetchJson<BoardOverview>(BOARD_API_BASE);
+      if (wasRunning && !next.runningMeeting) {
+        // The overview is the one query that is always mounted on the tab, so it
+        // is the reliable place to notice a meeting finishing and refresh the
+        // actions list and meeting history regardless of which section is open.
+        void qc.invalidateQueries({ queryKey: [...BOARD_QUERY_KEY, "actions"] });
+        void qc.invalidateQueries({ queryKey: [...BOARD_QUERY_KEY, "meetings"] });
+      }
+      return next;
+    },
     refetchInterval: (query) =>
       query.state.data?.runningMeeting ? 5000 : false,
   });
