@@ -13,20 +13,17 @@ admin "House statement" feature: each parsed line maps directly onto the
 from __future__ import annotations
 
 import base64
-import json
 import math
 import os
 import re
 from datetime import datetime, timezone
 from typing import Any
-from urllib import error as urlerror
-from urllib import request as urlrequest
 
+import openrouter_client
 from contract_constants import FINANCE_LINE_TYPES, SUPPORTED_FINANCE_CURRENCIES
 
 _PDF_PLUGIN_ID = "file-parser"
 _DEFAULT_PDF_ENGINE = "mistral-ocr"
-_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_MODEL = "mistralai/mistral-medium-3"
 _DEFAULT_MAX_FILE_BYTES = 15 * 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS = 60
@@ -35,8 +32,6 @@ _SUPPORTED_CURRENCIES = tuple(sorted(SUPPORTED_FINANCE_CURRENCIES))
 _FINANCE_LINE_TYPES = tuple(sorted(FINANCE_LINE_TYPES))
 _DISCARD_DESCRIPTION_NORMALIZED = "payment to landlord"
 _MTG_IN_DESCRIPTION = re.compile(r"(?i)\bmtg\b")
-
-_api_key_cache: str | None = None
 
 
 def parse_statement_from_asset(
@@ -55,9 +50,7 @@ def parse_statement_from_asset(
     line follows the ``HouseStatementLine`` JSON shape but without an
     ``id`` (the caller assigns one).
     """
-    endpoint_url = os.getenv("OPENROUTER_CHAT_COMPLETIONS_URL", "").strip() or _DEFAULT_ENDPOINT
     model = os.getenv("OPENROUTER_MODEL", "").strip() or _DEFAULT_MODEL
-    api_key = _get_api_key(secrets_client)
 
     asset_payload = _download_attachment(
         s3_client=s3_client,
@@ -72,71 +65,41 @@ def parse_statement_from_asset(
         asset_payload["content"],
     ]
 
-    payload: dict[str, Any] = {
-        "model": model,
-        "temperature": 0,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You extract finance statement lines from documents and "
-                    "return strict JSON only."
-                ),
-            },
-            {"role": "user", "content": user_content},
-        ],
-        "response_format": {"type": "json_object"},
-    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You extract finance statement lines from documents and "
+                "return strict JSON only."
+            ),
+        },
+        {"role": "user", "content": user_content},
+    ]
+    plugins = None
     if asset_payload["is_pdf"]:
-        payload["plugins"] = [
+        plugins = [
             {
                 "id": _PDF_PLUGIN_ID,
                 "pdf": {"engine": _pdf_parser_engine()},
             }
         ]
 
-    body_text = _post_json(
-        url=endpoint_url,
-        api_key=api_key,
-        payload=payload,
+    completion = openrouter_client.chat_completion(
+        messages=messages,
+        model=model,
+        secrets_client=secrets_client,
         timeout=_timeout_seconds(),
+        json_mode=True,
+        temperature=0,
+        plugins=plugins,
+        include_usage=False,
+        deny_data_collection=False,
+        max_retries=0,
     )
 
-    parsed = _parse_completion_body(body_text)
+    parsed = openrouter_client.parse_json_object_text(completion.text)
+    parsed["__raw_response__"] = completion.raw
     return _normalize_result(parsed, default_currency=default_currency)
-
-
-def _post_json(*, url: str, api_key: str, payload: dict[str, Any], timeout: int) -> str:
-    data = json.dumps(payload).encode("utf-8")
-    req = urlrequest.Request(  # noqa: S310 - URL is trusted (env-configured)
-        url=url,
-        data=data,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://admin.lx-software.com",
-            "X-Title": "lxsoftware-admin",
-        },
-    )
-    try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            return resp.read().decode("utf-8")
-    except urlerror.HTTPError as exc:
-        body = ""
-        try:
-            body = exc.read().decode("utf-8", errors="replace")
-        except Exception:  # pragma: no cover - defensive
-            body = ""
-        preview = body.replace("\n", " ").strip()
-        if len(preview) > 500:
-            preview = f"{preview[:500]}..."
-        detail = f": {preview}" if preview else ""
-        raise RuntimeError(
-            f"OpenRouter request failed with status {exc.code}{detail}"
-        ) from exc
-    except urlerror.URLError as exc:
-        raise RuntimeError(f"OpenRouter request transport error: {exc.reason}") from exc
 
 
 def _download_attachment(
@@ -207,43 +170,6 @@ def _normalize_content_type(content_type: str | None, file_name: str | None) -> 
     if lowered.endswith(".txt"):
         return "text/plain"
     return "application/octet-stream"
-
-
-def _parse_completion_body(body: str) -> dict[str, Any]:
-    payload = json.loads(body)
-    if not isinstance(payload, dict):
-        raise RuntimeError("OpenRouter response must be a JSON object")
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise RuntimeError("OpenRouter response choices are missing")
-    first_choice = choices[0]
-    if not isinstance(first_choice, dict):
-        raise RuntimeError("OpenRouter response choice has invalid shape")
-    message = first_choice.get("message")
-    if not isinstance(message, dict):
-        raise RuntimeError("OpenRouter response message is missing")
-    content = message.get("content")
-    if isinstance(content, list):
-        text_parts = [
-            str(item.get("text"))
-            for item in content
-            if isinstance(item, dict) and item.get("type") == "text"
-        ]
-        raw_text = "\n".join(part for part in text_parts if part)
-    else:
-        raw_text = str(content or "")
-    cleaned = (
-        raw_text.strip()
-        .removeprefix("```json")
-        .removeprefix("```")
-        .removesuffix("```")
-        .strip()
-    )
-    parsed = json.loads(cleaned)
-    if not isinstance(parsed, dict):
-        raise RuntimeError("Parser response payload is not an object")
-    parsed["__raw_response__"] = payload
-    return parsed
 
 
 def _normalize_result(parsed: dict[str, Any], *, default_currency: str) -> dict[str, Any]:
@@ -421,52 +347,6 @@ def _normalize_decimal_grouping(s: str) -> str:
     return prefix + s
 
 
-def _get_api_key(secrets_client: Any) -> str:
-    """Resolve the OpenRouter API key from Secrets Manager or env var."""
-    global _api_key_cache
-    if _api_key_cache is not None:
-        return _api_key_cache
-    direct = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if direct:
-        _api_key_cache = direct
-        return _api_key_cache
-    secret_arn = os.getenv("OPENROUTER_API_KEY_SECRET_ARN", "").strip()
-    if not secret_arn:
-        raise RuntimeError(
-            "OpenRouter API key is not configured (set OPENROUTER_API_KEY_SECRET_ARN)"
-        )
-    response = secrets_client.get_secret_value(SecretId=secret_arn)
-    secret_string = response.get("SecretString")
-    if not secret_string and response.get("SecretBinary"):
-        secret_string = base64.b64decode(response["SecretBinary"]).decode("utf-8")
-    if not secret_string:
-        raise RuntimeError("OpenRouter API key secret is empty")
-    _api_key_cache = _extract_key(secret_string)
-    return _api_key_cache
-
-
-def _extract_key(secret_string: str) -> str:
-    raw = secret_string.strip()
-    if not raw:
-        raise RuntimeError("OpenRouter API key value is blank")
-    if raw.startswith("{"):
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            raise RuntimeError("OpenRouter secret JSON must be an object")
-        for key_name in (
-            "openrouter_api_key",
-            "OPENROUTER_API_KEY",
-            "api_key",
-            "key",
-            "token",
-        ):
-            candidate = payload.get(key_name)
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
-        raise RuntimeError("OpenRouter API key is missing in secret JSON")
-    return raw
-
-
 def _max_file_bytes() -> int:
     raw = os.getenv("OPENROUTER_MAX_FILE_BYTES", "").strip()
     if not raw:
@@ -526,6 +406,5 @@ def _schema_prompt(default_currency: str) -> str:
 
 
 def reset_api_key_cache_for_tests() -> None:
-    """Test helper: clear the module-level API key cache."""
-    global _api_key_cache
-    _api_key_cache = None
+    """Test helper: clear the shared client's API key cache."""
+    openrouter_client.reset_api_key_cache_for_tests()

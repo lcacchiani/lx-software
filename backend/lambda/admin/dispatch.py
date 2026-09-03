@@ -12,8 +12,12 @@ from urllib.parse import parse_qs
 from botocore.exceptions import ClientError
 
 import bank_sync as bank_sync_mod
+import board_chat as board_chat_mod
+import board_meeting as board_meeting_mod
 import parse_jobs as parse_jobs_mod
 import runtime
+from board_routes import handle_board_route
+from board_store import BOARD_PK_PREFIX
 from contract_constants import (
     EXPENSE_RECORD_CATEGORIES,
     FINANCE_HOUSE_KEYS,
@@ -138,7 +142,13 @@ def _records_get_response(event: dict[str, Any]) -> dict[str, Any]:
     cursor_raw = parse_qs(qs).get("cursor", [""])[0]
     start_key = _decode_cursor(cursor_raw)
     table = runtime._ddb.Table(os.environ["RECORDS_TABLE_NAME"])
-    kwargs: dict[str, Any] = {"Limit": 50}
+    # Executive Board rows (strategy discussions, chats) never leave via the
+    # generic record browser or its public API-key mirror.
+    kwargs: dict[str, Any] = {
+        "Limit": 50,
+        "FilterExpression": "NOT begins_with(pk, :board)",
+        "ExpressionAttributeValues": {":board": BOARD_PK_PREFIX},
+    }
     if start_key:
         kwargs["ExclusiveStartKey"] = start_key
     result = table.scan(**kwargs)
@@ -240,6 +250,17 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     if isinstance(event, dict) and event.get("internal") == "bank_sync":
         bank_sync_mod.handle_bank_sync_worker(event)
+        return {}
+
+    if isinstance(event, dict) and event.get("internal") == "board_chat":
+        board_chat_mod.run_chat_worker(event)
+        return {}
+
+    if isinstance(event, dict) and event.get("internal") == "board_meeting":
+        if event.get("meetingId"):
+            board_meeting_mod.run_meeting_phase(event)
+        else:
+            board_meeting_mod.handle_schedule_trigger(event)
         return {}
 
     method, path = _route(event)
@@ -719,6 +740,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             exp_rows, merged_stored, inc_rows, exp_pct
         )
         return _json_response(200, {"allocationRecords": allocation_response})
+
+    board_response = handle_board_route(event, method, path, user_sub)
+    if board_response is not None:
+        return board_response
 
     book_match = _match_statement_book_path(path)
     if book_match:

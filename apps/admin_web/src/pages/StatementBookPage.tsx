@@ -2,13 +2,14 @@ import { useState } from "react";
 import { FinanceDataLoadOrError, FinanceSaveStatus } from "../components/FinanceDataStatus";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
 import { StatementBookDashboardCard } from "../components/StatementBookDashboardCard";
+import { ExecutiveBoardTab } from "../components/board/ExecutiveBoardTab";
 import { AdminTabList, type AdminTabItem } from "../components/ui";
 import { useStatementBook } from "../hooks/useStatementBook";
 import { defaultFiscalYearIdForNowUtc, type FiscalYearId } from "../lib/fiscalYearFinance";
-import { STATEMENT_BOOK_DISPLAY_LABEL } from "../lib/statementOwners";
+import { SIU_TIN_DEI_BOOK_KEY, STATEMENT_BOOK_DISPLAY_LABEL } from "../lib/statementOwners";
 import type { StatementBookKey } from "../lib/financeTypes";
 
-type StatementBookTab = "dashboard" | "expenses" | "gains";
+type StatementBookTab = "dashboard" | "expenses" | "gains" | "board";
 
 const STATEMENT_BOOK_TABS: readonly AdminTabItem<StatementBookTab>[] = [
   { id: "dashboard", label: "Dashboard" },
@@ -16,12 +17,21 @@ const STATEMENT_BOOK_TABS: readonly AdminTabItem<StatementBookTab>[] = [
   { id: "gains", label: "Gains" },
 ];
 
+const EXECUTIVE_BOARD_TAB: AdminTabItem<StatementBookTab> = {
+  id: "board",
+  label: "Executive Board",
+};
+
 export function StatementBookPage({
   bookKey,
 }: {
   readonly bookKey: StatementBookKey;
 }) {
   const title = STATEMENT_BOOK_DISPLAY_LABEL[bookKey];
+  const hasExecutiveBoard = bookKey === SIU_TIN_DEI_BOOK_KEY;
+  const tabs = hasExecutiveBoard
+    ? [...STATEMENT_BOOK_TABS, EXECUTIVE_BOARD_TAB]
+    : STATEMENT_BOOK_TABS;
   const {
     data,
     patchBook,
@@ -58,11 +68,7 @@ export function StatementBookPage({
             saveErrorDetail={saveErrorDetail}
           />
 
-          <AdminTabList
-            tabs={STATEMENT_BOOK_TABS}
-            active={tab}
-            onChange={setTab}
-          />
+          <AdminTabList tabs={tabs} active={tab} onChange={setTab} />
 
           <div className="tab-content">
             {tab === "dashboard" ? (
@@ -105,6 +111,7 @@ export function StatementBookPage({
                 emptyMessage="No gains yet."
               />
             ) : null}
+            {tab === "board" && hasExecutiveBoard ? <ExecutiveBoardTab /> : null}
           </div>
         </>
       ) : null}

@@ -28,9 +28,24 @@ Import from the barrel: `import { MoneyAmount, … } from "../components/ui"` (a
 - `formatMoneyAmount(amount, currency)` — string for non-React contexts.
 - `formatDateTimeHKT(iso)` — string for HKT display.
 
+## Executive Board components (`src/components/board/`)
+
+The Siu Tin Dei **Executive Board** tab (`ExecutiveBoardTab`) is the reference for conversational / long-running features:
+
+| Component | Purpose |
+|-----------|---------|
+| `BoardOffcanvas` | Right-hand slide-over (React state + CSS, no Bootstrap JS). Use for chat threads and per-item editors that should not navigate away from the list. |
+| `BoardMarkdown` | Renders LLM output with `react-markdown` + `remark-gfm` inside `.board-markdown`. Never `dangerouslySetInnerHTML`. |
+| `BoardMemberEditor`, `BoardCharterEditor`, `BoardBriefEditor` | Editors keyed on the record they edit (`key={…}`) so local state re-initialises on data change instead of syncing props in effects. Show character counters against the contract limits and a **Use default** link for overridable fields. |
+| `BoardChatOffcanvas` | Optimistic user bubble + "thinking…" placeholder while the async job runs; polling lives in `useBoardChat`. |
+| `BoardMeetingPanel`, `BoardTranscript`, `BoardMinutesView` | Progress bar driven by `meetingPhaseProgress`, minutes/transcript toggle, refetch-while-running in `useBoardMeeting`. |
+
+Async work (chat replies, meetings) always goes through a job row + polling hook, never a long HTTP request; keep poll deadlines aligned with `contracts/board-timeouts.json`.
+
 ## Dependencies
 
 - **Bootstrap Icons** — Imported globally in `src/main.tsx` (`bootstrap-icons/font/bootstrap-icons.css`). Use `bi` classes only for table/icon buttons per above.
+- **react-markdown / remark-gfm** — Only via `BoardMarkdown`.
 
 ## Reference implementation
 

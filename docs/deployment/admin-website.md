@@ -220,6 +220,61 @@ bank account to an Accounts-sheet record, and run **Sync now**. Consents
 expire per PSD2 (90 days for most UK banks; the stack caps requests at 180
 days) — reconnect from the same page when a session expires.
 
+## Executive Board (AI board for Siu Tin Dei)
+
+The **Siu Tin Dei → Executive Board** tab hosts a fixed board of eight AI
+personas (CEO, CFO, COO, CPO, CTO, CIO, CISO, CMO) that chat with the owner,
+run stand-ups and deep dives through OpenRouter, and keep a list of next
+actions. Design notes live in
+[`docs/architecture/executive-board-plan.md`](../architecture/executive-board-plan.md).
+
+Everything runs on the existing `lxsoftware` stack (`AdminApiFn` + the records
+table); there is no new Lambda, table, or bucket. Board rows use the
+`BOARD#` prefix and are excluded from the generic `/records` scan.
+
+Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
+
+| Parameter | Purpose |
+|-----------|---------|
+| `lxsoftware:OpenRouterApiKeySecretArn` | Already required for statement parsing; the board reuses the same key. |
+| `lxsoftware:GitHubReadTokenSecretArn` | Secrets Manager secret holding a **fine-grained, read-only** GitHub token scoped to the private `siutindei` repository. Blank disables the repository snapshot in the board's context pack. |
+| `lxsoftware:BoardGitHubRepo` | `owner/name` of the repository to read (default `lx-software-ltd/siutindei`). |
+| `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
+
+GitHub token setup (only if you want repository context):
+
+1. On GitHub create a fine-grained personal access token with **Contents:
+   read**, **Issues: read**, **Actions: read** and **Metadata: read** on the
+   `siutindei` repository only. Set an expiry and rotate it like any other
+   secret.
+2. Store it as a plain-string secret:
+
+   ```bash
+   aws secretsmanager create-secret \
+     --name lxsoftware-admin-github-read-token \
+     --secret-string 'github_pat_…'
+   ```
+
+3. Put the returned ARN in `lxsoftware:GitHubReadTokenSecretArn` and
+   redeploy. The stack adds a conditional `secretsmanager:GetSecretValue`
+   grant to `AdminApiFn`.
+
+Scheduled stand-ups: two EventBridge rules fire `AdminApiFn` with
+`{ internal: "board_meeting", trigger: "schedule", slot: "morning" | "evening" }`
+at 06:00 HKT and 18:00 HKT. Both are off until the owner turns them on in
+**Executive Board → Settings**; the handler also refuses to start a meeting
+when the daily budget is exhausted or another meeting is still running.
+
+Cost controls: every OpenRouter call records usage under the board's daily
+usage row, and chats/meetings stop when the configured daily budget
+(default USD 5) is reached. OpenRouter requests are sent with data
+collection denied. The context pack shares only aggregated finance totals
+(never individual transactions) and no owner PII.
+
+Smoke test after deploy: open the tab, save a company vision/mission, edit one
+member's mandate, send a chat message to the CEO (reply arrives within ~30 s),
+then **Run stand-up** and confirm minutes and action items appear.
+
 ## Scripts
 
 Local or CI deploy of static files after a build:

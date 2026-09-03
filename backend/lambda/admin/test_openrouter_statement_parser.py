@@ -265,7 +265,7 @@ class TestParseStatementFromAsset(unittest.TestCase):
                 "OPENROUTER_API_KEY_SECRET_ARN": "arn:aws:secretsmanager:eu-west-1:1:secret:fake",
             },
             clear=False,
-        ), patch("openrouter_statement_parser.urlrequest.urlopen", _fake_urlopen):
+        ), patch("openrouter_client.urlrequest.urlopen", _fake_urlopen):
             result = parser.parse_statement_from_asset(
                 s3_client=s3,
                 secrets_client=secrets,
@@ -311,7 +311,7 @@ class TestParseStatementFromAsset(unittest.TestCase):
 
         with patch.dict(
             "os.environ", {"OPENROUTER_API_KEY": "sk-env"}, clear=False
-        ), patch("openrouter_statement_parser.urlrequest.urlopen", _fake_urlopen):
+        ), patch("openrouter_client.urlrequest.urlopen", _fake_urlopen):
             result = parser.parse_statement_from_asset(
                 s3_client=s3,
                 secrets_client=secrets,

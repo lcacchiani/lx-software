@@ -172,6 +172,38 @@ export class LxsoftwareStack extends cdk.Stack {
         "Leave blank to disable bank sync.",
     });
 
+    // Executive Board (AI board for Siu Tin Dei; see docs/architecture/executive-board-plan.md)
+    const gitHubReadTokenSecretArn = new cdk.CfnParameter(
+      this,
+      "GitHubReadTokenSecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the Secrets Manager secret holding a fine-grained, read-only GitHub token for the private siutindei repository (Executive Board context). Leave blank to disable the repository snapshot.",
+      }
+    );
+    const boardGitHubRepo = new cdk.CfnParameter(this, "BoardGitHubRepo", {
+      type: "String",
+      default: "lx-software-ltd/siutindei",
+      description: "owner/name of the repository the Executive Board reads.",
+    });
+    const boardChatModel = new cdk.CfnParameter(this, "BoardChatModel", {
+      type: "String",
+      default: "openai/gpt-4.1-mini",
+      description: "OpenRouter model slug for Executive Board chats (overridable in the admin settings).",
+    });
+    const boardMeetingModel = new cdk.CfnParameter(this, "BoardMeetingModel", {
+      type: "String",
+      default: "openai/gpt-4.1-mini",
+      description: "OpenRouter model slug for Executive Board stand-up meetings.",
+    });
+    const boardDeepDiveModel = new cdk.CfnParameter(this, "BoardDeepDiveModel", {
+      type: "String",
+      default: "anthropic/claude-sonnet-4",
+      description: "OpenRouter model slug for Executive Board deep-dive meetings.",
+    });
+
     // ------------------------------------------------------------------
     // 1. Shared KMS encryption key + Lambda DLQ
     //
@@ -498,6 +530,11 @@ export class LxsoftwareStack extends cdk.Stack {
         PARSE_JOB_TTL_SECONDS: String(PARSE_TIMEOUTS.parseJobTtlSeconds),
         ENABLE_BANKING_APP_ID: enableBankingAppId.valueAsString,
         ENABLE_BANKING_KMS_KEY_ID: enableBankingSigningKey.keyId,
+        GITHUB_READ_TOKEN_SECRET_ARN: gitHubReadTokenSecretArn.valueAsString,
+        BOARD_GITHUB_REPO: boardGitHubRepo.valueAsString,
+        BOARD_CHAT_MODEL: boardChatModel.valueAsString,
+        BOARD_MEETING_MODEL: boardMeetingModel.valueAsString,
+        BOARD_DEEP_DIVE_MODEL: boardDeepDiveModel.valueAsString,
         ADMIN_WEB_ORIGIN: cdk.Fn.join("", [
           "https://",
           adminWebDomainName.valueAsString,
@@ -506,6 +543,37 @@ export class LxsoftwareStack extends cdk.Stack {
     });
 
     enableBankingSigningKey.grant(adminFn, "kms:Sign", "kms:GetPublicKey");
+
+    // Executive Board scheduled meetings. The handler checks the board
+    // settings (morning / evening toggles) and no-ops when disabled, so both
+    // rules are safe to keep enabled. 06:00 HKT = 22:00 UTC (previous day);
+    // 18:00 HKT = 10:00 UTC.
+    new events.Rule(this, "BoardMorningMeetingRule", {
+      description: "Executive Board morning stand-up (06:00 HKT) when enabled in settings.",
+      schedule: events.Schedule.cron({ minute: "0", hour: "22" }),
+      targets: [
+        new eventsTargets.LambdaFunction(adminFn, {
+          event: events.RuleTargetInput.fromObject({
+            internal: "board_meeting",
+            trigger: "schedule",
+            slot: "morning",
+          }),
+        }),
+      ],
+    });
+    new events.Rule(this, "BoardEveningMeetingRule", {
+      description: "Executive Board evening stand-up (18:00 HKT) when enabled in settings.",
+      schedule: events.Schedule.cron({ minute: "0", hour: "10" }),
+      targets: [
+        new eventsTargets.LambdaFunction(adminFn, {
+          event: events.RuleTargetInput.fromObject({
+            internal: "board_meeting",
+            trigger: "schedule",
+            slot: "evening",
+          }),
+        }),
+      ],
+    });
 
     // Daily unattended balance refresh (05:30 HKT). The handler no-ops when
     // ENABLE_BANKING_APP_ID is blank, so the rule is safe to keep enabled.
@@ -589,6 +657,25 @@ export class LxsoftwareStack extends cdk.Stack {
     openRouterSecretPolicy.attachToRole(adminFn.role!);
     const cfnSecretPolicy = openRouterSecretPolicy.node.defaultChild as iam.CfnPolicy;
     cfnSecretPolicy.cfnOptions.condition = hasOpenRouterSecret;
+
+    // Same pattern for the optional GitHub read token (Executive Board).
+    const gitHubSecretArnValue = gitHubReadTokenSecretArn.valueAsString;
+    const hasGitHubSecret = new cdk.CfnCondition(this, "HasGitHubReadTokenSecret", {
+      expression: cdk.Fn.conditionNot(
+        cdk.Fn.conditionEquals(gitHubSecretArnValue, "")
+      ),
+    });
+    const gitHubSecretPolicy = new iam.Policy(this, "AdminGitHubReadTokenSecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [gitHubSecretArnValue],
+        }),
+      ],
+    });
+    gitHubSecretPolicy.attachToRole(adminFn.role!);
+    const cfnGitHubSecretPolicy = gitHubSecretPolicy.node.defaultChild as iam.CfnPolicy;
+    cfnGitHubSecretPolicy.cfnOptions.condition = hasGitHubSecret;
 
     // ------------------------------------------------------------------
     // Inbound mail: SES → S3 (raw) → Lambda extracts PDF → same parser as UI
@@ -944,6 +1031,66 @@ export class LxsoftwareStack extends cdk.Stack {
       integration,
       authorizer: jwtAuthorizer,
     });
+
+    // Executive Board (admin JWT only; never mirrored under /public/*).
+    const boardRoutes: ReadonlyArray<{
+      readonly path: string;
+      readonly methods: readonly apigwv2.HttpMethod[];
+    }> = [
+      { path: "/siu-tin-dei/board", methods: [apigwv2.HttpMethod.GET] },
+      { path: "/siu-tin-dei/board/charter", methods: [apigwv2.HttpMethod.PUT] },
+      {
+        path: "/siu-tin-dei/board/members/{personaId}",
+        methods: [apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.DELETE],
+      },
+      { path: "/siu-tin-dei/board/brief", methods: [apigwv2.HttpMethod.PUT] },
+      { path: "/siu-tin-dei/board/settings", methods: [apigwv2.HttpMethod.PUT] },
+      {
+        path: "/siu-tin-dei/board/updates",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      },
+      {
+        path: "/siu-tin-dei/board/chat/{personaId}",
+        methods: [
+          apigwv2.HttpMethod.GET,
+          apigwv2.HttpMethod.POST,
+          apigwv2.HttpMethod.DELETE,
+        ],
+      },
+      {
+        path: "/siu-tin-dei/board/chat/{personaId}/jobs/{jobId}",
+        methods: [apigwv2.HttpMethod.GET],
+      },
+      {
+        path: "/siu-tin-dei/board/meetings",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      },
+      {
+        path: "/siu-tin-dei/board/meetings/{meetingId}",
+        methods: [apigwv2.HttpMethod.GET],
+      },
+      {
+        path: "/siu-tin-dei/board/meetings/{meetingId}/cancel",
+        methods: [apigwv2.HttpMethod.POST],
+      },
+      { path: "/siu-tin-dei/board/actions", methods: [apigwv2.HttpMethod.GET] },
+      {
+        path: "/siu-tin-dei/board/actions/{actionId}",
+        methods: [apigwv2.HttpMethod.PUT],
+      },
+      {
+        path: "/siu-tin-dei/board/repo-snapshot/refresh",
+        methods: [apigwv2.HttpMethod.POST],
+      },
+    ];
+    for (const route of boardRoutes) {
+      this.httpApi.addRoutes({
+        path: route.path,
+        methods: [...route.methods],
+        integration,
+        authorizer: jwtAuthorizer,
+      });
+    }
 
     this.httpApi.addRoutes({
       path: "/lx-software",
