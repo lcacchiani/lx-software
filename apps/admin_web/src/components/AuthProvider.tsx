@@ -10,24 +10,13 @@ import {
 import { clearStoredSession, getStoredIdToken } from "../lib/auth";
 import { createPkcePair } from "../lib/pkce";
 import { getAdminConfig } from "../lib/config";
-import { decodeJwtPayload, idTokenHasAdminAccess } from "../lib/jwt";
+import {
+  decodeUserFromIdToken,
+  idTokenHasAdminAccess,
+  type IdTokenUser,
+} from "../lib/jwt";
 
-export interface AuthUser {
-  readonly sub: string;
-  readonly email?: string;
-}
-
-function decodeUserFromIdToken(idToken: string): AuthUser | null {
-  try {
-    const json = decodeJwtPayload<{ sub?: string; email?: string }>(idToken);
-    if (!json.sub) {
-      return null;
-    }
-    return { sub: json.sub, email: json.email };
-  } catch {
-    return null;
-  }
-}
+export type AuthUser = IdTokenUser;
 
 interface AuthContextValue {
   readonly user: AuthUser | null;

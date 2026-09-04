@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { useAuth } from "./AuthProvider";
+import { formatDateTimeHKT } from "../lib/formatDisplay";
+import { useAuth, type AuthUser } from "./AuthProvider";
 
 type AdminNavItem = {
   readonly to: string;
@@ -20,6 +21,24 @@ const ADMIN_NAV_GROUPS: readonly (readonly AdminNavItem[])[] = [
     { to: "/assets", label: "Assets" },
   ],
 ];
+
+function SessionIdentity({ user }: { readonly user: AuthUser | null }) {
+  if (!user?.email && !user?.lastLoginAt) {
+    return null;
+  }
+  return (
+    <div className="admin-mobile-session border-bottom pb-3 mb-3" aria-label="Signed-in account">
+      {user.email ? (
+        <div className="fw-semibold text-break">{user.email}</div>
+      ) : null}
+      {user.lastLoginAt ? (
+        <p className="small text-muted mb-0 mt-1">
+          Last login {formatDateTimeHKT(user.lastLoginAt)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 function AdminNavLinks({ onNavigate }: { readonly onNavigate?: () => void }) {
   return (
@@ -147,6 +166,7 @@ export function AuthenticatedShell() {
             onClick={closeNav}
           />
         </div>
+        <SessionIdentity user={user} />
         <AdminNavLinks onNavigate={closeNav} />
       </aside>
       <div className="d-flex flex-grow-1 min-w-0">

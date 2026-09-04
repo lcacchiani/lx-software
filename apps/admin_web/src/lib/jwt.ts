@@ -27,6 +27,48 @@ export function readIdTokenExpiryMs(idToken: string): number | null {
   }
 }
 
+export type IdTokenUser = {
+  readonly sub: string;
+  readonly email?: string;
+  /** ISO instant of Cognito `auth_time`, falling back to `iat`. */
+  readonly lastLoginAt?: string;
+};
+
+function unixSecondsToIso(value: unknown): string | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  const d = new Date(value * 1000);
+  if (Number.isNaN(d.getTime())) {
+    return undefined;
+  }
+  return d.toISOString();
+}
+
+/** Reads identity claims used by the admin chrome (email + last login). */
+export function decodeUserFromIdToken(idToken: string): IdTokenUser | null {
+  try {
+    const json = decodeJwtPayload<{
+      sub?: string;
+      email?: string;
+      auth_time?: number;
+      iat?: number;
+    }>(idToken);
+    if (!json.sub) {
+      return null;
+    }
+    const lastLoginAt =
+      unixSecondsToIso(json.auth_time) ?? unixSecondsToIso(json.iat);
+    return {
+      sub: json.sub,
+      ...(json.email ? { email: json.email } : {}),
+      ...(lastLoginAt ? { lastLoginAt } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Matches `backend/lambda/admin/handler.py` `_groups_include_admin`. */
 const ADMIN_GROUP = "admin";
 
