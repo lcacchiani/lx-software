@@ -28,6 +28,8 @@ import board_budget
 import board_github
 import board_mail
 import board_personas
+import board_product
+import board_receivables
 import board_research
 import board_security
 import board_store
@@ -927,6 +929,199 @@ def build_registry() -> dict[str, ToolOp]:
             run=board_security.op_open_remediation,
             summarize=_summ("Propose security issue: {title}"),
         ),
+        ToolOp(
+            name="product_catalog_health",
+            tool_id="product",
+            kind="read",
+            description="Catalog counts by district/category with completeness (photos, price, schedule, geocode).",
+            parameters=_obj(
+                {
+                    "district": _str_param("Optional Hong Kong district.", max_len=40),
+                    "category": _str_param("Optional activity category.", max_len=40),
+                }
+            ),
+            run=board_product.op_catalog_health,
+            summarize=_summ("Read catalog health"),
+        ),
+        ToolOp(
+            name="product_funnel",
+            tool_id="product",
+            kind="read",
+            description="Daily searches, listing views, CTA taps, leads and bookings from v_funnel_daily.",
+            parameters=_obj(
+                {
+                    "from": _str_param("Start date YYYY-MM-DD.", max_len=10),
+                    "to": _str_param("End date YYYY-MM-DD.", max_len=10),
+                    "district": _str_param("Optional district.", max_len=40),
+                }
+            ),
+            run=board_product.op_funnel,
+            summarize=_summ("Read product funnel"),
+        ),
+        ToolOp(
+            name="product_provider_pipeline",
+            tool_id="product",
+            kind="read",
+            description="Provider sign-ups, onboarding step, days since last edit, subscription status.",
+            parameters=_obj({"status": _str_param("Optional subscription status.", enum=["trial", "active", "past_due", "cancelled"])}),
+            run=board_product.op_provider_pipeline,
+            summarize=_summ("Read provider pipeline"),
+        ),
+        ToolOp(
+            name="product_flag_listing",
+            tool_id="product",
+            kind="write",
+            description="Flag a listing for the founder to review. Does not change the catalog.",
+            parameters=_obj(
+                {
+                    "listingId": _str_param("Listing or activity id.", max_len=64),
+                    "reason": REASON_PARAM,
+                },
+                ["listingId", "reason"],
+            ),
+            run=board_product.op_flag_listing,
+            summarize=_summ("Flag listing {listingId}"),
+        ),
+        ToolOp(
+            name="finance_list_subscriptions",
+            tool_id="finance",
+            kind="read",
+            description="Listing subscriptions with plan name, price and payer contact.",
+            parameters=_obj({"status": _str_param("Optional status.", enum=["trial", "active", "past_due", "cancelled"])}),
+            run=board_receivables.op_list_subscriptions,
+            summarize=_summ("Listed subscriptions"),
+        ),
+        ToolOp(
+            name="finance_list_invoices",
+            tool_id="finance",
+            kind="read",
+            description="Invoices with FPS reference, amount and status.",
+            parameters=_obj({"status": _str_param("Optional status.", enum=["draft", "sent", "paid", "overdue", "void"])}),
+            run=board_receivables.op_list_invoices,
+            summarize=_summ("Listed invoices"),
+        ),
+        ToolOp(
+            name="finance_aging_report",
+            tool_id="finance",
+            kind="read",
+            description="Receivables aging: current / D+7 / D+21 / D+35 and DSO.",
+            parameters=_obj({}),
+            run=board_receivables.op_aging_report,
+            summarize=_summ("Ran aging report"),
+        ),
+        ToolOp(
+            name="finance_unit_economics",
+            tool_id="finance",
+            kind="read",
+            description="Revenue per subscription versus AWS cost (Meta ads added in T5).",
+            parameters=_obj({}),
+            run=board_receivables.op_unit_economics,
+            summarize=_summ("Read unit economics"),
+        ),
+        ToolOp(
+            name="finance_draft_invoice",
+            tool_id="finance",
+            kind="write",
+            description="Create a draft invoice with a unique FPS reference for a subscription.",
+            parameters=_obj(
+                {
+                    "subscriptionId": _str_param("listing_subscriptions.id.", max_len=64),
+                    "amountHkd": {"type": "number", "description": "Amount in HKD."},
+                    "dueInDays": _int_param("Days until due (1-90).", maximum=90),
+                    "reason": REASON_PARAM,
+                },
+                ["subscriptionId", "amountHkd", "reason"],
+            ),
+            run=board_receivables.op_draft_invoice,
+            summarize=_summ("Draft invoice for {subscriptionId}"),
+        ),
+        ToolOp(
+            name="finance_send_invoice",
+            tool_id="finance",
+            kind="write",
+            description="Email an invoice from billing@siutindei.com. Act only for allow-listed payers.",
+            parameters=_obj(
+                {
+                    "invoiceId": _str_param("invoices.id.", max_len=64),
+                    "reason": REASON_PARAM,
+                },
+                ["invoiceId", "reason"],
+            ),
+            run=board_receivables.op_send_invoice,
+            summarize=_summ("Send invoice {invoiceId}"),
+            act_guard=lambda ctx, args: board_receivables.act_guard_send(ctx, args, op="finance_send_invoice"),
+            preview=lambda ctx, args: board_receivables.owner_preview_send(ctx, args, op="finance_send_invoice"),
+        ),
+        ToolOp(
+            name="finance_send_reminder",
+            tool_id="finance",
+            kind="write",
+            description="Dunning reminder at D+7 / D+21 / D+35. Act only for allow-listed payers.",
+            parameters=_obj(
+                {
+                    "invoiceId": _str_param("invoices.id.", max_len=64),
+                    "reason": REASON_PARAM,
+                },
+                ["invoiceId", "reason"],
+            ),
+            run=board_receivables.op_send_reminder,
+            summarize=_summ("Send reminder for {invoiceId}"),
+            act_guard=lambda ctx, args: board_receivables.act_guard_send(ctx, args, op="finance_send_reminder"),
+            preview=lambda ctx, args: board_receivables.owner_preview_send(ctx, args, op="finance_send_reminder"),
+        ),
+        ToolOp(
+            name="finance_match_payment",
+            tool_id="finance",
+            kind="write",
+            description="Attach a payment to an invoice. Act only when amount and FPS reference agree; otherwise propose candidates.",
+            parameters=_obj(
+                {
+                    "paymentId": _str_param("payments.id.", max_len=64),
+                    "invoiceId": _str_param("invoices.id.", max_len=64),
+                    "reason": REASON_PARAM,
+                },
+                ["paymentId", "invoiceId", "reason"],
+            ),
+            run=board_receivables.op_match_payment,
+            summarize=_summ("Match payment {paymentId} to {invoiceId}"),
+            act_guard=board_receivables.act_guard_match,
+        ),
+        ToolOp(
+            name="finance_propose_price_change",
+            tool_id="finance",
+            kind="write",
+            description="Create a listing_plans row (pricing proposal). First approved plan seeds the price list.",
+            parameters=_obj(
+                {
+                    "name": _str_param("Plan name, e.g. 'Store listing — monthly'.", max_len=80),
+                    "priceHkd": {"type": "number", "description": "Price in HKD."},
+                    "billingPeriod": _str_param("monthly or annual.", enum=["monthly", "annual"]),
+                    "reason": REASON_PARAM,
+                },
+                ["name", "priceHkd", "billingPeriod", "reason"],
+            ),
+            run=board_receivables.op_propose_price_change,
+            summarize=_summ("Propose plan {name} at ${priceHkd}"),
+        ),
+        ToolOp(
+            name="finance_record_manual_payment",
+            tool_id="finance",
+            kind="write",
+            description="Record cash or cheque handed over in person (source=manual).",
+            parameters=_obj(
+                {
+                    "amountHkd": {"type": "number", "description": "Amount in HKD."},
+                    "receivedOn": _str_param("Date received YYYY-MM-DD.", max_len=10),
+                    "payerName": _str_param("Who paid.", max_len=120),
+                    "bankReference": _str_param("Optional FPS or cheque reference.", max_len=80),
+                    "invoiceId": _str_param("Optional invoice to match.", max_len=64),
+                    "reason": REASON_PARAM,
+                },
+                ["amountHkd", "reason"],
+            ),
+            run=board_receivables.op_record_manual_payment,
+            summarize=_summ("Record manual payment of ${amountHkd}"),
+        ),
     ]
     return {op.name: op for op in ops}
 
@@ -1064,6 +1259,8 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             board_research.ResearchError,
             board_aws.AwsToolError,
             board_security.SecurityToolError,
+            board_receivables.ReceivablesError,
+            board_product.ProductError,
             ValueError,
         ) as exc:
             outcome = ToolOutcome(status="error", result={"error": str(exc)[:500]}, summary=summary)

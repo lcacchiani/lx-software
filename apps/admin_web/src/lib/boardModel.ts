@@ -90,6 +90,7 @@ export type BoardToolsPayload = {
   readonly mailSendEnabled: boolean;
   readonly mailDomain: string;
   readonly searchConfigured?: boolean;
+  readonly dataApiConfigured?: boolean;
 };
 
 export type BoardToolCallStatus = "ok" | "error" | "pending_approval";
@@ -414,7 +415,43 @@ export type BoardOverview = {
   readonly pendingApprovalCount: number;
   readonly toolsEnabled: boolean;
   readonly unreadMailCount: number;
+  readonly overdueInvoiceCount?: number;
   readonly mail: BoardMailStatus;
+  readonly receivables?: { readonly outstandingHkd?: number; readonly overdue?: number };
+};
+
+export type BoardReceivablesInvoice = {
+  readonly id: string;
+  readonly number: string;
+  readonly amount_hkd: number;
+  readonly status: string;
+  readonly due_on?: string | null;
+  readonly fps_reference?: string | null;
+  readonly subscription_id?: string | null;
+};
+
+export type BoardReceivablesSubscription = {
+  readonly id: string;
+  readonly organization_id: string;
+  readonly status: string;
+  readonly plan_name?: string | null;
+  readonly price_hkd?: number | null;
+  readonly renews_on?: string | null;
+  readonly payer_contact?: string | null;
+};
+
+export type BoardReceivablesAging = {
+  readonly asOf?: string;
+  readonly outstandingHkd: number;
+  readonly dso?: number;
+  readonly buckets: Readonly<Record<string, readonly BoardReceivablesInvoice[]>>;
+};
+
+export type BoardReceivablesPayload = {
+  readonly configured: boolean;
+  readonly invoices: readonly BoardReceivablesInvoice[];
+  readonly subscriptions: readonly BoardReceivablesSubscription[];
+  readonly aging: BoardReceivablesAging;
 };
 
 export const BOARD_API_BASE = "/siu-tin-dei/board";

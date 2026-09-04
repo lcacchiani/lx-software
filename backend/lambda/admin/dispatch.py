@@ -15,6 +15,7 @@ import bank_sync as bank_sync_mod
 import board_cache as board_cache_mod
 import board_chat as board_chat_mod
 import board_meeting as board_meeting_mod
+import board_receivables as board_receivables_mod
 import parse_jobs as parse_jobs_mod
 import runtime
 from board_routes import handle_board_route
@@ -266,6 +267,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     if isinstance(event, dict) and event.get("internal") == "board_cache_refresh":
         board_cache_mod.handle_schedule_trigger(event)
+        return {}
+
+    if isinstance(event, dict) and event.get("internal") == "board_receivables_mirror":
+        board_receivables_mod.handle_mirror_trigger(event)
+        return {}
+
+    if isinstance(event, dict) and event.get("internal") == "board_dunning":
+        board_receivables_mod.handle_dunning_trigger(event)
         return {}
 
     method, path = _route(event)

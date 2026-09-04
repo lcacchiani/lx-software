@@ -336,6 +336,38 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
       "ciso": "propose",
       "cmo": "off"
     }
+  },
+  {
+    "id": "product",
+    "label": "Product",
+    "description": "siutindei catalog health, funnel and provider pipeline (read-only SQL views). Propose flagging a listing for review.",
+    "maxLevel": "propose",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "read",
+      "coo": "propose",
+      "cpo": "propose",
+      "cto": "read",
+      "cio": "read",
+      "ciso": "off",
+      "cmo": "read"
+    }
+  },
+  {
+    "id": "finance",
+    "label": "Finance",
+    "description": "Listing subscriptions, invoices, aging and unit economics. Draft/send invoices and dunning reminders; record or match payments. The board never initiates a bank payment.",
+    "maxLevel": "act",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "act",
+      "coo": "propose",
+      "cpo": "off",
+      "cto": "off",
+      "cio": "off",
+      "ciso": "off",
+      "cmo": "read"
+    }
   }
 ];
 export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
@@ -351,3 +383,5 @@ export const BOARD_RESEARCH_CACHE_TTL_HOURS = 24;
 export const BOARD_RESEARCH_QUERY_MAX_LEN = 200;
 export const BOARD_RESEARCH_MAX_RESULTS = 8;
 export const BOARD_CACHE_REFRESH_TTL_HOURS = 2;
+export const BOARD_INVOICE_NUMBER_PREFIX = "STD";
+export const BOARD_RECEIVABLES_LIST_MAX = 100;

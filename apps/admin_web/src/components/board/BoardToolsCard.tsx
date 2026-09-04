@@ -44,8 +44,17 @@ export function BoardToolsCard({
   showCallLog,
   onToggleCallLog,
 }: BoardToolsCardProps) {
-  const { config, registry, defaults, envDisabled, repoWriteEnabled, mailSendEnabled, mailDomain, searchConfigured } =
-    payload;
+  const {
+    config,
+    registry,
+    defaults,
+    envDisabled,
+    repoWriteEnabled,
+    mailSendEnabled,
+    mailDomain,
+    searchConfigured,
+    dataApiConfigured,
+  } = payload;
   const [draft, setDraft] = useState<BoardToolsConfig>(config);
   const [allowListText, setAllowListText] = useState(() => config.allowList.join("\n"));
   const draftAllowList = parseAllowListText(allowListText);
@@ -214,6 +223,19 @@ export function BoardToolsCard({
                         <div className="small text-warning mt-1">
                           No Brave Search key (`SearchApiKeySecretArn`). Queries fail until one is set (or OpenRouter
                           `:online` is used as a fallback).
+                        </div>
+                      )
+                    ) : null}
+                    {tool.id === "finance" || tool.id === "product" ? (
+                      dataApiConfigured ? (
+                        <div className="small text-muted mt-1">
+                          Reads the siutindei Aurora database through the RDS Data API.
+                        </div>
+                      ) : (
+                        <div className="small text-warning mt-1">
+                          Data API is off until <code>SiutindeiClusterArn</code> and{" "}
+                          <code>SiutindeiDbSecretArn</code> are set and{" "}
+                          <code>scripts/siutindei/receivables.sql</code> is applied.
                         </div>
                       )
                     ) : null}

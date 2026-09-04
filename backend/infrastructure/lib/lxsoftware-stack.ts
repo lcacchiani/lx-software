@@ -213,6 +213,26 @@ export class LxsoftwareStack extends cdk.Stack {
           "ARN of the Secrets Manager secret holding a Brave Search API key (Executive Board research tool). Leave blank to fall back to OpenRouter :online when that key is already set.",
       }
     );
+    const siutindeiClusterArn = new cdk.CfnParameter(
+      this,
+      "SiutindeiClusterArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "Aurora cluster ARN for the siutindei database (RDS Data API). Required for Executive Board finance and product tools.",
+      }
+    );
+    const siutindeiDbSecretArn = new cdk.CfnParameter(
+      this,
+      "SiutindeiDbSecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "Secrets Manager ARN of the siutindei DB credentials used by the RDS Data API.",
+      }
+    );
     const boardAwsStackPrefix = new cdk.CfnParameter(
       this,
       "BoardAwsStackPrefix",
@@ -603,6 +623,8 @@ export class LxsoftwareStack extends cdk.Stack {
         SEARCH_API_KEY_SECRET_ARN: searchApiKeySecretArn.valueAsString,
         BOARD_AWS_STACK_PREFIX: boardAwsStackPrefix.valueAsString,
         USER_POOL_ID: this.auth.userPool.userPoolId,
+        SIUTINDEI_CLUSTER_ARN: siutindeiClusterArn.valueAsString,
+        SIUTINDEI_DB_SECRET_ARN: siutindeiDbSecretArn.valueAsString,
         // BOARD_MAIL_DOMAIN / _RAW_SEGMENT / _INBOUND_ADDRESS are added with the
         // inbound-mail resources below (they depend on InboundMailDomain).
         BOARD_MAIL_SENDING_ENABLED: boardMailSendingEnabled.valueAsString,
@@ -650,9 +672,37 @@ export class LxsoftwareStack extends cdk.Stack {
     boardMeetingSchedule("BoardMorningMeetingSchedule", "morning", "6");
     boardMeetingSchedule("BoardEveningMeetingSchedule", "evening", "18");
 
-    // Cheap AWS / security reads for the board. Role-based invoke (no extra
-    // Lambda resource-policy statement). The handler is a no-op when tools
-    // are killed or the AWS APIs return AccessDenied.
+    // Role-based Scheduler invokes (no extra Lambda resource-policy statements).
+    new scheduler.Schedule(this, "BoardReceivablesMirrorSchedule", {
+      description:
+        "Nightly mirror of siutindei invoices/payments into the Siu Tin Dei statement book (HKT 00:30).",
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: "30",
+        hour: "0",
+        timeZone: cdk.TimeZone.ASIA_HONG_KONG,
+      }),
+      target: new schedulerTargets.LambdaInvoke(adminFn, {
+        input: scheduler.ScheduleTargetInput.fromObject({
+          internal: "board_receivables_mirror",
+        }),
+        retryAttempts: 1,
+      }),
+    });
+    new scheduler.Schedule(this, "BoardDunningSchedule", {
+      description:
+        "Daily 09:00 HKT dunning: queues propose-level invoice reminders at D+7 / D+21 / D+35.",
+      schedule: scheduler.ScheduleExpression.cron({
+        minute: "0",
+        hour: "9",
+        timeZone: cdk.TimeZone.ASIA_HONG_KONG,
+      }),
+      target: new schedulerTargets.LambdaInvoke(adminFn, {
+        input: scheduler.ScheduleTargetInput.fromObject({
+          internal: "board_dunning",
+        }),
+        retryAttempts: 0,
+      }),
+    });
     new scheduler.Schedule(this, "BoardCacheRefreshSchedule", {
       description:
         "Hourly refresh of Executive Board AWS cost/alarms and security findings cache (HKT).",
@@ -805,6 +855,27 @@ export class LxsoftwareStack extends cdk.Stack {
         }),
       ],
     }).attachToRole(adminFn.role!);
+
+    const hasSiutindeiDataApi = new cdk.CfnCondition(this, "HasSiutindeiDataApi", {
+      expression: cdk.Fn.conditionAnd(
+        cdk.Fn.conditionNot(cdk.Fn.conditionEquals(siutindeiClusterArn.valueAsString, "")),
+        cdk.Fn.conditionNot(cdk.Fn.conditionEquals(siutindeiDbSecretArn.valueAsString, ""))
+      ),
+    });
+    const dataApiPolicy = new iam.Policy(this, "AdminSiutindeiDataApiPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["rds-data:ExecuteStatement", "rds-data:BatchExecuteStatement"],
+          resources: [siutindeiClusterArn.valueAsString],
+        }),
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [siutindeiDbSecretArn.valueAsString],
+        }),
+      ],
+    });
+    dataApiPolicy.attachToRole(adminFn.role!);
+    (dataApiPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasSiutindeiDataApi;
 
     // ------------------------------------------------------------------
     // Inbound mail: SES → S3 (raw) → Lambda extracts PDF → same parser as UI
@@ -1328,6 +1399,7 @@ export class LxsoftwareStack extends cdk.Stack {
         path: "/siu-tin-dei/board/mail/{threadId}/read",
         methods: [apigwv2.HttpMethod.POST],
       },
+      { path: "/siu-tin-dei/board/receivables", methods: [apigwv2.HttpMethod.GET] },
     ];
     for (const route of boardRoutes) {
       this.httpApi.addRoutes({
