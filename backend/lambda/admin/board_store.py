@@ -859,15 +859,22 @@ def set_mail_thread_unread(table: Any, thread_id: str, *, unread: bool) -> None:
     )
 
 
+def mail_message_key(thread_id: str, received_at: str, message_id: str) -> dict[str, str]:
+    return {"pk": board_pk(f"mail#thread#{thread_id}"), "sk": f"MSG#{received_at}#{message_id}"}
+
+
 def put_mail_message(table: Any, doc: dict[str, Any]) -> None:
     table.put_item(
         Item={
-            "pk": board_pk(f"mail#thread#{doc['threadId']}"),
-            "sk": f"MSG#{doc['receivedAt']}#{doc['messageId']}",
+            **mail_message_key(str(doc["threadId"]), str(doc["receivedAt"]), str(doc["messageId"])),
             "expiresAt": _mail_expires_at(),
             **_to_ddb_nested(doc),
         }
     )
+
+
+def delete_mail_message(table: Any, thread_id: str, received_at: str, message_id: str) -> None:
+    table.delete_item(Key=mail_message_key(thread_id, received_at, message_id))
 
 
 def list_mail_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
@@ -882,6 +889,11 @@ def list_mail_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
 
 def _msgid_key(digest: str) -> dict[str, str]:
     return {"pk": board_pk("mail#msgids"), "sk": f"MSGID#{digest}"}
+
+
+def delete_mail_msgid(table: Any, digest: str) -> None:
+    """Undo :func:`put_mail_msgid` when the message it claimed could not be stored."""
+    table.delete_item(Key=_msgid_key(digest))
 
 
 def put_mail_msgid(table: Any, digest: str, *, thread_id: str, message_id: str) -> bool:

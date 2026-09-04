@@ -764,7 +764,8 @@ def build_registry() -> dict[str, ToolOp]:
             kind="read",
             description=(
                 "List email threads, newest first, optionally for one mailbox, matching keywords, or unread only. "
-                "Contacts appear as stable aliases like contact#12; never guess real names or addresses."
+                "Contacts appear as stable aliases like contact#12; never guess real names or addresses. "
+                "hasAttachments only signals files are present; PDF contents are not readable."
             ),
             parameters=_obj(
                 {
@@ -781,7 +782,10 @@ def build_registry() -> dict[str, ToolOp]:
             name="mail_get_thread",
             tool_id="mail",
             kind="read",
-            description="Read every message in one thread (bodies and attachment names, contacts pseudonymised).",
+            description=(
+                "Read every message in one thread (bodies, text attachments and attachment names; contacts pseudonymised). "
+                "PDF attachment text is NOT extracted: such files are listed under attachmentsSkipped, so ask the founder for anything inside a PDF."
+            ),
             parameters=_obj({"threadId": _str_param("Thread id from mail_list_threads.", max_len=64)}, ["threadId"]),
             run=board_mail.op_get_thread,
             summarize=_summ("Read email thread {threadId}"),

@@ -144,7 +144,7 @@ denial from the existing client stays on. Message bodies are stored with a
 | `stores` | App Store Connect API, Google Play Developer API | downloads, installs, crashes, ratings, review text, review status | reply to review, release notes draft | reply to review | Two key pairs in Secrets Manager; App Store Connect JWT signed in Lambda |
 | `web` | GA4 Data API + GTM (several properties / containers) | sessions, top pages, referrers, conversions, live container version | GTM publish (T8c) | — | Dedicated service account; see §5.8 |
 | `ads` | Google Ads (T8b) | spend, campaigns | new campaign | campaign within USD 50 / month cap | Developer token + OAuth; not the Analytics SA |
-| `mail` | All `siutindei.com` mailboxes | thread list, thread body, attachments (PDF text), sender history | reply, new email, forward to provider | reply/new email to allow-listed recipients | Design in §5.2 |
+| `mail` | All `siutindei.com` mailboxes | thread list, thread body, attachment names (PDF text not extracted), sender history | reply, new email, forward to provider | reply/new email to allow-listed recipients | Design in §5.2 |
 | `meta` | Facebook Page, Instagram, WhatsApp Cloud API | Page/IG insights, comments, DMs, WhatsApp threads, template status, ad account spend and results | post, story, reply to comment/DM, WhatsApp reply outside 24-h window (template), new ad set | reply inside open WhatsApp window, reply to comments, boost within cap | Design in §5.3 |
 | `finance` | This admin app's Siu Tin Dei finance sheets + receivables | balances, cash-flow, subscriptions, invoices, overdue list, unit economics | create invoice, send invoice, dunning reminder, price change proposal | send dunning reminder to allow-listed provider | Design in §5.4–5.6 |
 | `research` | Web search API (Brave Search or OpenRouter `:online` models) | competitor pages, HK market news, EDB/holiday calendars, venue listings | — | — | Read-only; results cached 24 h |
@@ -185,8 +185,10 @@ client changes.
    `inbound-raw/siutindei/`. No DNS change on `siutindei.com` is needed
    for reading.
 2. **Index**: a new S3 event branch in `inbound_email_handler.py`
-   (`board_mail.py`) parses headers, text body, and PDF attachments (via the
-   existing statement-parser text extraction), masks PII (§2.3) and writes
+   (`board_mail.py`) parses headers, text body and `text/*` attachments (PDF
+   attachments are listed by name only; their text is not extracted because
+   no local PDF reader ships in the Lambda bundle — see §12), masks PII
+   (§2.3) and writes
    `BOARD#MAIL#<threadId>` / `MSG#<ts>` rows plus a per-mailbox unread
    counter. Bank alert emails (§5.6) are routed from here to the receivables
    matcher.

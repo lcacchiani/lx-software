@@ -6,11 +6,19 @@ Flow (docs/architecture/executive-board-tools-plan.md §5.2):
   owner's inbox *and* to ``siutindei-board@<InboundMailDomain>``. SES stores
   the raw MIME under ``inbound-raw/<BOARD_MAIL_RAW_SEGMENT>/`` and
   ``inbound_email_handler`` hands the object to :func:`ingest_raw_object`.
-- :func:`ingest_bytes` parses headers, the text body and attachment names,
-  threads the message (``References`` / ``In-Reply-To`` first, then
-  mailbox + normalised subject + counterpart) and writes thread + message
-  rows with a 90-day TTL. Bodies are stored as received; contacts are
-  pseudonymised **when read by a persona**, never for the owner.
+- :func:`ingest_bytes` parses headers, the text body and attachment names
+  (plus the content of ``text/*`` attachments; PDF text is **not** extracted
+  because the Lambda bundle ships no local PDF reader — such attachments are
+  listed under ``attachmentsSkipped``), threads the message (``References``
+  / ``In-Reply-To`` first, then mailbox + normalised subject + counterpart)
+  and writes thread + message rows with a 90-day TTL. Body and attachment
+  text are capped so an item stays far below DynamoDB's 400 KB limit
+  (``truncated: true`` records any cut). Bodies are stored as received;
+  contacts are pseudonymised **when read by a persona**, never for the owner.
+- Dedupe: a conditional ``MSGID#`` marker is claimed first (so concurrent
+  deliveries cannot both index), and rolled back if the message or thread
+  write fails, so the next delivery of the same bytes succeeds. Mails
+  without a ``Message-ID`` fall back to a content hash.
 - Sending goes through SES v2 from the mailbox the thread was addressed to,
   so replies from parents land back in the same Cloudflare-routed mailbox.
   Every outbound message is indexed as ``direction=out``.
@@ -44,7 +52,12 @@ from http_common import _log_event, _utc_iso_z
 
 SNIPPET_CHARS = 200
 ATTACHMENT_TEXT_MAX_CHARS = 20000
+# Across all attachments of one message. Body (BOARD_MAIL_BODY_MAX_CHARS) +
+# this budget keeps a stored item well under DynamoDB's 400 KB item limit.
+ATTACHMENT_TEXT_TOTAL_MAX_CHARS = 60000
 MAX_ATTACHMENTS = 20
+MAX_ADDRESSES_PER_HEADER = 50
+_PDF_CONTENT_TYPES = frozenset({"application/pdf", "application/x-pdf"})
 _SUBJECT_PREFIX_RE = re.compile(r"^\s*((re|fw|fwd|aw|wg|sv|antw)\s*(\[\d+\])?\s*:\s*)+", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
@@ -117,6 +130,15 @@ class ParsedMail:
     attachments: list[dict[str, Any]] = field(default_factory=list)
     mailbox: str = ""
     raw_size: int = 0
+    # Attachment names whose text could not be extracted (currently every PDF).
+    attachments_skipped: list[str] = field(default_factory=list)
+    # True when the body, attachment text or address lists were cut to fit.
+    truncated: bool = False
+
+
+def _single_line(value: Any, limit: int) -> str:
+    """Collapse all whitespace (including CR/LF from folded or injected headers)."""
+    return " ".join(str(value or "").split())[:limit]
 
 
 def normalize_subject(subject: str) -> str:
@@ -135,13 +157,23 @@ def html_to_text(markup: str) -> str:
 
 
 def _addresses(msg: EmailMessage, header: str) -> list[str]:
+    return _addresses_capped(msg, header)[0]
+
+
+def _addresses_capped(msg: EmailMessage, header: str) -> tuple[list[str], bool]:
+    """Unique normalised addresses in ``header`` and whether the list was cut."""
     values = msg.get_all(header, []) or []
     out: list[str] = []
+    truncated = False
     for _name, addr in getaddresses([str(v) for v in values]):
         norm = board_pii.normalize_email(addr)
-        if norm and "@" in norm and norm not in out:
-            out.append(norm)
-    return out
+        if not norm or "@" not in norm or norm in out:
+            continue
+        if len(out) >= MAX_ADDRESSES_PER_HEADER:
+            truncated = True
+            break
+        out.append(norm)
+    return out, truncated
 
 
 def _clean_msgid(value: Any) -> str:
@@ -164,47 +196,69 @@ def detect_mailbox(msg: EmailMessage, domain: str) -> str:
     return f"unknown@{domain}"
 
 
-def _body_text(msg: EmailMessage) -> str:
+def _body_text(msg: EmailMessage) -> tuple[str, bool]:
+    """Plain-text body capped at ``BOARD_MAIL_BODY_MAX_CHARS`` and whether it was cut."""
     body = None
     try:
         body = msg.get_body(preferencelist=("plain", "html"))
     except Exception:  # pragma: no cover - malformed MIME
         body = None
     if body is None:
-        return ""
+        return "", False
     try:
         content = body.get_content()
     except Exception:  # pragma: no cover - undecodable payload
         payload = body.get_payload(decode=True)
         content = payload.decode("utf-8", "replace") if isinstance(payload, (bytes, bytearray)) else ""
     if not isinstance(content, str):
-        return ""
+        return "", False
     if body.get_content_type() == "text/html":
         content = html_to_text(content)
     content = content.replace("\r\n", "\n").strip()
-    return content[:BOARD_MAIL_BODY_MAX_CHARS]
+    return content[:BOARD_MAIL_BODY_MAX_CHARS], len(content) > BOARD_MAIL_BODY_MAX_CHARS
 
 
-def _attachments(msg: EmailMessage) -> list[dict[str, Any]]:
+def _decode_text(payload: bytes | bytearray, charset: str | None) -> str:
+    try:
+        return payload.decode(charset or "utf-8", "replace")
+    except LookupError:
+        return payload.decode("utf-8", "replace")
+
+
+def _is_pdf(part: EmailMessage, name: str) -> bool:
+    return part.get_content_type() in _PDF_CONTENT_TYPES or name.lower().endswith(".pdf")
+
+
+def _attachments(msg: EmailMessage) -> tuple[list[dict[str, Any]], list[str], bool]:
+    """``(attachments, skipped_names, truncated)``.
+
+    Text of ``text/*`` parts is kept, per part up to ``ATTACHMENT_TEXT_MAX_CHARS``
+    and in total up to ``ATTACHMENT_TEXT_TOTAL_MAX_CHARS``. PDF parts are named
+    in ``skipped_names``: no local PDF text extractor ships in this bundle.
+    """
     out: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    truncated = False
+    budget = ATTACHMENT_TEXT_TOTAL_MAX_CHARS
     for part in msg.iter_attachments():
         if len(out) >= MAX_ATTACHMENTS:
+            truncated = True
             break
         payload = part.get_payload(decode=True)
         size = len(payload) if isinstance(payload, (bytes, bytearray)) else 0
-        entry: dict[str, Any] = {
-            "name": os.path.basename(part.get_filename() or "attachment")[:180],
-            "contentType": part.get_content_type(),
-            "size": size,
-        }
+        name = os.path.basename(part.get_filename() or "attachment")[:180]
+        entry: dict[str, Any] = {"name": name, "contentType": part.get_content_type(), "size": size}
         if part.get_content_maintype() == "text" and isinstance(payload, (bytes, bytearray)):
-            charset = part.get_content_charset() or "utf-8"
-            try:
-                entry["text"] = payload.decode(charset, "replace")[:ATTACHMENT_TEXT_MAX_CHARS]
-            except LookupError:
-                entry["text"] = payload.decode("utf-8", "replace")[:ATTACHMENT_TEXT_MAX_CHARS]
+            text = _decode_text(payload, part.get_content_charset())
+            kept = text[: max(0, min(ATTACHMENT_TEXT_MAX_CHARS, budget))]
+            if len(kept) < len(text):
+                truncated = True
+            budget -= len(kept)
+            entry["text"] = kept
+        elif _is_pdf(part, name):
+            skipped.append(name)
         out.append(entry)
-    return out
+    return out, skipped, truncated
 
 
 def parse_mime(raw: bytes, *, domain: str | None = None) -> ParsedMail:
@@ -219,20 +273,26 @@ def parse_mime(raw: bytes, *, domain: str | None = None) -> ParsedMail:
         except (TypeError, ValueError):
             date_iso = ""
     references = [_clean_msgid(r) for r in str(msg.get("References") or "").split() if _clean_msgid(r)]
+    text, body_cut = _body_text(msg)
+    attachments, skipped, attachments_cut = _attachments(msg)
+    to, to_cut = _addresses_capped(msg, "To")
+    cc, cc_cut = _addresses_capped(msg, "Cc")
     return ParsedMail(
         rfc_message_id=_clean_msgid(msg.get("Message-ID")),
         in_reply_to=_clean_msgid(msg.get("In-Reply-To")),
         references=references,
-        subject=" ".join(str(msg.get("Subject") or "").split())[:BOARD_MAIL_SUBJECT_MAX_LEN],
+        subject=_single_line(msg.get("Subject"), BOARD_MAIL_SUBJECT_MAX_LEN),
         from_address=board_pii.normalize_email(from_addr),
-        from_name=" ".join(str(from_name or "").split())[:120],
-        to=_addresses(msg, "To"),
-        cc=_addresses(msg, "Cc"),
+        from_name=_single_line(from_name, 120),
+        to=to,
+        cc=cc,
         date=date_iso,
-        text=_body_text(msg),
-        attachments=_attachments(msg),
+        text=text,
+        attachments=attachments,
         mailbox=detect_mailbox(msg, domain),
         raw_size=len(raw),
+        attachments_skipped=skipped,
+        truncated=body_cut or attachments_cut or to_cut or cc_cut,
     )
 
 
@@ -269,6 +329,30 @@ def _snippet(text: str) -> str:
     return " ".join((text or "").split())[:SNIPPET_CHARS]
 
 
+def synthetic_message_id(raw: bytes) -> str:
+    """Deterministic stand-in for a missing ``Message-ID``: same bytes → same id."""
+    return f"<sha256-{hashlib.sha256(raw).hexdigest()[:32]}@{mail_domain()}>"
+
+
+def _rollback_ingest(table: Any, keys: list[dict[str, str]], *, reason: str) -> None:
+    """Best-effort removal of rows written before an ingest failed.
+
+    Above all the ``MSGID#`` marker must go, otherwise every redelivery of the
+    same mail would be reported as a duplicate and the message lost for good.
+    """
+    for key in keys:
+        try:
+            table.delete_item(Key=key)
+        except Exception as exc:  # noqa: BLE001 - keep trying the other keys
+            _log_event(
+                "warning",
+                tag="board_mail_rollback_failed",
+                sk=str(key.get("sk") or "")[:120],
+                reason=reason[:200],
+                error=str(exc)[:200],
+            )
+
+
 def ingest_bytes(
     table: Any,
     raw: bytes,
@@ -277,16 +361,21 @@ def ingest_bytes(
     source: str = "ses",
     received_at: str | None = None,
 ) -> dict[str, Any]:
-    """Index one RFC 822 message. Returns ``{threadId, messageId, duplicate}``."""
+    """Index one RFC 822 message. Returns ``{threadId, messageId, duplicate}``.
+
+    Raises when the message or thread row cannot be written; the dedupe
+    marker is removed first so the next delivery of the same bytes is indexed.
+    """
     parsed = parse_mime(raw)
     if direction == "out" and parsed.from_address and _is_own(parsed.from_address):
         parsed.mailbox = parsed.from_address
     now = received_at or board_store.now_iso()
     message_id = board_store.new_id()
     thread_id = _thread_id_for(table, parsed)
-    rfc_id = parsed.rfc_message_id or f"<{message_id}@{mail_domain()}>"
-    if not board_store.put_mail_msgid(table, msgid_digest(rfc_id), thread_id=thread_id, message_id=message_id):
-        existing = board_store.get_mail_thread_for_msgid(table, msgid_digest(rfc_id))
+    rfc_id = parsed.rfc_message_id or synthetic_message_id(raw)
+    digest = msgid_digest(rfc_id)
+    if not board_store.put_mail_msgid(table, digest, thread_id=thread_id, message_id=message_id):
+        existing = board_store.get_mail_thread_for_msgid(table, digest)
         _log_event("info", tag="board_mail_duplicate", thread=existing, size=parsed.raw_size)
         return {"threadId": existing or thread_id, "messageId": "", "duplicate": True}
 
@@ -306,10 +395,47 @@ def ingest_bytes(
         "receivedAt": now,
         "text": parsed.text,
         "attachments": parsed.attachments,
+        "attachmentsSkipped": parsed.attachments_skipped,
+        "truncated": parsed.truncated,
         "rawSize": parsed.raw_size,
     }
-    board_store.put_mail_message(table, message)
+    if parsed.truncated:
+        _log_event(
+            "warning",
+            tag="board_mail_truncated",
+            thread=thread_id,
+            attachments=len(parsed.attachments),
+            size=parsed.raw_size,
+        )
+    written: list[dict[str, str]] = [board_store._msgid_key(digest)]  # noqa: SLF001 - rollback needs the exact key
+    try:
+        board_store.put_mail_message(table, message)
+        written.append(board_store.mail_message_key(thread_id, now, message_id))
+        _upsert_thread(table, thread_id, parsed, direction=direction, now=now)
+    except Exception as exc:
+        _log_event(
+            "warning",
+            tag="board_mail_ingest_rolled_back",
+            thread=thread_id,
+            size=parsed.raw_size,
+            error=str(exc)[:200],
+        )
+        _rollback_ingest(table, written, reason=type(exc).__name__)
+        raise
+    _log_event(
+        "info",
+        tag="board_mail_indexed",
+        thread=thread_id,
+        direction=direction,
+        mailbox=parsed.mailbox,
+        attachments=len(parsed.attachments),
+        skipped=len(parsed.attachments_skipped),
+        size=parsed.raw_size,
+    )
+    return {"threadId": thread_id, "messageId": message_id, "duplicate": False}
 
+
+def _upsert_thread(table: Any, thread_id: str, parsed: ParsedMail, *, direction: str, now: str) -> None:
     thread = board_store.get_mail_thread(table, thread_id) or {
         "threadId": thread_id,
         "mailbox": parsed.mailbox,
@@ -342,16 +468,6 @@ def ingest_bytes(
     if parsed.mailbox and str(thread.get("mailbox") or "").startswith("unknown@"):
         thread["mailbox"] = parsed.mailbox
     board_store.put_mail_thread(table, thread)
-    _log_event(
-        "info",
-        tag="board_mail_indexed",
-        thread=thread_id,
-        direction=direction,
-        mailbox=parsed.mailbox,
-        attachments=len(parsed.attachments),
-        size=parsed.raw_size,
-    )
-    return {"threadId": thread_id, "messageId": message_id, "duplicate": False}
 
 
 def ingest_raw_object(bucket: str, key: str, *, s3: Any = None, table: Any = None) -> dict[str, Any]:
@@ -475,6 +591,9 @@ def masked_message(pseud: board_pii.Pseudonymizer, message: dict[str, Any], *, t
             for a in (message.get("attachments") or [])
             if isinstance(a, dict)
         ],
+        # PDF text is not extracted; tell the persona which attachments it cannot read.
+        "attachmentsSkipped": [str(n) for n in (message.get("attachmentsSkipped") or []) if n],
+        "truncated": bool(message.get("truncated")),
     }
 
 
@@ -680,13 +799,17 @@ def send_plan(table: Any, plan: dict[str, Any], *, sent_by: str) -> dict[str, An
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
-    msg["Subject"] = str(plan.get("subject") or "(no subject)")[:BOARD_MAIL_SUBJECT_MAX_LEN]
+    # Header values are collapsed to one line: the email library rejects CR/LF
+    # (ValueError) and a stray line break must never become an extra header.
+    msg["Subject"] = _single_line(plan.get("subject"), BOARD_MAIL_SUBJECT_MAX_LEN) or "(no subject)"
     msg["Message-ID"] = make_msgid(domain=mail_domain())
-    if plan.get("inReplyTo"):
-        msg["In-Reply-To"] = str(plan["inReplyTo"])
-    if plan.get("references"):
-        msg["References"] = " ".join(str(r) for r in plan["references"])
-    msg["X-Siutindei-Board"] = sent_by[:80]
+    in_reply_to = _clean_msgid(plan.get("inReplyTo"))
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    references = " ".join(r for r in (_clean_msgid(x) for x in (plan.get("references") or [])) if r)
+    if references:
+        msg["References"] = references
+    msg["X-Siutindei-Board"] = _single_line(sent_by, 80)
     msg.set_content(text)
     for att in plan.get("attachments") or []:
         if not isinstance(att, dict):
