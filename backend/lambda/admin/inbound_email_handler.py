@@ -14,6 +14,10 @@ is configured separately in CDK and does not have to match the key.
 
 Add more inboxes by extending the CDK ``inboundHouseMailboxes`` list (each row
 maps ``localPart@domain`` → a finance ``house_key`` such as ``morrison``).
+
+The Executive Board mailbox (``siutindei-board@…``) lands under
+``inbound-raw/<BOARD_MAIL_RAW_SEGMENT>/`` and is indexed by ``board_mail``
+instead of being parsed as a statement.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from typing import Any
 
 import boto3
 
+import board_mail
 from handler import (
     MAX_SOURCE_ASSET_KEYS_PER_LINE,
     FINANCE_HOUSE_KEYS,
@@ -42,13 +47,8 @@ logger.setLevel(logging.INFO)
 _s3 = boto3.client("s3")
 
 
-def house_key_from_raw_mail_s3_key(*, ses_drop_path: str, raw_mail_prefix: str) -> str | None:
-    """Resolve finance house key from an SES drop key.
-
-    Expected layout: ``<raw_mail_prefix>/<house_key>/…`` where ``house_key`` is
-    a member of ``FINANCE_HOUSE_KEYS`` (e.g. ``hillmarton`` for "32 Hillmarton",
-    or ``inbound-raw/morrison/…`` for the Morrison house).
-    """
+def raw_mail_segment(*, ses_drop_path: str, raw_mail_prefix: str) -> str | None:
+    """The first path segment after ``<raw_mail_prefix>/`` (lower-cased), if any."""
     root = raw_mail_prefix.strip().strip("/")
     if not root:
         return None
@@ -56,9 +56,25 @@ def house_key_from_raw_mail_s3_key(*, ses_drop_path: str, raw_mail_prefix: str) 
         return None
     rest = ses_drop_path[len(root) + 1 :]
     segment = rest.split("/", 1)[0].strip().lower()
-    if segment not in FINANCE_HOUSE_KEYS:
+    return segment or None
+
+
+def house_key_from_raw_mail_s3_key(*, ses_drop_path: str, raw_mail_prefix: str) -> str | None:
+    """Resolve finance house key from an SES drop key.
+
+    Expected layout: ``<raw_mail_prefix>/<house_key>/…`` where ``house_key`` is
+    a member of ``FINANCE_HOUSE_KEYS`` (e.g. ``hillmarton`` for "32 Hillmarton",
+    or ``inbound-raw/morrison/…`` for the Morrison house).
+    """
+    segment = raw_mail_segment(ses_drop_path=ses_drop_path, raw_mail_prefix=raw_mail_prefix)
+    if segment is None or segment not in FINANCE_HOUSE_KEYS:
         return None
     return segment
+
+
+def is_board_mail_s3_key(*, ses_drop_path: str, raw_mail_prefix: str) -> bool:
+    segment = raw_mail_segment(ses_drop_path=ses_drop_path, raw_mail_prefix=raw_mail_prefix)
+    return segment is not None and segment == board_mail.raw_segment()
 
 
 def _sanitize_filename(name: str) -> str:
@@ -116,6 +132,34 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             record.get("s3", {}).get("object", {}).get("key", "")
         )
         src_bucket = record.get("s3", {}).get("bucket", {}).get("name", "")
+        if src_bucket == inbound_bucket and is_board_mail_s3_key(
+            ses_drop_path=raw_key, raw_mail_prefix=raw_mail_prefix
+        ):
+            try:
+                result = board_mail.ingest_raw_object(inbound_bucket, raw_key, s3=_s3)
+            except Exception as exc:  # noqa: BLE001 — one bad message must not block the batch
+                logger.error(
+                    json.dumps(
+                        {
+                            "tag": "board_mail_ingest_failed",
+                            "key": raw_key[:512],
+                            "error": str(exc)[:500],
+                        }
+                    )
+                )
+                continue
+            logger.info(
+                json.dumps(
+                    {
+                        "tag": "board_mail_ingested",
+                        "key": raw_key[:512],
+                        "threadId": result.get("threadId"),
+                        "duplicate": bool(result.get("duplicate")),
+                    }
+                )
+            )
+            continue
+
         house_key = house_key_from_raw_mail_s3_key(
             ses_drop_path=raw_key, raw_mail_prefix=raw_mail_prefix
         )

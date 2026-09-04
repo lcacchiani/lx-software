@@ -219,7 +219,7 @@ class TestLevels(unittest.TestCase):
             if op.is_write:
                 self.assertIn("reason", schema["function"]["parameters"]["properties"])
         registry = board_tools.public_registry()
-        self.assertEqual([t["id"] for t in registry], ["github", "board"])
+        self.assertEqual([t["id"] for t in registry], ["github", "board", "mail"])
         self.assertTrue(all(t["operations"] for t in registry))
 
 
@@ -328,7 +328,7 @@ class TestChatToolLoop(ToolsTestCase):
         self.assertEqual(seen[0][0]["op"], "github_list_workflow_runs")
 
     def test_member_without_tools_gets_plain_completion(self) -> None:
-        self.call("/siu-tin-dei/board/tools", "PUT", {"matrix": {"board": {"cfo": "off"}}})
+        self.call("/siu-tin-dei/board/tools", "PUT", {"matrix": {"board": {"cfo": "off"}, "mail": {"cfo": "off"}}})
         scripted = self.use_script([[("github_search_issues", {"query": "x"})]], "Plain answer.")
         job = self.chat("cfo")
         self.assertEqual(job["message"]["text"], "Plain answer.")

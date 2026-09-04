@@ -25,12 +25,15 @@ from typing import Any, Callable
 import board_actions
 import board_budget
 import board_github
+import board_mail
 import board_personas
 import board_store
 from contract_constants import (
     BOARD_ACTION_EFFORTS,
     BOARD_ACTION_PRIORITIES,
     BOARD_ACTION_STATUSES,
+    BOARD_MAIL_BODY_MAX_CHARS,
+    BOARD_MAIL_SUBJECT_MAX_LEN,
     BOARD_MAX_PENDING_APPROVALS,
     BOARD_MAX_TOOL_CALLS_PER_TURN,
     BOARD_MAX_TOOL_ROUNDS_PER_TURN,
@@ -88,6 +91,11 @@ class ToolOp:
     run: Callable[[ToolContext, dict[str, Any]], dict[str, Any]]
     summarize: Callable[[dict[str, Any]], str]
     contexts: tuple[str, ...] = ("chat", "meeting")
+    # Write ops only. ``act_guard`` returns a reason why an ``act``-level call
+    # must still be approved (e.g. recipient not allow-listed); ``preview``
+    # renders the owner-facing, un-masked payload stored on the approval.
+    act_guard: Callable[[ToolContext, dict[str, Any]], str | None] | None = None
+    preview: Callable[[ToolContext, dict[str, Any]], dict[str, Any] | None] | None = None
 
     @property
     def is_write(self) -> bool:
@@ -418,6 +426,17 @@ def _summ_labels(args: dict[str, Any]) -> str:
     return f"Set labels on #{args.get('number')}: {', '.join(str(x) for x in labels) or '(none)'}"
 
 
+def _summ_mail_list(args: dict[str, Any]) -> str:
+    parts = ["Listed email threads"]
+    if args.get("mailbox"):
+        parts.append(f"in {_short(args['mailbox'], 40)}")
+    if args.get("query"):
+        parts.append(f"matching '{_short(args['query'], 40)}'")
+    if args.get("unreadOnly"):
+        parts.append("(unread only)")
+    return " ".join(parts)
+
+
 def _summ_update_action(args: dict[str, Any]) -> str:
     parts = []
     if args.get("status"):
@@ -649,6 +668,112 @@ def build_registry() -> dict[str, ToolOp]:
             summarize=_summ_update_action,
             contexts=("chat",),
         ),
+        ToolOp(
+            name="mail_list_mailboxes",
+            tool_id="mail",
+            kind="read",
+            description="List the company mailboxes (hello@, billing@, ...) with thread and unread counts.",
+            parameters=_obj({}),
+            run=board_mail.op_list_mailboxes,
+            summarize=_summ("Listed mailboxes"),
+        ),
+        ToolOp(
+            name="mail_list_threads",
+            tool_id="mail",
+            kind="read",
+            description=(
+                "List email threads, newest first, optionally for one mailbox, matching keywords, or unread only. "
+                "Contacts appear as stable aliases like contact#12; never guess real names or addresses."
+            ),
+            parameters=_obj(
+                {
+                    "mailbox": _str_param("Optional mailbox (local part or full address).", max_len=120),
+                    "query": _str_param("Optional keywords; all must match subject, snippet or sender.", max_len=200),
+                    "unreadOnly": {"type": "boolean", "description": "Only threads the founder has not read yet."},
+                    "limit": _int_param("Max threads (1-30).", maximum=30),
+                }
+            ),
+            run=board_mail.op_list_threads,
+            summarize=_summ_mail_list,
+        ),
+        ToolOp(
+            name="mail_get_thread",
+            tool_id="mail",
+            kind="read",
+            description="Read every message in one thread (bodies and attachment names, contacts pseudonymised).",
+            parameters=_obj({"threadId": _str_param("Thread id from mail_list_threads.", max_len=64)}, ["threadId"]),
+            run=board_mail.op_get_thread,
+            summarize=_summ("Read email thread {threadId}"),
+        ),
+        ToolOp(
+            name="mail_contact_history",
+            tool_id="mail",
+            kind="read",
+            description="List the threads a contact alias (e.g. contact#12) has taken part in.",
+            parameters=_obj({"contact": _str_param("Contact alias exactly as shown in a thread.", max_len=40)}, ["contact"]),
+            run=board_mail.op_contact_history,
+            summarize=_summ("Looked up history for {contact}"),
+        ),
+        ToolOp(
+            name="mail_reply",
+            tool_id="mail",
+            kind="write",
+            description=(
+                "Reply to the last inbound message of a thread from the mailbox it was sent to. "
+                "Plain text only; write as the company, sign off as 'The siutindei team'."
+            ),
+            parameters=_obj(
+                {
+                    "threadId": _str_param("Thread id from mail_list_threads.", max_len=64),
+                    "body": _str_param("Plain-text reply body.", max_len=BOARD_MAIL_BODY_MAX_CHARS),
+                    "reason": REASON_PARAM,
+                },
+                ["threadId", "body", "reason"],
+            ),
+            run=board_mail._op_write("mail_reply"),
+            summarize=_summ("Reply in email thread {threadId}"),
+            act_guard=lambda ctx, args: board_mail.act_guard(ctx, args, op="mail_reply"),
+            preview=lambda ctx, args: board_mail.owner_preview(ctx, args, op="mail_reply"),
+        ),
+        ToolOp(
+            name="mail_send",
+            tool_id="mail",
+            kind="write",
+            description="Start a new email from a company mailbox to one or more contacts (aliases or full addresses).",
+            parameters=_obj(
+                {
+                    "fromMailbox": _str_param("Sending mailbox, e.g. hello or billing@siutindei.com.", max_len=120),
+                    "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients: contact aliases or addresses."},
+                    "subject": _str_param("Subject line.", max_len=BOARD_MAIL_SUBJECT_MAX_LEN),
+                    "body": _str_param("Plain-text body.", max_len=BOARD_MAIL_BODY_MAX_CHARS),
+                    "reason": REASON_PARAM,
+                },
+                ["fromMailbox", "to", "subject", "body", "reason"],
+            ),
+            run=board_mail._op_write("mail_send"),
+            summarize=_summ("Send email: {subject}"),
+            act_guard=lambda ctx, args: board_mail.act_guard(ctx, args, op="mail_send"),
+            preview=lambda ctx, args: board_mail.owner_preview(ctx, args, op="mail_send"),
+        ),
+        ToolOp(
+            name="mail_forward",
+            tool_id="mail",
+            kind="write",
+            description="Forward the latest message of a thread to a provider or vendor with a short note.",
+            parameters=_obj(
+                {
+                    "threadId": _str_param("Thread id from mail_list_threads.", max_len=64),
+                    "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients: contact aliases or addresses."},
+                    "note": _str_param("Short note placed above the forwarded message.", max_len=2000),
+                    "reason": REASON_PARAM,
+                },
+                ["threadId", "to", "reason"],
+            ),
+            run=board_mail._op_write("mail_forward"),
+            summarize=_summ("Forward email thread {threadId}"),
+            act_guard=lambda ctx, args: board_mail.act_guard(ctx, args, op="mail_forward"),
+            preview=lambda ctx, args: board_mail.owner_preview(ctx, args, op="mail_forward"),
+        ),
     ]
     return {op.name: op for op in ops}
 
@@ -747,25 +872,31 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
     level = effective_level(ctx.settings, op.tool_id, ctx.persona_id) if ctx.actor == "persona" else "act"
     summary = op.summarize(arguments)
     approval_id = ""
+    guard_reason = ""
+    if op.is_write and level == "act" and ctx.actor == "persona" and op.act_guard is not None:
+        try:
+            guard_reason = str(op.act_guard(ctx, arguments) or "")
+        except Exception as exc:  # pragma: no cover - a guard bug must fail closed
+            _log_event("error", tag="board_tool_guard_crashed", op=op.name, error=str(exc)[:300])
+            guard_reason = "the safety check could not be completed"
     if not allows(level, op.min_level):
         outcome = ToolOutcome(
             status="error",
             result={"error": f"{op.name} is not available to you at level '{level}'."},
             summary=summary,
         )
-    elif op.is_write and level == "propose":
-        approval = create_approval(ctx, op, arguments, summary=summary)
+    elif op.is_write and (level == "propose" or guard_reason):
+        approval = create_approval(ctx, op, arguments, summary=summary, downgrade_reason=guard_reason)
         approval_id = str(approval["approvalId"])
+        message = (
+            "Recorded as a proposal for the founder. It has NOT been executed; "
+            "tell the founder it awaits their approval in the Approvals section."
+        )
+        if guard_reason:
+            message = f"Not sent automatically because {guard_reason}. " + message
         outcome = ToolOutcome(
             status="pending_approval",
-            result={
-                "status": "pending_approval",
-                "approvalId": approval_id,
-                "message": (
-                    "Recorded as a proposal for the founder. It has NOT been executed; "
-                    "tell the founder it awaits their approval in the Approvals section."
-                ),
-            },
+            result={"status": "pending_approval", "approvalId": approval_id, "message": message},
             summary=summary,
             approval_id=approval_id,
         )
@@ -774,7 +905,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             result = op.run(ctx, arguments)
             status = "error" if isinstance(result, dict) and result.get("error") and len(result) == 1 else "ok"
             outcome = ToolOutcome(status=status, result=result if isinstance(result, dict) else {"result": result}, summary=summary)
-        except (board_github.GitHubSnapshotError, ValueError) as exc:
+        except (board_github.GitHubSnapshotError, board_mail.MailError, ValueError) as exc:
             outcome = ToolOutcome(status="error", result={"error": str(exc)[:500]}, summary=summary)
         except Exception as exc:  # pragma: no cover - defensive: a tool bug must not kill the reply
             _log_event("error", tag="board_tool_crashed", op=op.name, error=str(exc)[:300])
@@ -797,6 +928,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             "summary": summary,
             "resultPreview": _truncate_json(outcome.result, MAX_RESULT_PREVIEW),
             "approvalId": approval_id,
+            "downgradeReason": guard_reason,
             "context": ctx.public(),
             "durationMs": outcome.duration_ms,
         },
@@ -814,11 +946,29 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
     return outcome
 
 
-def create_approval(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any], *, summary: str) -> dict[str, Any]:
+def render_preview(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    if op.preview is None:
+        return None
+    try:
+        return op.preview(ctx, arguments)
+    except Exception as exc:  # pragma: no cover - preview is best effort
+        _log_event("warning", tag="board_tool_preview_failed", op=op.name, error=str(exc)[:300])
+        return {"error": "Preview unavailable"}
+
+
+def create_approval(
+    ctx: ToolContext,
+    op: ToolOp,
+    arguments: dict[str, Any],
+    *,
+    summary: str,
+    downgrade_reason: str = "",
+) -> dict[str, Any]:
     pending = [a for a in board_store.list_approvals(ctx.table) if a.get("status") == "pending"]
     if len(pending) >= BOARD_MAX_PENDING_APPROVALS:
         raise ToolPermissionError("Too many pending approvals; ask the founder to review the queue first.")
     now = board_store.now_iso()
+    preview = render_preview(ctx, op, arguments)
     doc = {
         "approvalId": board_store.new_id(),
         "status": "pending",
@@ -835,6 +985,10 @@ def create_approval(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any], *, 
         "createdAt": now,
         "updatedAt": now,
     }
+    if downgrade_reason:
+        doc["downgradeReason"] = downgrade_reason[:300]
+    if preview is not None:
+        doc["preview"] = preview
     board_store.put_approval(ctx.table, doc)
     return doc
 
@@ -1024,6 +1178,10 @@ def decide_approval(
         actor="owner",
         owner_sub=owner_sub,
     )
+    if isinstance(arguments_override, dict) and arguments_override:
+        refreshed = render_preview(ctx, op, arguments)
+        if refreshed is not None:
+            decided["preview"] = refreshed
     outcome = execute_call(ctx, op, arguments)
     decided["arguments"] = arguments
     decided["executedCallId"] = outcome.call_id

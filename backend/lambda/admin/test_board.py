@@ -140,10 +140,18 @@ class FakeTable:
 
     @staticmethod
     def _evaluate(expr: str, item: dict[str, Any], names: dict[str, str], values: dict[str, Any]) -> bool:
+        def _exists(m: re.Match[str]) -> str:
+            attr = names.get(m.group(2), m.group(2))
+            present = attr in item
+            return "1 = 1" if (present if m.group(1) == "attribute_exists" else not present) else "1 = 2"
+
+        expr = re.sub(r"(attribute_exists|attribute_not_exists)\((#?\w+)\)", _exists, expr)
         tokens = re.findall(r"#\w+|:\w+|<>|<=|>=|[<>=()]|\w+", expr)
         py: list[str] = []
         for tok in tokens:
-            if tok.startswith("#"):
+            if tok.isdigit():
+                py.append(tok)
+            elif tok.startswith("#"):
                 py.append(f'_i.get("{names[tok]}")')
             elif tok.startswith(":"):
                 py.append(f'_v["{tok}"]')
@@ -164,8 +172,10 @@ class FakeTable:
 
     @staticmethod
     def _conditional_error() -> ClientError:
-        err = ClientError()
-        err.response = {"Error": {"Code": "ConditionalCheckFailedException"}}
+        response = {"Error": {"Code": "ConditionalCheckFailedException"}}
+        err = ClientError(response, "ConditionalWrite")
+        if not getattr(err, "response", None):
+            err.response = response
         return err
 
 
