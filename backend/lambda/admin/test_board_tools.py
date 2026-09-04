@@ -219,7 +219,10 @@ class TestLevels(unittest.TestCase):
             if op.is_write:
                 self.assertIn("reason", schema["function"]["parameters"]["properties"])
         registry = board_tools.public_registry()
-        self.assertEqual([t["id"] for t in registry], ["github", "board", "mail", "research", "aws", "security"])
+        self.assertEqual(
+            [t["id"] for t in registry],
+            ["github", "board", "mail", "research", "aws", "security", "product", "finance"],
+        )
         self.assertTrue(all(t["operations"] for t in registry))
 
 
@@ -331,7 +334,16 @@ class TestChatToolLoop(ToolsTestCase):
         self.call(
             "/siu-tin-dei/board/tools",
             "PUT",
-            {"matrix": {"board": {"cfo": "off"}, "mail": {"cfo": "off"}, "research": {"cfo": "off"}, "aws": {"cfo": "off"}}},
+            {
+                "matrix": {
+                    "board": {"cfo": "off"},
+                    "mail": {"cfo": "off"},
+                    "research": {"cfo": "off"},
+                    "aws": {"cfo": "off"},
+                    "product": {"cfo": "off"},
+                    "finance": {"cfo": "off"},
+                }
+            },
         )
         scripted = self.use_script([[("github_search_issues", {"query": "x"})]], "Plain answer.")
         job = self.chat("cfo")

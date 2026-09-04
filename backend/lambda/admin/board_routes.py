@@ -13,6 +13,7 @@ import board_github
 import board_mail
 import board_meeting
 import board_personas
+import board_receivables
 import board_research
 import board_store
 import board_tools
@@ -131,6 +132,9 @@ def handle_board_route(
         if len(rest) == 3 and rest[2] == "read" and method == "POST":
             return _mail_thread_read(event, rest[1], user_sub)
 
+    if head == "receivables" and len(rest) == 1 and method == "GET":
+        return _json_response(200, board_receivables.aging_for_owner())
+
     return _json_response(404, {"message": "Not found"})
 
 
@@ -151,6 +155,7 @@ def _overview() -> dict[str, Any]:
     usage = board_store.load_usage_day(table)
     pending_approvals = sum(1 for a in board_store.list_approvals(table) if a.get("status") == "pending")
     mail = board_mail.status_summary(table)
+    recv = board_receivables.digest_for_context()
     return _json_response(
         200,
         {
@@ -162,7 +167,9 @@ def _overview() -> dict[str, Any]:
             "openActionCount": open_count,
             "pendingApprovalCount": pending_approvals,
             "unreadMailCount": mail["unreadCount"],
+            "overdueInvoiceCount": int(recv.get("overdue") or 0),
             "mail": mail,
+            "receivables": recv,
             "toolsEnabled": board_tools.tools_enabled(settings),
             "runningMeeting": board_meeting.public_meeting_summary(running) if running else None,
             "latestMeeting": board_meeting.public_meeting_summary(latest_done) if latest_done else None,
@@ -198,6 +205,7 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "mailSendEnabled": board_mail.sending_enabled(),
         "mailDomain": board_mail.mail_domain(),
         "searchConfigured": board_research.search_configured(),
+        "dataApiConfigured": board_receivables.configured(),
     }
 
 
