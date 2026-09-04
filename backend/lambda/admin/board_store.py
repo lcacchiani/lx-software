@@ -18,6 +18,8 @@ Key layout (``pk`` / ``sk``):
 - ``BOARD#<b>#chatjob#<jobId>`` / ``META``      — chat jobs (TTL)
 - ``BOARD#<b>#repo-snapshot`` / ``STATE``       — cached GitHub context
 - ``BOARD#<b>#usage#<yyyy-mm-dd>`` / ``STATE``  — daily token / cost totals
+- ``BOARD#<b>#usage#ads#<yyyy-mm-dd>`` / ``STATE`` — daily recorded Meta ads commitment
+- ``BOARD#<b>#usage#ads#<yyyy-mm>`` / ``STATE`` — monthly recorded Meta ads commitment
 - ``BOARD#<b>#approvals`` / ``APPROVAL#<id>``   — proposed tool actions awaiting the owner
 - ``BOARD#<b>#toolcalls`` / ``CALL#<ts>#<id>``  — audit log of every tool call (TTL)
 - ``BOARD#<b>#mail#threads`` / ``THREAD#<id>``  — email thread summaries (TTL)
@@ -32,6 +34,7 @@ Key layout (``pk`` / ``sk``):
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -134,17 +137,51 @@ def default_tool_matrix() -> dict[str, dict[str, str]]:
     return out
 
 
+ADS_DAILY_CAP_MAX = 500.0
+ADS_MONTHLY_CAP_MAX = 2000.0
+
+
+def _env_cap(name: str, fallback: float, ceiling: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return fallback
+    try:
+        value = float(raw)
+    except ValueError:
+        return fallback
+    if value < 0:
+        value = 0.0
+    return min(value, ceiling)
+
+
+def default_spend_caps() -> dict[str, float]:
+    from contract_constants import BOARD_META_ADS_DAILY_CAP_USD, BOARD_META_ADS_MONTHLY_CAP_USD
+
+    return {
+        "metaAdsDailyUsd": _env_cap(
+            "META_ADS_DAILY_CAP_USD", float(BOARD_META_ADS_DAILY_CAP_USD), ADS_DAILY_CAP_MAX
+        ),
+        "metaAdsMonthlyUsd": _env_cap(
+            "META_ADS_MONTHLY_CAP_USD", float(BOARD_META_ADS_MONTHLY_CAP_USD), ADS_MONTHLY_CAP_MAX
+        ),
+    }
+
+
 def default_tools_config() -> dict[str, Any]:
     return {
         "enabled": True,
         "globalMode": BOARD_TOOL_DEFAULT_GLOBAL_MODE,
         "matrix": default_tool_matrix(),
         "allowList": [],
+        "spendCaps": default_spend_caps(),
     }
 
 
+_PHONE_ALLOW_RE = re.compile(r"^\+?\d{8,15}$")
+
+
 def normalize_allow_list(raw: Any) -> list[str]:
-    """Lower-cased, de-duplicated ``user@host`` addresses or ``@domain`` entries."""
+    """De-duplicated emails, ``@domain`` wildcards, or E.164 / HK phone numbers."""
     if not isinstance(raw, list):
         return []
     out: list[str] = []
@@ -152,19 +189,46 @@ def normalize_allow_list(raw: Any) -> list[str]:
     for entry in raw:
         if not isinstance(entry, str):
             continue
-        value = "".join(entry.split()).lower().strip("<>")
+        compact = "".join(entry.split()).strip("<>")
+        if not compact:
+            continue
+        if _PHONE_ALLOW_RE.fullmatch(compact):
+            import board_pii
+
+            raw_phone = board_pii.normalize_phone(compact)
+            digits = re.sub(r"\D", "", raw_phone)
+            value = f"+{digits}" if raw_phone.startswith("+") else digits
+        else:
+            value = compact.lower()
+            if "@" not in value or value.count("@") != 1:
+                continue
+            local, host = value.split("@")
+            if not host or "." not in host:
+                continue
+            value = value if local else f"@{host}"
         if not value or value in seen:
             continue
-        if "@" not in value or value.count("@") != 1:
-            continue
-        local, host = value.split("@")
-        if not host or "." not in host:
-            continue
-        # ``@domain.tld`` allows everyone at that domain; otherwise one address.
         seen.add(value)
-        out.append(value if local else f"@{host}")
+        out.append(value)
         if len(out) >= BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES:
             break
+    return out
+
+
+def normalize_spend_caps(raw: Any) -> dict[str, float]:
+    out = default_spend_caps()
+    if not isinstance(raw, dict):
+        return out
+    for key, ceiling in (("metaAdsDailyUsd", ADS_DAILY_CAP_MAX), ("metaAdsMonthlyUsd", ADS_MONTHLY_CAP_MAX)):
+        if key not in raw:
+            continue
+        try:
+            value = float(raw[key])
+        except (TypeError, ValueError):
+            continue
+        if value < 0:
+            value = 0.0
+        out[key] = min(value, ceiling)
     return out
 
 
@@ -183,6 +247,7 @@ def normalize_tools_config(raw: Any) -> dict[str, Any]:
     if isinstance(mode, str) and mode in BOARD_TOOL_GLOBAL_MODES:
         out["globalMode"] = mode
     out["allowList"] = normalize_allow_list(raw.get("allowList"))
+    out["spendCaps"] = normalize_spend_caps(raw.get("spendCaps"))
     matrix = raw.get("matrix")
     if isinstance(matrix, dict):
         max_levels = {str(t["id"]): str(t.get("maxLevel") or "act") for t in BOARD_TOOL_DEFINITIONS}
@@ -882,6 +947,50 @@ def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:
             ":calls": int(calls),
         },
     )
+
+
+def ads_usage_day_key(date_iso: str | None = None) -> str:
+    day = date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"usage#ads#{day}"
+
+
+def ads_usage_month_key(date_iso: str | None = None) -> str:
+    day = date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"usage#ads#{day[:7]}"
+
+
+def load_ads_spend(table: Any, date_iso: str | None = None) -> dict[str, float]:
+    day = _get_state(table, ads_usage_day_key(date_iso)) or {}
+    month = _get_state(table, ads_usage_month_key(date_iso)) or {}
+    return {
+        "dailyUsd": float(day.get("spendUsd") or 0.0),
+        "monthlyUsd": float(month.get("spendUsd") or 0.0),
+    }
+
+
+def record_ads_spend(
+    table: Any,
+    *,
+    daily_usd: float,
+    monthly_usd: float,
+    date_iso: str | None = None,
+) -> None:
+    from decimal import Decimal
+
+    daily_amt = Decimal(str(round(max(0.0, float(daily_usd)), 6)))
+    monthly_amt = Decimal(str(round(max(0.0, float(monthly_usd)), 6)))
+    if daily_amt > 0:
+        table.update_item(
+            Key={"pk": board_pk(ads_usage_day_key(date_iso)), "sk": "STATE"},
+            UpdateExpression="ADD spendUsd :s",
+            ExpressionAttributeValues={":s": daily_amt},
+        )
+    if monthly_amt > 0:
+        table.update_item(
+            Key={"pk": board_pk(ads_usage_month_key(date_iso)), "sk": "STATE"},
+            UpdateExpression="ADD spendUsd :s",
+            ExpressionAttributeValues={":s": monthly_amt},
+        )
 
 
 # ---------------------------------------------------------------------------

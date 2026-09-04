@@ -1134,7 +1134,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="meta_create_ad_set",
             tool_id="meta",
             kind="write",
-            description="Create a PAUSED ad set. Monthly spend is capped; act is off until T7.",
+            description="Create a PAUSED ad set. Act only when the daily and monthly ads caps still have room; otherwise propose.",
             parameters=_obj(
                 {
                     "name": _str_param("Ad set name.", max_len=80),
@@ -1145,9 +1145,28 @@ def build_registry() -> dict[str, ToolOp]:
                 ["name", "dailyBudgetUsd", "reason"],
             ),
             run=board_meta.op_create_ad_set,
-            summarize=_summ("Propose ad set {name}"),
+            summarize=_summ("Create ad set {name}"),
             act_guard=board_meta.act_guard_ad_set,
             preview=lambda ctx, args: board_meta.owner_preview_message(ctx, args, op="meta_create_ad_set"),
+        ),
+        ToolOp(
+            name="meta_boost_post",
+            tool_id="meta",
+            kind="write",
+            description="Boost a Page post. Act only when the daily and monthly ads caps still have room; otherwise propose.",
+            parameters=_obj(
+                {
+                    "postId": _str_param("Page post id (or pageId_postId).", max_len=80),
+                    "dailyBudgetUsd": {"type": "number", "description": "Daily budget in USD."},
+                    "days": {"type": "integer", "description": "How many days to boost (1–30)."},
+                    "reason": REASON_PARAM,
+                },
+                ["postId", "dailyBudgetUsd", "days", "reason"],
+            ),
+            run=board_meta.op_boost_post,
+            summarize=_summ("Boost post {postId}"),
+            act_guard=board_meta.act_guard_boost_post,
+            preview=lambda ctx, args: board_meta.owner_preview_message(ctx, args, op="meta_boost_post"),
         ),
         ToolOp(
             name="meta_relay_lead",

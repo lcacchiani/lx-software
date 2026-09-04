@@ -4,9 +4,11 @@ Webhook (``GET/POST /webhooks/meta``) is the first unauthenticated admin-API
 route: Meta's verify handshake plus ``X-Hub-Signature-256``. Inbound payloads
 are masked and stored under ``BOARD#…#meta#``; no LLM work happens here.
 
-Writes execute only after approval (T5 is read + propose). WhatsApp ``act``
-is honoured only inside the 24-hour customer-service window and only for
-allow-listed recipients; otherwise the call is downgraded to propose.
+Writes execute after approval, or at ``act`` when the global mode allows it
+and the call is inside caps / allow-lists (T7). WhatsApp ``act`` is honoured
+only inside the 24-hour customer-service window and only for allow-listed
+recipients; otherwise the call is downgraded to propose. Ad writes that would
+breach the owner-set daily or monthly spend caps are forced to propose.
 
 Plan: docs/architecture/executive-board-tools-plan.md §5.3.
 """
@@ -17,6 +19,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -29,7 +32,11 @@ from admin_runtime import _get_secretsmanager_client
 import board_mail
 import board_pii
 import board_store
-from contract_constants import BOARD_META_ADS_MONTHLY_CAP_USD, BOARD_META_LIST_MAX
+from contract_constants import (
+    BOARD_META_ADS_DAILY_CAP_USD,
+    BOARD_META_ADS_MONTHLY_CAP_USD,
+    BOARD_META_LIST_MAX,
+)
 from http_common import _log_event, _utc_iso_z
 from openrouter_client import read_secret_string
 
@@ -77,6 +84,16 @@ def ad_account_id() -> str:
     return raw
 
 
+def ads_daily_cap_usd() -> float:
+    raw = (os.environ.get("META_ADS_DAILY_CAP_USD") or "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return float(BOARD_META_ADS_DAILY_CAP_USD)
+
+
 def ads_monthly_cap_usd() -> float:
     raw = (os.environ.get("META_ADS_MONTHLY_CAP_USD") or "").strip()
     if raw:
@@ -85,6 +102,58 @@ def ads_monthly_cap_usd() -> float:
         except ValueError:
             pass
     return float(BOARD_META_ADS_MONTHLY_CAP_USD)
+
+
+def ads_caps(settings: dict[str, Any] | None = None) -> tuple[float, float]:
+    """Owner-set caps from settings, else env / contract defaults."""
+    daily = ads_daily_cap_usd()
+    monthly = ads_monthly_cap_usd()
+    raw = ((settings or {}).get("tools") or {}).get("spendCaps")
+    if isinstance(raw, dict):
+        normalized = board_store.normalize_spend_caps(raw)
+        if "metaAdsDailyUsd" in raw:
+            daily = normalized["metaAdsDailyUsd"]
+        if "metaAdsMonthlyUsd" in raw:
+            monthly = normalized["metaAdsMonthlyUsd"]
+    return daily, monthly
+
+
+def graph_month_spend() -> float:
+    aid = ad_account_id()
+    if not aid or not board_token():
+        return 0.0
+    try:
+        data = graph(
+            "GET",
+            f"{aid}/insights",
+            params={"fields": "spend", "date_preset": "this_month", "level": "account"},
+        )
+    except MetaError:
+        return 0.0
+    rows = data.get("data") or []
+    if not rows:
+        return 0.0
+    try:
+        return float(rows[0].get("spend") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> dict[str, float]:
+    recorded = board_store.load_ads_spend(table) if table is not None else {"dailyUsd": 0.0, "monthlyUsd": 0.0}
+    graph_month = graph_month_spend()
+    daily_cap, monthly_cap = ads_caps(settings)
+    recorded_daily = float(recorded.get("dailyUsd") or 0.0)
+    recorded_month = float(recorded.get("monthlyUsd") or 0.0)
+    return {
+        "recordedDailyUsd": recorded_daily,
+        "recordedMonthlyUsd": recorded_month,
+        "graphMonthlyUsd": graph_month,
+        "dailyUsd": recorded_daily,
+        "monthlyUsd": recorded_month + graph_month,
+        "dailyCapUsd": daily_cap,
+        "monthlyCapUsd": monthly_cap,
+    }
 
 
 def reset_caches_for_tests() -> None:
@@ -132,7 +201,8 @@ def status_summary(table: Any) -> dict[str, Any]:
         "whatsappSet": bool(wa_phone_id()),
         "threadCount": len(threads),
         "unreadCount": unread,
-        "adsMonthlyCapUsd": ads_monthly_cap_usd(),
+        "adsDailyCapUsd": ads_caps(None)[0],
+        "adsMonthlyCapUsd": ads_caps(None)[1],
     }
 
 
@@ -410,7 +480,7 @@ def op_list_whatsapp(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     return _list_stored(ctx.table, channel="whatsapp", limit=int(args.get("limit") or 20))
 
 
-def op_ad_spend(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+def op_ad_spend(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     aid = str(args.get("adAccountId") or ad_account_id())
     if not aid:
         raise MetaError("META_AD_ACCOUNT_ID is not set.")
@@ -426,7 +496,17 @@ def op_ad_spend(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             spend = float(rows[0].get("spend") or 0)
         except (TypeError, ValueError):
             spend = 0.0
-    return {"adAccountId": aid, "spendUsd": spend, "capUsd": ads_monthly_cap_usd(), "rows": rows[:5]}
+    daily_cap, monthly_cap = ads_caps(getattr(ctx, "settings", None))
+    snapshot = ads_spend_snapshot(getattr(ctx, "table", None), getattr(ctx, "settings", None))
+    return {
+        "adAccountId": aid,
+        "spendUsd": spend,
+        "capUsd": monthly_cap,
+        "dailyCapUsd": daily_cap,
+        "recordedDailyUsd": snapshot["recordedDailyUsd"],
+        "recordedMonthlyUsd": snapshot["recordedMonthlyUsd"],
+        "rows": rows[:5],
+    }
 
 
 def _list_stored(table: Any, *, channel: str, limit: int) -> dict[str, Any]:
@@ -531,19 +611,54 @@ def op_reply_whatsapp(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "messageId": (data.get("messages") or [{}])[0].get("id"), "to": to}
 
 
-def op_create_ad_set(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-    aid = str(args.get("adAccountId") or ad_account_id())
-    name = str(args.get("name") or "").strip()
+def _parse_daily_budget(args: dict[str, Any]) -> float:
     try:
         daily = float(args.get("dailyBudgetUsd"))
     except (TypeError, ValueError) as exc:
         raise MetaError("dailyBudgetUsd must be a number") from exc
-    if not aid or not name or daily <= 0:
+    if daily <= 0:
+        raise MetaError("dailyBudgetUsd must be positive")
+    return daily
+
+
+def _parse_boost_days(args: dict[str, Any]) -> int:
+    raw = args.get("days", 7)
+    try:
+        days = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise MetaError("days must be an integer") from exc
+    if days < 1 or days > 30:
+        raise MetaError("days must be between 1 and 30")
+    return days
+
+
+def _object_story_id(post_id: str) -> str:
+    if "_" in post_id:
+        return post_id
+    pid = page_id()
+    return f"{pid}_{post_id}" if pid else post_id
+
+
+def _record_ads_commitment(ctx: Any, *, daily: float, days: int) -> None:
+    table = getattr(ctx, "table", None)
+    if table is None:
+        return
+    board_store.record_ads_spend(table, daily_usd=daily, monthly_usd=daily * days)
+
+
+def op_create_ad_set(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    aid = str(args.get("adAccountId") or ad_account_id())
+    name = str(args.get("name") or "").strip()
+    daily = _parse_daily_budget(args)
+    if not aid or not name:
         raise MetaError("adAccountId, name and a positive dailyBudgetUsd are required")
     monthly = daily * 30
-    cap = ads_monthly_cap_usd()
-    if monthly > cap:
-        raise MetaError(f"dailyBudgetUsd * 30 ({monthly:.2f}) exceeds the monthly ads cap of USD {cap:.2f}")
+    if daily > board_store.ADS_DAILY_CAP_MAX:
+        raise MetaError(f"dailyBudgetUsd exceeds the hard daily ceiling of USD {board_store.ADS_DAILY_CAP_MAX:.0f}")
+    if monthly > board_store.ADS_MONTHLY_CAP_MAX:
+        raise MetaError(
+            f"dailyBudgetUsd * 30 ({monthly:.2f}) exceeds the hard monthly ceiling of USD {board_store.ADS_MONTHLY_CAP_MAX:.0f}"
+        )
     data = graph(
         "POST",
         f"{aid}/adsets",
@@ -556,7 +671,78 @@ def op_create_ad_set(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             "campaign_id": str(args.get("campaignId") or ""),
         },
     )
+    _record_ads_commitment(ctx, daily=daily, days=30)
     return {"ok": True, "adSetId": data.get("id"), "dailyBudgetUsd": daily, "status": "PAUSED"}
+
+
+def op_boost_post(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    post_id = str(args.get("postId") or "").strip()
+    daily = _parse_daily_budget(args)
+    days = _parse_boost_days(args)
+    aid = str(args.get("adAccountId") or ad_account_id())
+    if not post_id or not aid:
+        raise MetaError("postId and META_AD_ACCOUNT_ID are required")
+    monthly = daily * days
+    if daily > board_store.ADS_DAILY_CAP_MAX:
+        raise MetaError(f"dailyBudgetUsd exceeds the hard daily ceiling of USD {board_store.ADS_DAILY_CAP_MAX:.0f}")
+    if monthly > board_store.ADS_MONTHLY_CAP_MAX:
+        raise MetaError(
+            f"dailyBudgetUsd * days ({monthly:.2f}) exceeds the hard monthly ceiling of USD {board_store.ADS_MONTHLY_CAP_MAX:.0f}"
+        )
+    story_id = _object_story_id(post_id)
+    end = datetime.now(timezone.utc) + timedelta(days=days)
+    campaign = graph(
+        "POST",
+        f"{aid}/campaigns",
+        body={
+            "name": f"Boost {post_id}"[:80],
+            "objective": "OUTCOME_ENGAGEMENT",
+            "status": "ACTIVE",
+            "special_ad_categories": [],
+        },
+    )
+    campaign_id = campaign.get("id")
+    if not campaign_id:
+        raise MetaError("Meta did not return a campaign id")
+    adset = graph(
+        "POST",
+        f"{aid}/adsets",
+        body={
+            "name": f"Boost {post_id}"[:80],
+            "campaign_id": campaign_id,
+            "daily_budget": int(round(daily * 100)),
+            "billing_event": "IMPRESSIONS",
+            "optimization_goal": "POST_ENGAGEMENT",
+            "status": "ACTIVE",
+            "end_time": end.strftime("%Y-%m-%dT%H:%M:%S+0000"),
+            "targeting": {"geo_locations": {"countries": ["HK"]}},
+        },
+    )
+    adset_id = adset.get("id")
+    if not adset_id:
+        raise MetaError("Meta did not return an ad set id")
+    ad = graph(
+        "POST",
+        f"{aid}/ads",
+        body={
+            "name": f"Boost {post_id}"[:80],
+            "adset_id": adset_id,
+            "status": "ACTIVE",
+            "creative": {"object_story_id": story_id},
+        },
+    )
+    _record_ads_commitment(ctx, daily=daily, days=days)
+    return {
+        "ok": True,
+        "postId": post_id,
+        "objectStoryId": story_id,
+        "campaignId": campaign_id,
+        "adSetId": adset_id,
+        "adId": ad.get("id"),
+        "dailyBudgetUsd": daily,
+        "days": days,
+        "status": "ACTIVE",
+    }
 
 
 def op_relay_lead(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -629,22 +815,61 @@ def act_guard_relay(ctx: Any, args: dict[str, Any]) -> str | None:
     return None
 
 
-def act_guard_ad_set(_ctx: Any, args: dict[str, Any]) -> str | None:
+def _phone_digits(value: str) -> str:
+    return re.sub(r"\D", "", board_pii.normalize_phone(value) or "")
+
+
+def act_guard_ads(ctx: Any, args: dict[str, Any], *, days: int | None = None) -> str | None:
     try:
         daily = float(args.get("dailyBudgetUsd"))
     except (TypeError, ValueError):
         return "dailyBudgetUsd must be a number"
-    if daily * 30 > ads_monthly_cap_usd():
-        return f"the proposed monthly spend exceeds the USD {ads_monthly_cap_usd():.0f} cap"
+    if daily <= 0:
+        return "dailyBudgetUsd must be positive"
+    span = days
+    if span is None:
+        raw_days = args.get("days")
+        if raw_days is None:
+            span = 30
+        else:
+            try:
+                span = int(raw_days)
+            except (TypeError, ValueError):
+                return "days must be an integer"
+    if span < 1 or span > 30:
+        return "days must be between 1 and 30"
+    daily_cap, monthly_cap = ads_caps(getattr(ctx, "settings", None))
+    monthly = daily * span
+    if daily > daily_cap:
+        return f"the daily budget exceeds the USD {daily_cap:.0f} daily cap"
+    if monthly > monthly_cap:
+        return f"the proposed monthly spend exceeds the USD {monthly_cap:.0f} cap"
+    snapshot = ads_spend_snapshot(getattr(ctx, "table", None), getattr(ctx, "settings", None))
+    if snapshot["dailyUsd"] + daily > daily_cap:
+        return f"today's ads spend would exceed the USD {daily_cap:.0f} daily cap"
+    if snapshot["monthlyUsd"] + monthly > monthly_cap:
+        return f"this month's ads spend would exceed the USD {monthly_cap:.0f} cap"
     return None
+
+
+def act_guard_ad_set(ctx: Any, args: dict[str, Any]) -> str | None:
+    return act_guard_ads(ctx, args, days=30)
+
+
+def act_guard_boost_post(ctx: Any, args: dict[str, Any]) -> str | None:
+    if not str(args.get("postId") or "").strip():
+        return "postId is required"
+    return act_guard_ads(ctx, args)
 
 
 def _recipient_allowed(settings: dict[str, Any], value: str) -> bool:
     if "@" in value:
         return board_mail.recipient_allowed(settings, value)
     entries = (settings.get("tools") or {}).get("allowList") or []
-    digits = board_pii.normalize_phone(value)
-    return any(board_pii.normalize_phone(str(e)) == digits for e in entries if isinstance(e, str))
+    digits = _phone_digits(value)
+    if not digits:
+        return False
+    return any(_phone_digits(str(e)) == digits for e in entries if isinstance(e, str) and "@" not in str(e))
 
 
 def owner_preview_message(_ctx: Any, args: dict[str, Any], *, op: str) -> dict[str, Any]:
@@ -654,7 +879,7 @@ def owner_preview_message(_ctx: Any, args: dict[str, Any], *, op: str) -> dict[s
         "from": "whatsapp" if "whatsapp" in op else ("instagram" if "story" in op else "facebook"),
         "to": [str(to)] if to else [],
         "cc": [],
-        "subject": str(args.get("name") or args.get("template") or op),
+        "subject": str(args.get("name") or args.get("postId") or args.get("template") or op),
         "text": str(args.get("message") or args.get("caption") or args.get("summary") or args.get("reason") or ""),
         "threadId": str(args.get("threadId") or ""),
         "sendEnabled": configured(),

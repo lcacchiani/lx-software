@@ -34,7 +34,8 @@ from contract_constants import (
 from http_common import _audit, _json_response, _log_event, _parse_json_body
 
 BOARD_BASE_PATH = "/siu-tin-dei/board"
-ALLOW_LIST_ENTRY_RE = re.compile(r"^(?:[a-z0-9._%+\-]+)?@[a-z0-9.\-]+\.[a-z]{2,}$")
+ALLOW_LIST_EMAIL_RE = re.compile(r"^(?:[a-z0-9._%+\-]+)?@[a-z0-9.\-]+\.[a-z]{2,}$")
+ALLOW_LIST_PHONE_RE = re.compile(r"^\+?\d{8,15}$")
 
 
 def handle_board_route(
@@ -210,6 +211,7 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "dataApiConfigured": board_receivables.configured(),
         "metaConfigured": board_meta.configured(),
         "storesConfigured": board_stores.configured(),
+        "adsSpend": board_meta.ads_spend_snapshot(board_store.records_table(), settings),
     }
 
 
@@ -244,16 +246,26 @@ def validate_tools_config(body: Any, current: dict[str, Any]) -> dict[str, Any]:
     if "allowList" in body:
         entries = body.get("allowList")
         if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
-            raise ValueError("allowList must be an array of addresses or @domains")
+            raise ValueError("allowList must be an array of addresses, @domains, or phone numbers")
         if len(entries) > BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES:
             raise ValueError(f"allowList may hold at most {BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES} entries")
         for entry in entries:
-            cleaned = "".join(entry.split()).lower()
-            if cleaned and not ALLOW_LIST_ENTRY_RE.fullmatch(cleaned):
+            compact = "".join(entry.split()).strip("<>")
+            if not compact:
+                continue
+            if ALLOW_LIST_PHONE_RE.fullmatch(compact):
+                continue
+            if not ALLOW_LIST_EMAIL_RE.fullmatch(compact.lower()):
                 raise ValueError(
-                    f"allowList entry '{cleaned[:80]}' must be a full address (name@host.tld) or a domain (@host.tld)"
+                    f"allowList entry '{compact[:80]}' must be a full address (name@host.tld), "
+                    "a domain (@host.tld), or a phone number (E.164, 8–15 digits)"
                 )
         out["allowList"] = board_store.normalize_allow_list(entries)
+    if "spendCaps" in body:
+        caps = body.get("spendCaps")
+        if not isinstance(caps, dict):
+            raise ValueError("spendCaps must be an object")
+        out["spendCaps"] = caps
     return board_store.normalize_tools_config(out)
 
 
