@@ -84,6 +84,13 @@ export function BoardReceivablesView({ overdueCount, errorText }: BoardReceivabl
       ),
     [data, subQuery],
   );
+  const pastDue =
+    overdueCount ??
+    (data?.aging
+      ? (data.aging.buckets.d7?.length ?? 0) +
+        (data.aging.buckets.d21?.length ?? 0) +
+        (data.aging.buckets.d35?.length ?? 0)
+      : 0);
 
   return (
     <div className="card shadow-sm mb-4">
@@ -92,7 +99,7 @@ export function BoardReceivablesView({ overdueCount, errorText }: BoardReceivabl
           <h2 className="h6 text-uppercase text-muted mb-0">Receivables</h2>
           <div className="small text-muted">
             {data?.configured
-              ? `${data.aging.outstandingHkd ?? 0} HKD outstanding${overdueCount ? ` · ${overdueCount} past due` : ""}`
+              ? `${data.aging.outstandingHkd ?? 0} HKD outstanding${pastDue ? ` · ${pastDue} past due` : ""}`
               : "Data API not configured"}
           </div>
         </div>
