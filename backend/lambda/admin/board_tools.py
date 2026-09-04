@@ -118,6 +118,8 @@ class ToolOp:
     timeout_seconds: int | None = None
     # None → propose for writes, read for reads. CISO phishing is a write at read.
     level_floor: str | None = None
+    # Writes that the plan keeps in Approvals even when the member is at ``act``.
+    always_propose: bool = False
 
     @property
     def is_write(self) -> bool:
@@ -818,6 +820,7 @@ def build_registry() -> dict[str, ToolOp]:
             run=board_mail.op_report_phishing,
             summarize=_summ("Report phishing on thread {threadId}"),
             level_floor="read",
+            always_propose=True,
             preview=board_mail.owner_preview_phishing,
         ),
         ToolOp(
@@ -1627,7 +1630,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             result={"error": f"{op.name} is not available to you at level '{level}'."},
             summary=summary,
         )
-    elif op.is_write and (level != "act" or guard_reason):
+    elif op.is_write and (level != "act" or guard_reason or (op.always_propose and ctx.actor == "persona")):
         approval = create_approval(ctx, op, arguments, summary=summary, downgrade_reason=guard_reason)
         approval_id = str(approval["approvalId"])
         message = (

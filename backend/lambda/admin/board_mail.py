@@ -830,6 +830,17 @@ def op_report_phishing(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         raise MailError(f"thread {thread_id} not found")
     note = str(args.get("note") or args.get("reason") or "").strip()
     subject = str(thread.get("subject") or "(no subject)")[:120]
+    for existing in board_store.list_actions(ctx.table):
+        if existing.get("threadId") == thread_id and existing.get("status") == "open" and str(
+            existing.get("title") or ""
+        ).startswith("Phishing report:"):
+            return {
+                "ok": True,
+                "actionId": existing.get("actionId"),
+                "threadId": thread_id,
+                "subject": subject,
+                "duplicate": True,
+            }
     now = _utc_iso_z(datetime.now(timezone.utc))
     doc = {
         "actionId": board_store.new_id(),
@@ -843,7 +854,8 @@ def op_report_phishing(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         "status": "open",
         "note": "",
         "meetingId": getattr(ctx, "meeting_id", "") or "",
-        "source": "tool",
+        # Only reachable after the founder approves (always_propose), like _board_add_action.
+        "source": "approval",
         "reaffirmedByMeetingIds": [],
         "dueAt": None,
         "createdAt": now,
