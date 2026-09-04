@@ -315,7 +315,8 @@ function calling. Design:
   SQL views),   `meta` (Page / Instagram insights, comments, DMs, WhatsApp
   threads, ad spend; post, story, reply, ad set, boost a post, or lead relay),
   `stores` (App Store Connect + Play metrics, review reply, release-notes
-  draft), and `finance` (listing subscriptions, invoices, aging, draft/send
+  draft), `web` (GA4 sessions / conversions and GTM live version), and
+  `finance` (listing subscriptions, invoices, aging, draft/send
   invoice, dunning, match or record a payment, price-change proposal). The
   board never initiates a bank payment.
 - **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
@@ -448,6 +449,27 @@ Design: [`docs/architecture/executive-board-tools-plan.md`](../architecture/exec
 5. `stores_reply_review`: CMO may **act**; every other role proposes.
    `stores_draft_release_notes` always stays in **Approvals** and writes a
    board action — it never publishes to either store.
+
+### Board web (GA4 + GTM)
+
+Dedicated Analytics service account — not the Play publisher key. Design:
+[`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md) §5.8.
+
+1. Create a GCP service account with `analytics.readonly` and
+   `tagmanager.readonly`. Grant it Viewer on every GA4 property and GTM
+   container the board should see. Store the JSON key and pass the ARN as
+   `lxsoftware:GoogleAnalyticsServiceAccountSecretArn`.
+2. Set `Ga4PropertyIds` to a comma-separated list (`123456789,987654321` or
+   `properties/123456789,…`). Set `GtmContainers` to
+   `accountId:containerId` pairs. Both can also live inside the secret as
+   `propertyIds` / `gtmContainers`.
+3. Until the SA plus at least one property or container is set, `web` tools
+   return a clear error and the hourly cache refresh skips them.
+4. Reads (`web_sessions`, `web_conversions`, `web_gtm_status`) are cached
+   20 hours and refreshed by `BoardCacheRefreshSchedule`. Page paths are
+   masked (`contact#hidden` / `phone#hidden`) before they reach the model.
+5. Google Ads (`ads` tool) is T8b. `gtm_propose_publish` is T8c and always
+   stays in **Approvals**.
 
 ### Board mail (Cloudflare + SES)
 
