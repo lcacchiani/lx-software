@@ -384,6 +384,22 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
       "ciso": "off",
       "cmo": "read"
     }
+  },
+  {
+    "id": "stores",
+    "label": "App stores",
+    "description": "App Store Connect and Google Play: downloads, installs, crashes, ratings and review text. Reply to a review or draft release notes. The CMO may act on a review reply; everything else is propose.",
+    "maxLevel": "act",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "off",
+      "coo": "read",
+      "cpo": "propose",
+      "cto": "read",
+      "cio": "off",
+      "ciso": "off",
+      "cmo": "act"
+    }
   }
 ];
 export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
@@ -403,3 +419,5 @@ export const BOARD_INVOICE_NUMBER_PREFIX = "STD";
 export const BOARD_RECEIVABLES_LIST_MAX = 100;
 export const BOARD_META_ADS_MONTHLY_CAP_USD = 50;
 export const BOARD_META_LIST_MAX = 40;
+export const BOARD_STORES_LIST_MAX = 30;
+export const BOARD_STORES_CACHE_TTL_HOURS = 20;

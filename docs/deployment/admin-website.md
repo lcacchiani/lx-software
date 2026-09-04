@@ -248,6 +248,9 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:MetaAppSecretSecretArn` | App secret used to verify `X-Hub-Signature-256` on `POST /webhooks/meta`. |
 | `lxsoftware:MetaVerifyToken` | Token Meta sends on the GET verify handshake (`hub.verify_token`). |
 | `lxsoftware:MetaPageId` / `MetaIgUserId` / `MetaWaPhoneNumberId` / `MetaAdAccountId` | Graph ids the `meta` tools call. |
+| `lxsoftware:AppStoreConnectKeySecretArn` | Secrets Manager secret: App Store Connect API key JSON (`keyId`, `issuerId`, `privateKey`, optional `appId`). JWT is signed in `AdminApiFn`. |
+| `lxsoftware:GooglePlayServiceAccountSecretArn` | Secrets Manager secret: Google Play service-account JSON (optional `packageName`). |
+| `lxsoftware:AppStoreConnectAppId` / `GooglePlayPackageName` | App id / package if they are not already inside the secrets. |
 | `lxsoftware:BoardMailDomain` | Domain the board indexes (default `siutindei.com`). Every mailbox at this domain is copied to the board's SES inbound address by the Cloudflare Email Worker. |
 | `lxsoftware:BoardMailSendingEnabled` | `false` (default) / `true`. Flip to `true` only after the DKIM CNAMEs, SPF `include:amazonses.com`, and DMARC are in the `BoardMailDomain` zone. Creates the SES sending identity and the IAM send policy; until then mail tools stay read-only. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
@@ -415,6 +418,29 @@ Facebook Page and Instagram account. Design:
    `meta_relay_lead` emails the provider and the parent from `hello@`.
    Ad-set proposals are capped by `metaAdsMonthlyCapUsd` (contract, default
    50). `act` for ads stays off until T7.
+
+### Board stores (App Store Connect + Google Play)
+
+The App Store Connect API key and Google Play service account already exist.
+Design: [`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md) §4 `stores`.
+
+1. Store the App Store Connect key as JSON
+   (`keyId`, `issuerId`, `privateKey` from the `.p8`, optional `appId`) and
+   pass the secret ARN as `lxsoftware:AppStoreConnectKeySecretArn`. The
+   Lambda signs a 20-minute ES256 JWT on each call.
+2. Store the Play service-account JSON (standard GCP key; add
+   `packageName` if it is not passed as `GooglePlayPackageName`) and pass
+   the ARN as `lxsoftware:GooglePlayServiceAccountSecretArn`.
+3. Set `AppStoreConnectAppId` and `GooglePlayPackageName` if they are not
+   inside the secrets. Until at least one store is configured the `stores`
+   tools return a clear error; the hourly cache refresh skips them.
+4. Reads (`stores_metrics`, `stores_crashes`, `stores_ratings`,
+   `stores_list_reviews`) are cached 20 hours and refreshed by
+   `BoardCacheRefreshSchedule`. Review text is masked (`contact#hidden` /
+   `phone#hidden`) before it reaches the model.
+5. `stores_reply_review`: CMO may **act**; every other role proposes.
+   `stores_draft_release_notes` always stays in **Approvals** and writes a
+   board action — it never publishes to either store.
 
 ### Board mail (Cloudflare + SES)
 

@@ -55,6 +55,7 @@ export function BoardToolsCard({
     searchConfigured,
     dataApiConfigured,
     metaConfigured,
+    storesConfigured,
   } = payload;
   const [draft, setDraft] = useState<BoardToolsConfig>(config);
   const [allowListText, setAllowListText] = useState(() => config.allowList.join("\n"));
@@ -237,6 +238,20 @@ export function BoardToolsCard({
                         <div className="small text-warning mt-1">
                           Set <code>MetaBoardTokenSecretArn</code> and the Page / WhatsApp ids.
                           Enable coexistence so the owner&apos;s phone keeps the number.
+                        </div>
+                      )
+                    ) : null}
+                    {tool.id === "stores" ? (
+                      storesConfigured ? (
+                        <div className="small text-muted mt-1">
+                          Daily metrics refresh hourly. The CMO may <strong>act</strong> on a review
+                          reply; release notes always go to Approvals.
+                        </div>
+                      ) : (
+                        <div className="small text-warning mt-1">
+                          Set <code>AppStoreConnectKeySecretArn</code> and{" "}
+                          <code>GooglePlayServiceAccountSecretArn</code> (keys already exist). JWT
+                          for App Store Connect is signed in the Lambda.
                         </div>
                       )
                     ) : null}

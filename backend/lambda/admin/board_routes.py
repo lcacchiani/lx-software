@@ -17,6 +17,7 @@ import board_personas
 import board_receivables
 import board_research
 import board_store
+import board_stores
 import board_tools
 from contract_constants import (
     BOARD_CHAIR_DEFAULT,
@@ -208,6 +209,7 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "searchConfigured": board_research.search_configured(),
         "dataApiConfigured": board_receivables.configured(),
         "metaConfigured": board_meta.configured(),
+        "storesConfigured": board_stores.configured(),
     }
 
 
