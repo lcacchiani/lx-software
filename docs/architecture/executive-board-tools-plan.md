@@ -1,12 +1,12 @@
 # Executive Board — tools and connectors
 
-Status: **approved; T1–T7 shipped** (tool loop, `github` / `board` /
+Status: **approved; T1–T8 shipped** (tool loop, `github` / `board` /
 `mail` / `research` / `aws` / `security` / `product` / `meta` / `finance` /
-`stores` tools, permission matrix, approvals queue, email ingest, Mail view,
+`stores` / `web` tools, permission matrix, approvals queue, email ingest, Mail view,
 receivables + Data API, Meta webhook, App Store Connect + Google Play,
-hourly cache refresh, nightly statement-book mirror, daily dunning, `act`
+GA4 + GTM reads, hourly cache refresh, nightly statement-book mirror, daily dunning, `act`
 allow-lists and ads caps — see
-§10). T4b remains a proposal. This
+§10). T4b, T8b and T8c remain proposals. This
 document extends [`executive-board-plan.md`](./executive-board-plan.md) (the
 board itself, shipped) with the ability for each board member to **seek
 information and take action through tools** instead of relying only on the
@@ -26,11 +26,12 @@ Where T1 lives in the code:
 | SPA | `BoardToolsCard`, `BoardApprovalsList`, `BoardToolCallList`, `BoardMailView`, `BoardReceivablesView`; hooks `useBoardTools`, `useBoardApprovals`, `useBoardMail`, `useBoardReceivables` |
 | Mail ingest, SES send, PII aliases | `backend/lambda/admin/board_mail.py`, `board_pii.py`; S3 prefix `inbound-raw/siutindei/` |
 | Cloudflare fan-out | `scripts/cloudflare/siutindei-mail-fanout.js` |
-| Tests | `backend/lambda/admin/test_board_tools.py`, `test_board_mail.py`, `test_board_t2.py`, `test_board_t4.py`, `test_board_t5.py`, `test_board_t6.py`, `test_board_t7.py` |
+| Tests | `backend/lambda/admin/test_board_tools.py`, `test_board_mail.py`, `test_board_t2.py`, `test_board_t4.py`, `test_board_t5.py`, `test_board_t6.py`, `test_board_t7.py`, `test_board_t8.py` |
 | T2 reads | `board_research.py`, `board_aws.py`, `board_security.py`, `board_cache.py`; `BOARD#…#cache`; `BoardCacheRefreshSchedule` |
 | T4 receivables | `board_data_api.py`, `board_receivables.py`, `board_product.py`; `scripts/siutindei/receivables.sql`; `BoardReceivablesMirrorSchedule`, `BoardDunningSchedule` |
 | T5 Meta | `board_meta.py`; unauthenticated `GET/POST /webhooks/meta`; `BOARD#…#meta#` rows; `MetaBoardToken` / app secret |
 | T6 stores | `board_stores.py`; App Store Connect JWT + Play service account; review replies; hourly `stores:*` cache |
+| T8 web | `board_web.py`; dedicated Analytics SA; multi-property GA4 + multi-container GTM live version; hourly `web:*` cache |
 
 ## 1. Decisions already taken by the owner
 
@@ -130,7 +131,8 @@ denial from the existing client stays on. Message bodies are stored with a
 | `github` | `lx-software-ltd/siutindei` | issues, PRs, commits, Actions runs, releases, file/tree, Dependabot + code-scanning alerts, discussions | new issue, issue comment, label change | issue comment, label change | Token in Secrets Manager (already provisioned as `GITHUB_READ_TOKEN_SECRET_ARN`; needs `issues:write` for `act`) |
 | `product` | siutindei Aurora (read replica or Data API) | catalog counts by district/category/age, providers and **stores** with completeness score, search and view analytics, booking/lead funnel, provider sign-ups | flag listing for review | — | Read via RDS Data API with IAM auth (same AWS account) |
 | `stores` | App Store Connect API, Google Play Developer API | downloads, installs, crashes, ratings, review text, review status | reply to review, release notes draft | reply to review | Two key pairs in Secrets Manager; App Store Connect JWT signed in Lambda |
-| `web` | Cloudflare Web Analytics / GA4 (whichever `www.siutindei.com` uses) | sessions, top pages, referrers, conversions to app-store links | — | — | Read-only API token |
+| `web` | GA4 Data API + GTM (several properties / containers) | sessions, top pages, referrers, conversions, live container version | GTM publish (T8c) | — | Dedicated service account; see §5.8 |
+| `ads` | Google Ads (T8b) | spend, campaigns | new campaign | campaign within USD 50 / month cap | Developer token + OAuth; not the Analytics SA |
 | `mail` | All `siutindei.com` mailboxes | thread list, thread body, attachments (PDF text), sender history | reply, new email, forward to provider | reply/new email to allow-listed recipients | Design in §5.2 |
 | `meta` | Facebook Page, Instagram, WhatsApp Cloud API | Page/IG insights, comments, DMs, WhatsApp threads, template status, ad account spend and results | post, story, reply to comment/DM, WhatsApp reply outside 24-h window (template), new ad set | reply inside open WhatsApp window, reply to comments, boost within cap | Design in §5.3 |
 | `finance` | This admin app's Siu Tin Dei finance sheets + receivables | balances, cash-flow, subscriptions, invoices, overdue list, unit economics | create invoice, send invoice, dunning reminder, price change proposal | send dunning reminder to allow-listed provider | Design in §5.4–5.6 |
@@ -319,6 +321,26 @@ needs without giving the LLM raw table access:
 The `product` tools call these views only; parameters are limited to date
 ranges and district/category filters.
 
+### 5.8 Web — GA4, GTM, later Ads
+
+Do **not** copy Meta. There is no Admin API webhook, and Google Ads auth is
+a developer token plus OAuth — not one service account. Do **not** fold
+Google into the `meta` tool.
+
+- **`web` (this milestone):** GA4 sessions / conversions / top pages /
+  referrers and GTM live-version **read**. Several properties and containers
+  are first-class: `Ga4PropertyIds` is a CSV (`123,456` or
+  `properties/123,properties/456`); `GtmContainers` is
+  `account:container` pairs. CEO / CPO / CTO / CIO / CMO default to `read`.
+  A **dedicated** service account lives in
+  `GoogleAnalyticsServiceAccountSecretArn` (not the Play publisher key).
+  Reads are cached 20 hours and refreshed by `BoardCacheRefreshSchedule`.
+- **`ads` (T8b):** Google Ads spend and campaigns, plus propose a campaign.
+  Monthly cap USD 50 (same shape as Meta ads caps). `act` only after T7-style
+  spend tracking; until then writes stay `propose`.
+- **T8c:** `gtm_propose_publish` is **always Approvals**, even if the CMO
+  is at `act` on `web`.
+
 ## 6. Default permission matrix
 
 `R` read, `P` propose, `A` act (within caps and allow-lists), `–` no access.
@@ -363,7 +385,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | Routes | `GET/POST /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `GET …/board/receivables/*`, `POST /webhooks/meta` (no JWT, HMAC-verified), `GET /webhooks/meta` (verify) |
 | DynamoDB | `BOARD#TOOLCALL#`, `BOARD#APPROVAL#`, `BOARD#MAIL#`, `BOARD#META#`, `BOARD#CACHE#`, `BOARD#USAGE#` prefixes; all covered by the existing `BOARD#` scan filter |
 | Contracts | `contracts/board-tools.json`: tool ids, default matrix, `maxToolRoundsPerTurn`, `toolResultMaxChars`, cap names; synced to Python, TS and CDK |
-| Secrets / params | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `SearchApiKey`, `BankApiKey` (if an API-first account is chosen), plus `SiutindeiClusterArn` and `SiutindeiDbSecretArn` parameters for the Data API — each behind a `has…` condition like the GitHub secret today |
+| Secrets / params | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `GoogleAnalyticsServiceAccount` (dedicated, not Play), `Ga4PropertyIds`, `GtmContainers`, `SearchApiKey`, `BankApiKey` (if an API-first account is chosen), plus `SiutindeiClusterArn` and `SiutindeiDbSecretArn` parameters for the Data API — each behind a `has…` condition like the GitHub secret today |
 | SES | Receipt rule for `siutindei-board@inbound.lx-software.com` → S3 prefix `inbound-raw/siutindei/`; sending identity `siutindei.com` |
 | Cloudflare (siutindei zone) | Email Worker on the catch-all that fans out to the owner's inbox and the SES address; DKIM/SPF/DMARC records for SES sending |
 | Scheduler | `BoardCacheRefreshSchedule` (hourly), `BoardReceivablesMirrorSchedule` (nightly), `BoardDunningSchedule` (daily 09:00 HKT, produces `propose` items) — all role-based invokes, no Lambda resource-policy statements |
@@ -398,6 +420,9 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | T5 ✅ | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
 | T6 ✅ | `stores` (App Store Connect, Google Play) tools and review replies | T1 |
 | T7 ✅ | `act` level rollout: phone allow-list, owner ads caps, spend tracking, `boost_post` | T3–T6 |
+| T8 ✅ | `web`: GA4 reads + GTM live version, multi-id lists, hourly cache | T1, T2 |
+| T8b | `ads`: Google Ads spend / campaigns + propose campaign (USD 50 / month cap) | T7, T8 |
+| T8c | `gtm_propose_publish` always Approvals | T8 |
 
 Each milestone ships behind the global mode switch and adds its own
 Python unit tests (`test_board_tools.py`, fakes for every external API)
@@ -414,4 +439,5 @@ blocking, and the board itself can work on them now that T1–T4 have shipped:
 2. **Listing prices** — decides the first `listing_plans` rows; suggested
    first CFO/CPO stand-up action, approved through the queue.
 
-Next sign-off: **T8** (web analytics) when approved. T4b waits on the HK account.
+Next sign-off: **T8b** (Google Ads) when scheduled. T8c is GTM publish
+(always Approvals). T4b waits on the HK account.

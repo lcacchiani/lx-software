@@ -36,6 +36,7 @@ import board_research
 import board_security
 import board_store
 import board_stores
+import board_web
 from contract_constants import (
     BOARD_ACTION_EFFORTS,
     BOARD_ACTION_PRIORITIES,
@@ -51,6 +52,7 @@ from contract_constants import (
     BOARD_TOOL_RESULT_MAX_CHARS,
     BOARD_META_LIST_MAX,
     BOARD_STORES_LIST_MAX,
+    BOARD_WEB_LIST_MAX,
 )
 from http_common import _log_event, _utc_iso_z
 from openrouter_client import ChatCompletion, ToolCall, add_usage
@@ -1406,6 +1408,45 @@ def build_registry() -> dict[str, ToolOp]:
             act_guard=board_stores.act_guard_release_notes,
             preview=lambda ctx, args: board_stores.owner_preview_message(ctx, args, op="stores_draft_release_notes"),
         ),
+        ToolOp(
+            name="web_sessions",
+            tool_id="web",
+            kind="read",
+            description="GA4 sessions, users, top pages and referrers for the last 7 days (cached). Optional propertyId when several properties are configured.",
+            parameters=_obj(
+                {
+                    "propertyId": _str_param("GA4 property id. Omit to read every configured property.", max_len=32),
+                    "limit": _int_param("How many pages / referrers.", maximum=BOARD_WEB_LIST_MAX),
+                }
+            ),
+            run=board_web.op_sessions,
+            summarize=_summ("Read GA4 sessions"),
+        ),
+        ToolOp(
+            name="web_conversions",
+            tool_id="web",
+            kind="read",
+            description="GA4 event counts and conversions for the last 7 days (cached).",
+            parameters=_obj(
+                {
+                    "propertyId": _str_param("GA4 property id. Omit to read every configured property.", max_len=32),
+                    "limit": _int_param("How many events.", maximum=BOARD_WEB_LIST_MAX),
+                }
+            ),
+            run=board_web.op_conversions,
+            summarize=_summ("Read GA4 conversions"),
+        ),
+        ToolOp(
+            name="web_gtm_status",
+            tool_id="web",
+            kind="read",
+            description="GTM container name, public id and live version (cached). Publish is a later milestone.",
+            parameters=_obj(
+                {"containerId": _str_param("GTM container id. Omit to read every configured container.", max_len=32)}
+            ),
+            run=board_web.op_gtm_status,
+            summarize=_summ("Read GTM status"),
+        ),
     ]
     return {op.name: op for op in ops}
 
@@ -1547,6 +1588,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             board_product.ProductError,
             board_meta.MetaError,
             board_stores.StoresError,
+            board_web.WebError,
             ValueError,
         ) as exc:
             outcome = ToolOutcome(status="error", result={"error": str(exc)[:500]}, summary=summary)

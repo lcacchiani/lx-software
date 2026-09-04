@@ -400,6 +400,22 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
       "ciso": "off",
       "cmo": "act"
     }
+  },
+  {
+    "id": "web",
+    "label": "Web analytics",
+    "description": "GA4 sessions, top pages, referrers and conversions across configured properties, plus GTM live-version status. Read-only; cached hourly. GTM publish and Google Ads are later milestones.",
+    "maxLevel": "read",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "off",
+      "coo": "off",
+      "cpo": "read",
+      "cto": "read",
+      "cio": "read",
+      "ciso": "off",
+      "cmo": "read"
+    }
   }
 ];
 export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
@@ -422,3 +438,5 @@ export const BOARD_META_ADS_MONTHLY_CAP_USD = 50;
 export const BOARD_META_LIST_MAX = 40;
 export const BOARD_STORES_LIST_MAX = 30;
 export const BOARD_STORES_CACHE_TTL_HOURS = 20;
+export const BOARD_WEB_LIST_MAX = 30;
+export const BOARD_WEB_CACHE_TTL_HOURS = 20;

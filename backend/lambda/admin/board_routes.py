@@ -19,6 +19,7 @@ import board_research
 import board_store
 import board_stores
 import board_tools
+import board_web
 from contract_constants import (
     BOARD_CHAIR_DEFAULT,
     BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES,
@@ -211,6 +212,7 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "dataApiConfigured": board_receivables.configured(),
         "metaConfigured": board_meta.configured(),
         "storesConfigured": board_stores.configured(),
+        "webConfigured": board_web.configured(),
         "adsSpend": board_meta.ads_spend_snapshot(board_store.records_table(), settings),
     }
 
