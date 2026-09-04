@@ -1,17 +1,20 @@
 import { BoardMarkdown } from "./BoardMarkdown";
+import { BoardToolCallList } from "./BoardToolCallList";
 import { formatUsageCost, memberInitials, PHASE_LABELS, type BoardTurn } from "../../lib/boardModel";
 
 export type BoardTranscriptProps = {
   readonly turns: readonly BoardTurn[];
   readonly isRunning: boolean;
   readonly currentPhaseLabel: string;
+  readonly onOpenApproval?: (approvalId: string) => void;
 };
 
-export function BoardTranscript({ turns, isRunning, currentPhaseLabel }: BoardTranscriptProps) {
+export function BoardTranscript({ turns, isRunning, currentPhaseLabel, onOpenApproval }: BoardTranscriptProps) {
   return (
     <div className="board-transcript">
       {turns.map((t, i) => {
         const showPhase = i === 0 || turns[i - 1].phase !== t.phase;
+        const toolCalls = t.kind === "tool" ? t.data?.calls ?? [] : [];
         return (
           <div key={t.seq}>
             {showPhase ? (
@@ -27,9 +30,22 @@ export function BoardTranscript({ turns, isRunning, currentPhaseLabel }: BoardTr
                 <div className="small">
                   <span className="fw-semibold">{t.displayName}</span>
                   <span className="text-muted"> · {t.title}</span>
+                  {t.kind === "tool" ? (
+                    <span className="text-muted">
+                      {" "}· <i className="bi bi-tools" aria-hidden="true" /> looked up {toolCalls.length} thing{toolCalls.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
                   {t.usage ? <span className="text-muted"> · {formatUsageCost(t.usage.cost)}</span> : null}
                 </div>
-                <BoardMarkdown text={t.text} className="small" />
+                {t.kind === "tool" ? (
+                  toolCalls.length > 0 ? (
+                    <BoardToolCallList calls={toolCalls} onOpenApproval={onOpenApproval} className="small text-muted" />
+                  ) : (
+                    <BoardMarkdown text={t.text} className="small text-muted" />
+                  )
+                ) : (
+                  <BoardMarkdown text={t.text} className="small" />
+                )}
               </div>
             </div>
           </div>

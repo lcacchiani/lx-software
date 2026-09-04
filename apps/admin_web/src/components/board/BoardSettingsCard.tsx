@@ -138,7 +138,7 @@ export function BoardSettingsCard({
           </div>
           {!overview.repoSnapshotEnabled ? (
             <div className="form-text">
-              Set the <code>GitHubReadTokenSecretArn</code> stack parameter to a Secrets Manager secret holding a read-only token for the private repository.
+              The repository snapshot is unavailable on this stack.
             </div>
           ) : (
             <div className="small text-muted mt-1 d-flex flex-wrap gap-2 align-items-center">
@@ -156,6 +156,9 @@ export function BoardSettingsCard({
               {refreshRepoError ? <span className="text-danger">{refreshRepoError}</span> : null}
             </div>
           )}
+          <div className="form-text">
+            The snapshot is a once-a-day summary. Live lookups (issues, CI, files, security alerts) are governed per member under Tools &amp; permissions above.
+          </div>
         </div>
 
         <div className="col-12 col-lg-6">

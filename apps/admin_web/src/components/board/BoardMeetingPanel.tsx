@@ -20,11 +20,12 @@ export type BoardMeetingPanelProps = {
   readonly onCancel: (meetingId: string) => void;
   readonly isCancelling: boolean;
   readonly onClose: () => void;
+  readonly onOpenApproval?: (approvalId: string) => void;
 };
 
 type View = "minutes" | "transcript";
 
-export function BoardMeetingPanel({ data, isLoading, members, onCancel, isCancelling, onClose }: BoardMeetingPanelProps) {
+export function BoardMeetingPanel({ data, isLoading, members, onCancel, isCancelling, onClose, onOpenApproval }: BoardMeetingPanelProps) {
   const [view, setView] = useState<View>("minutes");
 
   if (isLoading || !data) {
@@ -122,7 +123,7 @@ export function BoardMeetingPanel({ data, isLoading, members, onCancel, isCancel
             reaffirmedActionCount={meeting.reaffirmedActionIds.length}
           />
         ) : (
-          <BoardTranscript turns={turns} isRunning={isRunning} currentPhaseLabel={progress.label} />
+          <BoardTranscript turns={turns} isRunning={isRunning} currentPhaseLabel={progress.label} onOpenApproval={onOpenApproval} />
         )}
 
         {meeting.contextPackHash ? (

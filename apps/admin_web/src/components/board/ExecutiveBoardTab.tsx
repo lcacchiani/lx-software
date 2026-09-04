@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { FinanceDataLoadOrError } from "../FinanceDataStatus";
 import { BoardActionsList } from "./BoardActionsList";
+import { BoardApprovalsList } from "./BoardApprovalsList";
 import { BoardBriefEditor } from "./BoardBriefEditor";
 import { BoardCharterEditor } from "./BoardCharterEditor";
 import { BoardChatOffcanvas } from "./BoardChatOffcanvas";
@@ -10,10 +11,13 @@ import { BoardMeetingPanel } from "./BoardMeetingPanel";
 import { BoardMemberEditor } from "./BoardMemberEditor";
 import { BoardMembersStrip } from "./BoardMembersStrip";
 import { BoardSettingsCard } from "./BoardSettingsCard";
+import { BoardToolsCard } from "./BoardToolsCard";
 import { BoardUpdatesComposer } from "./BoardUpdatesComposer";
 import { StartMeetingForm } from "./StartMeetingForm";
 import { useBoard, useBoardUpdates } from "../../hooks/useBoard";
 import { useBoardActions } from "../../hooks/useBoardActions";
+import { useBoardApprovals } from "../../hooks/useBoardApprovals";
+import { useBoardToolCalls, useBoardTools } from "../../hooks/useBoardTools";
 import {
   useBoardMeeting,
   useBoardMeetings,
@@ -22,14 +26,15 @@ import {
   type StartMeetingVariables,
 } from "../../hooks/useBoardMeetings";
 import { getAdminApiErrorMessage } from "../../lib/apiAdminClient";
-import type { BoardMeetingMode } from "../../lib/boardModel";
+import { effectiveToolLevel, type BoardMeetingMode } from "../../lib/boardModel";
 
-type BoardSection = "actions" | "meetings" | "members" | "brief" | "settings";
+type BoardSection = "actions" | "approvals" | "meetings" | "members" | "brief" | "settings";
 
 const CLOSED_MEETING = "__closed__";
 
 const SECTIONS: readonly { readonly id: BoardSection; readonly label: string; readonly icon: string }[] = [
   { id: "actions", label: "Next actions", icon: "bi-list-check" },
+  { id: "approvals", label: "Approvals", icon: "bi-shield-check" },
   { id: "meetings", label: "Meetings", icon: "bi-people" },
   { id: "members", label: "Board members", icon: "bi-person-badge" },
   { id: "brief", label: "Charter & brief", icon: "bi-journal-richtext" },
@@ -48,6 +53,8 @@ export function ExecutiveBoardTab() {
   const meetingsQuery = useBoardMeetings();
   const startMeeting = useStartBoardMeeting();
   const cancelMeeting = useCancelBoardMeeting();
+  const approvals = useBoardApprovals();
+  const tools = useBoardTools();
 
   const [section, setSection] = useState<BoardSection>("actions");
   const [chatPersonaId, setChatPersonaId] = useState<string | null>(null);
@@ -55,9 +62,13 @@ export function ExecutiveBoardTab() {
   // null = follow the running meeting (if any); CLOSED_MEETING = user closed the panel.
   const [selectedMeeting, setSelectedMeeting] = useState<string | null>(null);
   const [startForm, setStartForm] = useState<{ mode: BoardMeetingMode; topic: string } | null>(null);
+  const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
+  const [showCallLog, setShowCallLog] = useState(false);
+  const callLog = useBoardToolCalls(section === "settings" && showCallLog);
 
   const overview = board.overview;
   const members = overview?.members ?? [];
+  const toolsConfig = tools.data?.config ?? overview?.settings.tools;
   const runningId = overview?.runningMeeting?.meetingId ?? null;
   const selectedMeetingId =
     selectedMeeting === CLOSED_MEETING ? null : selectedMeeting ?? runningId;
@@ -75,6 +86,20 @@ export function ExecutiveBoardTab() {
     setSelectedMeeting(meetingId);
     setSection("meetings");
   }, []);
+
+  const openApproval = useCallback((approvalId: string) => {
+    setChatPersonaId(null);
+    setFocusApprovalId(approvalId);
+    setSection("approvals");
+  }, []);
+
+  const chatToolLabels = useMemo(() => {
+    if (!chatPersonaId || !toolsConfig || !overview?.toolsEnabled) return [];
+    const registry = tools.data?.registry ?? [];
+    return registry
+      .filter((t) => effectiveToolLevel(toolsConfig, t.id, chatPersonaId) !== "off")
+      .map((t) => t.label);
+  }, [chatPersonaId, toolsConfig, overview?.toolsEnabled, tools.data?.registry]);
 
   const runStandup = () => {
     startMeeting.mutate(
@@ -131,6 +156,9 @@ export function ExecutiveBoardTab() {
                   {s.id === "actions" && overview.openActionCount > 0 ? (
                     <span className="badge rounded-pill text-bg-light border ms-2">{overview.openActionCount}</span>
                   ) : null}
+                  {s.id === "approvals" && overview.pendingApprovalCount > 0 ? (
+                    <span className="badge rounded-pill text-bg-warning ms-2">{overview.pendingApprovalCount}</span>
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -143,6 +171,19 @@ export function ExecutiveBoardTab() {
               isLoading={actions.isLoading}
               onUpdate={(vars) => actions.update.mutate(vars)}
               onOpenMeeting={openMeeting}
+            />
+          ) : null}
+
+          {section === "approvals" ? (
+            <BoardApprovalsList
+              approvals={approvals.approvals}
+              members={members}
+              isLoading={approvals.isLoading}
+              isDeciding={approvals.decide.isPending}
+              errorMessage={errorText(approvals.error) ?? errorText(approvals.decide.error)}
+              onDecide={(vars) => approvals.decide.mutate(vars)}
+              onOpenMeeting={openMeeting}
+              focusApprovalId={focusApprovalId}
             />
           ) : null}
 
@@ -179,6 +220,7 @@ export function ExecutiveBoardTab() {
                   onCancel={(id) => cancelMeeting.mutate(id)}
                   isCancelling={cancelMeeting.isPending}
                   onClose={() => setSelectedMeeting(CLOSED_MEETING)}
+                  onOpenApproval={openApproval}
                 />
               ) : null}
               {cancelMeeting.error ? <div className="alert alert-danger py-2 small">{errorText(cancelMeeting.error)}</div> : null}
@@ -233,22 +275,44 @@ export function ExecutiveBoardTab() {
           ) : null}
 
           {section === "settings" ? (
-            <BoardSettingsCard
-              key={`settings-${overview.settings.updatedAt ?? ""}`}
-              overview={overview}
-              members={members}
-              isSaving={board.saveSettings.isPending}
-              errorMessage={errorText(board.saveSettings.error)}
-              onSave={(patch) => board.saveSettings.mutate(patch)}
-              onRefreshRepo={() => board.refreshRepoSnapshot.mutate()}
-              isRefreshingRepo={board.refreshRepoSnapshot.isPending}
-              refreshRepoError={errorText(board.refreshRepoSnapshot.error)}
-            />
+            <>
+              {tools.data ? (
+                <BoardToolsCard
+                  key={`tools-${JSON.stringify(tools.data.config)}`}
+                  payload={tools.data}
+                  members={members}
+                  isSaving={tools.save.isPending}
+                  errorMessage={errorText(tools.save.error)}
+                  onSave={(patch) => tools.save.mutate(patch)}
+                  callLog={callLog.data}
+                  isCallLogLoading={callLog.isLoading}
+                  showCallLog={showCallLog}
+                  onToggleCallLog={setShowCallLog}
+                />
+              ) : tools.isError ? (
+                <div className="alert alert-danger py-2 small">{errorText(tools.error)}</div>
+              ) : (
+                <div className="card shadow-sm mb-4"><div className="card-body text-muted small">Loading tool permissions…</div></div>
+              )}
+              <BoardSettingsCard
+                key={`settings-${overview.settings.updatedAt ?? ""}`}
+                overview={overview}
+                members={members}
+                isSaving={board.saveSettings.isPending}
+                errorMessage={errorText(board.saveSettings.error)}
+                onSave={(patch) => board.saveSettings.mutate(patch)}
+                onRefreshRepo={() => board.refreshRepoSnapshot.mutate()}
+                isRefreshingRepo={board.refreshRepoSnapshot.isPending}
+                refreshRepoError={errorText(board.refreshRepoSnapshot.error)}
+              />
+            </>
           ) : null}
 
           <BoardChatOffcanvas
             member={chatMember}
             isChair={chatMember?.id === overview.settings.defaultChair}
+            toolLabels={chatToolLabels}
+            onOpenApproval={openApproval}
             onClose={() => setChatPersonaId(null)}
             onStartMeeting={(mode, topic) => {
               setChatPersonaId(null);
