@@ -54,6 +54,7 @@ export function BoardToolsCard({
     mailDomain,
     searchConfigured,
     dataApiConfigured,
+    metaConfigured,
   } = payload;
   const [draft, setDraft] = useState<BoardToolsConfig>(config);
   const [allowListText, setAllowListText] = useState(() => config.allowList.join("\n"));
@@ -223,6 +224,19 @@ export function BoardToolsCard({
                         <div className="small text-warning mt-1">
                           No Brave Search key (`SearchApiKeySecretArn`). Queries fail until one is set (or OpenRouter
                           `:online` is used as a fallback).
+                        </div>
+                      )
+                    ) : null}
+                    {tool.id === "meta" ? (
+                      metaConfigured ? (
+                        <div className="small text-muted mt-1">
+                          Webhook at <code>/webhooks/meta</code>. WhatsApp{" "}
+                          <strong>act</strong> only inside the 24-hour window, to the allow-list.
+                        </div>
+                      ) : (
+                        <div className="small text-warning mt-1">
+                          Set <code>MetaBoardTokenSecretArn</code> and the Page / WhatsApp ids.
+                          Enable coexistence so the owner&apos;s phone keeps the number.
                         </div>
                       )
                     ) : null}
