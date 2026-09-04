@@ -92,6 +92,7 @@ export type BoardToolsPayload = {
   readonly searchConfigured?: boolean;
   readonly dataApiConfigured?: boolean;
   readonly metaConfigured?: boolean;
+  readonly storesConfigured?: boolean;
 };
 
 export type BoardToolCallStatus = "ok" | "error" | "pending_approval";
