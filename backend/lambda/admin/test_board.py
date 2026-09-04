@@ -158,35 +158,98 @@ class FakeTable:
 
     @staticmethod
     def _evaluate(expr: str, item: dict[str, Any], names: dict[str, str], values: dict[str, Any]) -> bool:
-        def _exists(m: re.Match[str]) -> str:
-            attr = names.get(m.group(2), m.group(2))
-            present = attr in item
-            return "1 = 1" if (present if m.group(1) == "attribute_exists" else not present) else "1 = 2"
+        """Evaluate the subset of DynamoDB condition expressions the code under test uses.
 
-        expr = re.sub(r"(attribute_exists|attribute_not_exists)\((#?\w+)\)", _exists, expr)
-        tokens = re.findall(r"#\w+|:\w+|<>|<=|>=|[<>=()]|\w+", expr)
-        py: list[str] = []
-        for tok in tokens:
+        Grammar: ``OR`` < ``AND`` < ``NOT`` < comparison / function / parenthesised group.
+        A comparison involving a missing attribute (``None``) is false, matching DynamoDB.
+        """
+        tokens = re.findall(r"#\w+|:\w+|<>|<=|>=|[<>=(),]|\w+", expr)
+        pos = 0
+
+        def peek() -> str | None:
+            return tokens[pos] if pos < len(tokens) else None
+
+        def take() -> str:
+            nonlocal pos
+            tok = tokens[pos]
+            pos += 1
+            return tok
+
+        def expect(tok: str) -> None:
+            got = take()
+            if got != tok:
+                raise ValueError(f"expected {tok!r}, got {got!r} in {expr!r}")
+
+        def attr_name(tok: str) -> str:
+            return names[tok] if tok.startswith("#") else tok
+
+        def operand() -> Any:
+            tok = take()
             if tok.isdigit():
-                py.append(tok)
-            elif tok.startswith("#"):
-                py.append(f'_i.get("{names[tok]}")')
-            elif tok.startswith(":"):
-                py.append(f'_v["{tok}"]')
-            elif tok in ("AND", "OR", "NOT"):
-                py.append(tok.lower())
-            elif tok == "=":
-                py.append("==")
-            elif tok == "<>":
-                py.append("!=")
-            elif tok in ("<", ">", "<=", ">=", "(", ")"):
-                py.append(tok)
-            else:
-                py.append(f'_i.get("{tok}")')
-        try:
-            return bool(eval(" ".join(py), {"__builtins__": {}}, {"_i": item, "_v": values}))  # noqa: S307
-        except TypeError:
-            return False
+                return int(tok)
+            if tok.startswith(":"):
+                return values[tok]
+            return item.get(attr_name(tok))
+
+        def compare(op: str, left: Any, right: Any) -> bool:
+            if op == "=":
+                return left == right
+            if op == "<>":
+                return left != right
+            if left is None or right is None:
+                return False
+            try:
+                return {"<": left < right, ">": left > right, "<=": left <= right, ">=": left >= right}[op]
+            except TypeError:
+                return False
+
+        def primary() -> bool:
+            tok = peek()
+            if tok == "(":
+                take()
+                result = or_expr()
+                expect(")")
+                return result
+            if tok == "NOT":
+                take()
+                return not primary()
+            if tok in ("attribute_exists", "attribute_not_exists"):
+                take()
+                expect("(")
+                present = attr_name(take()) in item
+                expect(")")
+                return present if tok == "attribute_exists" else not present
+            if tok == "begins_with":
+                take()
+                expect("(")
+                subject = operand()
+                expect(",")
+                prefix = operand()
+                expect(")")
+                return isinstance(subject, str) and isinstance(prefix, str) and subject.startswith(prefix)
+            left = operand()
+            if peek() in ("=", "<>", "<", ">", "<=", ">="):
+                return compare(take(), left, operand())
+            return bool(left)
+
+        def and_expr() -> bool:
+            result = primary()
+            while peek() == "AND":
+                take()
+                result = primary() and result
+            return result
+
+        def or_expr() -> bool:
+            result = and_expr()
+            while peek() == "OR":
+                take()
+                result = and_expr() or result
+            return result
+
+        result = or_expr()
+        if pos != len(tokens):
+            raise ValueError(f"unexpected trailing tokens in {expr!r}")
+        return result
 
     @staticmethod
     def _conditional_error() -> ClientError:
