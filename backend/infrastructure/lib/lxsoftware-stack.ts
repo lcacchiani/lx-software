@@ -1047,22 +1047,64 @@ export class LxsoftwareStack extends cdk.Stack {
     gaSaPolicy.attachToRole(adminFn.role!);
     (gaSaPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasGaSa;
 
-    // Executive Board aws + security read tools (plan §8). Cost Explorer and
-    // Health are account-scoped APIs; CloudWatch / Security Hub / Analyzer /
-    // Cognito are filtered in code to the siutindei stacks and this user pool.
+    // Executive Board aws + security read tools (plan §8). Each statement is
+    // scoped as tightly as the IAM action allows (see the Service
+    // Authorization Reference); the handler additionally filters CloudWatch
+    // results to the siutindei stacks in code.
     new iam.Policy(this, "AdminBoardAwsReadPolicy", {
       statements: [
+        // Cost Explorer, Health, and the CloudWatch metrics/alarm-list APIs
+        // do not support resource-level permissions, so "*" is the only
+        // valid resource for these actions.
         new iam.PolicyStatement({
+          sid: "AccountScopedReadApis",
           actions: [
             "ce:GetCostAndUsage",
             "health:DescribeEvents",
             "cloudwatch:DescribeAlarms",
             "cloudwatch:GetMetricData",
-            "securityhub:GetFindings",
-            "access-analyzer:ListAnalyzers",
-            "access-analyzer:ListFindings",
-            "cognito-idp:DescribeUserPool",
           ],
+          resources: ["*"],
+        }),
+        // board_security.py only calls describe_user_pool on USER_POOL_ID,
+        // which is this stack's pool.
+        new iam.PolicyStatement({
+          sid: "CognitoDescribeOwnUserPool",
+          actions: ["cognito-idp:DescribeUserPool"],
+          resources: [this.auth.userPool.userPoolArn],
+        }),
+        // GetFindings is authorised against the regional `hub/default`
+        // resource; the handler uses the Lambda's own region.
+        new iam.PolicyStatement({
+          sid: "SecurityHubGetFindings",
+          actions: ["securityhub:GetFindings"],
+          resources: [
+            cdk.Stack.of(this).formatArn({
+              service: "securityhub",
+              resource: "hub",
+              resourceName: "default",
+              arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME,
+            }),
+          ],
+        }),
+        // ListFindings is scoped to the analyzer ARN (the handler picks the
+        // first analyzer in this region); ListAnalyzers has no resource type
+        // and therefore must stay on "*".
+        new iam.PolicyStatement({
+          sid: "AccessAnalyzerListFindings",
+          actions: ["access-analyzer:ListFindings"],
+          resources: [
+            cdk.Stack.of(this).formatArn({
+              service: "access-analyzer",
+              resource: "analyzer",
+              resourceName: "*",
+              arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME,
+            }),
+          ],
+        }),
+        new iam.PolicyStatement({
+          sid: "AccessAnalyzerListAnalyzers",
+          actions: ["access-analyzer:ListAnalyzers"],
           resources: ["*"],
         }),
       ],
@@ -1357,6 +1399,26 @@ export class LxsoftwareStack extends cdk.Stack {
         claimGroups: "$context.authorizer.claims.cognito:groups",
         claimTokenUse: "$context.authorizer.claims.token_use",
       }),
+    };
+
+    // Stage-level throttling. The admin SPA is a handful of concurrent
+    // operators polling a few endpoints (parse-job status every couple of
+    // seconds, board chat, dashboards), so 50 req/s sustained with a 100
+    // burst is far above normal use while still capping a runaway client.
+    // The unauthenticated Meta webhook routes get a much tighter per-route
+    // limit so an anonymous caller cannot drive Lambda invocations at the
+    // stage rate; Meta retries delivery on 429, so brief throttling is safe.
+    defaultStage.defaultRouteSettings = {
+      throttlingRateLimit: 50,
+      throttlingBurstLimit: 100,
+    };
+    const webhookRouteThrottle = {
+      ThrottlingRateLimit: 10,
+      ThrottlingBurstLimit: 20,
+    };
+    defaultStage.routeSettings = {
+      "POST /webhooks/meta": webhookRouteThrottle,
+      "GET /webhooks/meta": webhookRouteThrottle,
     };
 
     this.httpApi.addRoutes({

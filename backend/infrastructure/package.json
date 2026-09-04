@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "test": "jest",
     "cdk": "cdk",
     "synth": "cdk synth",
     "deploy": "cdk deploy"
@@ -21,8 +22,11 @@
     "fast-uri": "^3.1.2"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.9.5",
     "aws-cdk": "^2.1139.0",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
