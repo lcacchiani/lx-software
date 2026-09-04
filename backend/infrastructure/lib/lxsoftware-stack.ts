@@ -286,6 +286,46 @@ export class LxsoftwareStack extends cdk.Stack {
       default: "",
       description: "Meta ad account id (with or without act_ prefix).",
     });
+    const appStoreConnectKeySecretArn = new cdk.CfnParameter(
+      this,
+      "AppStoreConnectKeySecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the Secrets Manager secret holding the App Store Connect API key JSON (keyId, issuerId, privateKey, optional appId) for Executive Board stores tools.",
+      }
+    );
+    const googlePlayServiceAccountSecretArn = new cdk.CfnParameter(
+      this,
+      "GooglePlayServiceAccountSecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the Secrets Manager secret holding the Google Play service-account JSON (plus optional packageName) for Executive Board stores tools.",
+      }
+    );
+    const appStoreConnectAppId = new cdk.CfnParameter(
+      this,
+      "AppStoreConnectAppId",
+      {
+        type: "String",
+        default: "",
+        description:
+          "App Store Connect app id (numeric). May also live inside the AppStoreConnectKey secret.",
+      }
+    );
+    const googlePlayPackageName = new cdk.CfnParameter(
+      this,
+      "GooglePlayPackageName",
+      {
+        type: "String",
+        default: "",
+        description:
+          "Google Play package name (e.g. com.siutindei.app). May also live inside the service-account secret.",
+      }
+    );
     const boardAwsStackPrefix = new cdk.CfnParameter(
       this,
       "BoardAwsStackPrefix",
@@ -685,6 +725,10 @@ export class LxsoftwareStack extends cdk.Stack {
         META_IG_USER_ID: metaIgUserId.valueAsString,
         META_WA_PHONE_NUMBER_ID: metaWaPhoneNumberId.valueAsString,
         META_AD_ACCOUNT_ID: metaAdAccountId.valueAsString,
+        APP_STORE_CONNECT_KEY_SECRET_ARN: appStoreConnectKeySecretArn.valueAsString,
+        GOOGLE_PLAY_SERVICE_ACCOUNT_SECRET_ARN: googlePlayServiceAccountSecretArn.valueAsString,
+        APP_STORE_CONNECT_APP_ID: appStoreConnectAppId.valueAsString,
+        GOOGLE_PLAY_PACKAGE_NAME: googlePlayPackageName.valueAsString,
         // BOARD_MAIL_DOMAIN / _RAW_SEGMENT / _INBOUND_ADDRESS are added with the
         // inbound-mail resources below (they depend on InboundMailDomain).
         BOARD_MAIL_SENDING_ENABLED: boardMailSendingEnabled.valueAsString,
@@ -924,6 +968,36 @@ export class LxsoftwareStack extends cdk.Stack {
     });
     metaAppSecretPolicy.attachToRole(adminFn.role!);
     (metaAppSecretPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasMetaAppSecret;
+
+    const ascKeyArnValue = appStoreConnectKeySecretArn.valueAsString;
+    const hasAscKey = new cdk.CfnCondition(this, "HasAppStoreConnectKeySecret", {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(ascKeyArnValue, "")),
+    });
+    const ascKeyPolicy = new iam.Policy(this, "AdminAppStoreConnectKeySecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [ascKeyArnValue],
+        }),
+      ],
+    });
+    ascKeyPolicy.attachToRole(adminFn.role!);
+    (ascKeyPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasAscKey;
+
+    const playSaArnValue = googlePlayServiceAccountSecretArn.valueAsString;
+    const hasPlaySa = new cdk.CfnCondition(this, "HasGooglePlayServiceAccountSecret", {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(playSaArnValue, "")),
+    });
+    const playSaPolicy = new iam.Policy(this, "AdminGooglePlayServiceAccountSecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [playSaArnValue],
+        }),
+      ],
+    });
+    playSaPolicy.attachToRole(adminFn.role!);
+    (playSaPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasPlaySa;
 
     // Executive Board aws + security read tools (plan §8). Cost Explorer and
     // Health are account-scoped APIs; CloudWatch / Security Hub / Analyzer /
