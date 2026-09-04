@@ -190,3 +190,39 @@ body {
   max-height: 28rem;
   overflow-y: auto;
 }
+
+.board-tool-calls li + li {
+  margin-top: 0.2rem;
+}
+
+.board-tools-matrix th,
+.board-tools-matrix td {
+  vertical-align: top;
+}
+
+.board-tools-cell {
+  min-width: 5.5rem;
+}
+
+.board-tools-cell-off {
+  color: var(--bs-secondary-color);
+}
+
+.board-tools-cell-propose {
+  border-color: var(--bs-warning-border-subtle);
+  background-color: var(--bs-warning-bg-subtle);
+}
+
+.board-tools-cell-act {
+  border-color: var(--bs-success-border-subtle);
+  background-color: var(--bs-success-bg-subtle);
+}
+
+.board-approval-focus {
+  box-shadow: inset 4px 0 0 var(--bs-warning);
+  padding-left: 0.75rem !important;
+}
+
+.board-approval-args th {
+  max-width: 10rem;
+}

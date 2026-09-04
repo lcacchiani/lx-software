@@ -24,6 +24,7 @@ import board_budget
 import board_context
 import board_personas
 import board_store
+import board_tools
 from contract_constants import (
     BOARD_ACTION_EFFORTS,
     BOARD_ACTION_PRIORITIES,
@@ -32,6 +33,7 @@ from contract_constants import (
     BOARD_MAX_TOPIC_LEN,
     BOARD_MEETING_MODES,
     BOARD_MEETING_STUCK_SECONDS,
+    BOARD_MEETING_TOOL_LOOP_MAX_SECONDS,
     BOARD_PHASE_OPENROUTER_TIMEOUT_SECONDS,
     BOARD_REPO_SNAPSHOT_STALE_SECONDS,
 )
@@ -391,6 +393,60 @@ def _append_turn(table: Any, doc: dict[str, Any], turn: dict[str, Any]) -> dict[
     return out
 
 
+def _member_call(
+    table: Any,
+    doc: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+    phase: str,
+    messages: list[dict[str, Any]],
+    json_mode: bool,
+    max_tokens: int,
+    temperature: float = 0.4,
+    tag: str,
+) -> board_tools.ToolLoopResult:
+    """One member statement, with that member's tools available."""
+    ctx = board_tools.ToolContext(
+        table=table,
+        settings=board_store.load_settings(table),
+        persona_id=str(profile["id"]),
+        display_name=str(profile.get("displayName") or profile.get("shortName") or profile["id"]),
+        kind="meeting",
+        meeting_id=str(doc["meetingId"]),
+        phase=phase,
+    )
+    return board_tools.run_tool_loop(
+        ctx=ctx,
+        messages=messages,
+        model=_meeting_model(doc),
+        timeout=BOARD_PHASE_OPENROUTER_TIMEOUT_SECONDS,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        json_mode=json_mode,
+        tag=tag,
+        max_seconds=BOARD_MEETING_TOOL_LOOP_MAX_SECONDS,
+    )
+
+
+def _tool_turn(profile: dict[str, Any], phase: str, calls: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Transcript entry listing what a member looked up or proposed before speaking."""
+    if not calls:
+        return None
+    lines = []
+    for c in calls:
+        marker = {"ok": "✓", "pending_approval": "⧗ proposed", "error": "✗"}.get(str(c.get("status")), "•")
+        lines.append(f"- {marker} {c.get('summary')}" + (f" — {c['error']}" if c.get("error") else ""))
+    return {
+        "phase": phase,
+        "kind": "tool",
+        "personaId": profile["id"],
+        "displayName": profile["displayName"],
+        "title": profile["title"],
+        "text": "\n".join(lines),
+        "data": {"calls": calls},
+    }
+
+
 def _phase_agenda(table: Any, doc: dict[str, Any]) -> dict[str, Any]:
     profiles, charter = _profiles(table)
     chair_id = str(doc.get("chair") or BOARD_CHAIR_DEFAULT)
@@ -480,7 +536,7 @@ def _phase_positions(table: Any, doc: dict[str, Any]) -> dict[str, Any]:
     agenda_text = _agenda_text(doc)
     pack_text = str(doc.get("contextPackText") or "")
 
-    def _one(persona_id: str) -> dict[str, Any]:
+    def _one(persona_id: str) -> list[dict[str, Any]]:
         profile = profiles[persona_id]
         prompt = (
             "Today's agenda:\n"
@@ -498,28 +554,38 @@ def _phase_positions(table: Any, doc: dict[str, Any]) -> dict[str, Any]:
             {"role": "system", "content": pack_text},
             {"role": "user", "content": prompt},
         ]
-        completion = _call(table, doc, messages=messages, json_mode=True, max_tokens=1400, tag="board_meeting_position")
+        result = _member_call(
+            table, doc, profile=profile, phase="positions", messages=messages, json_mode=True, max_tokens=1400, tag="board_meeting_position"
+        )
         try:
-            data = normalize_positions(parse_json_object_text(completion.text), agenda_len=len(doc.get("agenda") or []))
+            data = normalize_positions(parse_json_object_text(result.text), agenda_len=len(doc.get("agenda") or []))
         except OpenRouterError:
-            data = {"items": [{"agendaIndex": 1, "position": _clean(completion.text, MAX_TEXT), "risks": [], "proposedActions": []}]}
-        return {
-            "phase": "positions",
-            "personaId": persona_id,
-            "displayName": profile["displayName"],
-            "title": profile["title"],
-            "text": render_position_text(data, doc.get("agenda") or []),
-            "data": data,
-            "usage": completion.usage,
-            "model": completion.model,
-        }
+            data = {"items": [{"agendaIndex": 1, "position": _clean(result.text, MAX_TEXT), "risks": [], "proposedActions": []}]}
+        turns: list[dict[str, Any]] = []
+        tool_turn = _tool_turn(profile, "positions", result.calls)
+        if tool_turn:
+            turns.append(tool_turn)
+        turns.append(
+            {
+                "phase": "positions",
+                "personaId": persona_id,
+                "displayName": profile["displayName"],
+                "title": profile["title"],
+                "text": render_position_text(data, doc.get("agenda") or []),
+                "data": data,
+                "usage": result.usage,
+                "model": result.model,
+            }
+        )
+        return turns
 
     order = [str(p["id"]) for p in doc.get("roster") or []] or list(profiles)
     with ThreadPoolExecutor(max_workers=max(1, BOARD_MAX_PARALLEL_PERSONA_CALLS)) as pool:
         results = list(pool.map(_one, order))
     out = doc
-    for turn in results:
-        out = _append_turn(table, out, turn)
+    for turns in results:
+        for turn in turns:
+            out = _append_turn(table, out, turn)
     return out
 
 
@@ -616,7 +682,7 @@ def _turns_text(table: Any, doc: dict[str, Any], *, phases: tuple[str, ...]) -> 
     turns = board_store.list_turns(table, str(doc["meetingId"]))
     parts = []
     for t in turns:
-        if t.get("phase") not in phases:
+        if t.get("phase") not in phases or t.get("kind") == "tool":
             continue
         parts.append(f"### {t.get('displayName')} ({t.get('title')}) — {t.get('phase')}\n{t.get('text')}")
     return "\n\n".join(parts)
@@ -668,7 +734,7 @@ def _phase_challenge(table: Any, doc: dict[str, Any]) -> dict[str, Any]:
     if not asked:
         return out
 
-    def _rebuttal(persona_id: str) -> dict[str, Any]:
+    def _rebuttal(persona_id: str) -> list[dict[str, Any]]:
         profile = profiles[persona_id]
         qs = "\n".join(f"- {c['topic']}: {c['question']}" for c in asked[persona_id])
         messages_r = [
@@ -682,22 +748,32 @@ def _phase_challenge(table: Any, doc: dict[str, Any]) -> dict[str, Any]:
                 ),
             },
         ]
-        comp = _call(table, doc, messages=messages_r, json_mode=False, max_tokens=500, tag="board_meeting_rebuttal")
-        return {
-            "phase": "challenge",
-            "personaId": persona_id,
-            "displayName": profile["displayName"],
-            "title": profile["title"],
-            "text": _clean(comp.text, MAX_TEXT),
-            "usage": comp.usage,
-            "model": comp.model,
-        }
+        result = _member_call(
+            table, doc, profile=profile, phase="challenge", messages=messages_r, json_mode=False, max_tokens=500, tag="board_meeting_rebuttal"
+        )
+        turns: list[dict[str, Any]] = []
+        tool_turn = _tool_turn(profile, "challenge", result.calls)
+        if tool_turn:
+            turns.append(tool_turn)
+        turns.append(
+            {
+                "phase": "challenge",
+                "personaId": persona_id,
+                "displayName": profile["displayName"],
+                "title": profile["title"],
+                "text": _clean(result.text, MAX_TEXT),
+                "usage": result.usage,
+                "model": result.model,
+            }
+        )
+        return turns
 
     order = [pid for pid in ([str(p["id"]) for p in doc.get("roster") or []] or list(profiles)) if pid in asked]
     with ThreadPoolExecutor(max_workers=max(1, BOARD_MAX_PARALLEL_PERSONA_CALLS)) as pool:
         results = list(pool.map(_rebuttal, order))
-    for turn in results:
-        out = _append_turn(table, out, turn)
+    for turns in results:
+        for turn in turns:
+            out = _append_turn(table, out, turn)
     return out
 
 

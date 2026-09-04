@@ -200,9 +200,16 @@ export class LxsoftwareStack extends cdk.Stack {
         type: "String",
         default: "",
         description:
-          "ARN of the Secrets Manager secret holding a fine-grained, read-only GitHub token for the private siutindei repository (Executive Board context). Leave blank to disable the repository snapshot.",
+          "ARN of the Secrets Manager secret holding a fine-grained GitHub token for the siutindei repository (Executive Board). The repository is public, so reads work without it; the token raises the rate limit and is required for the board's GitHub write tools (issues: write) and security alerts (security_events: read).",
       }
     );
+    const boardToolsEnabled = new cdk.CfnParameter(this, "BoardToolsEnabled", {
+      type: "String",
+      default: "true",
+      allowedValues: ["true", "false"],
+      description:
+        "Kill switch for Executive Board tool calls (GitHub, board records). Set to false to stop every tool call without touching the admin settings.",
+    });
     const boardGitHubRepo = new cdk.CfnParameter(this, "BoardGitHubRepo", {
       type: "String",
       default: "lx-software-ltd/siutindei",
@@ -555,6 +562,7 @@ export class LxsoftwareStack extends cdk.Stack {
         BOARD_CHAT_MODEL: boardChatModel.valueAsString,
         BOARD_MEETING_MODEL: boardMeetingModel.valueAsString,
         BOARD_DEEP_DIVE_MODEL: boardDeepDiveModel.valueAsString,
+        BOARD_TOOLS_ENABLED: boardToolsEnabled.valueAsString,
         ADMIN_WEB_ORIGIN: cdk.Fn.join("", [
           "https://",
           adminWebDomainName.valueAsString,
@@ -1119,6 +1127,27 @@ export class LxsoftwareStack extends cdk.Stack {
       },
       {
         path: "/siu-tin-dei/board/repo-snapshot/refresh",
+        methods: [apigwv2.HttpMethod.POST],
+      },
+      // Tools and permissions (docs/architecture/executive-board-tools-plan.md)
+      {
+        path: "/siu-tin-dei/board/tools",
+        methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT],
+      },
+      {
+        path: "/siu-tin-dei/board/tools/calls",
+        methods: [apigwv2.HttpMethod.GET],
+      },
+      {
+        path: "/siu-tin-dei/board/approvals",
+        methods: [apigwv2.HttpMethod.GET],
+      },
+      {
+        path: "/siu-tin-dei/board/approvals/{approvalId}/approve",
+        methods: [apigwv2.HttpMethod.POST],
+      },
+      {
+        path: "/siu-tin-dei/board/approvals/{approvalId}/reject",
         methods: [apigwv2.HttpMethod.POST],
       },
     ];

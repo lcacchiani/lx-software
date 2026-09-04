@@ -18,6 +18,8 @@ Key layout (``pk`` / ``sk``):
 - ``BOARD#<b>#chatjob#<jobId>`` / ``META``      — chat jobs (TTL)
 - ``BOARD#<b>#repo-snapshot`` / ``STATE``       — cached GitHub context
 - ``BOARD#<b>#usage#<yyyy-mm-dd>`` / ``STATE``  — daily token / cost totals
+- ``BOARD#<b>#approvals`` / ``APPROVAL#<id>``   — proposed tool actions awaiting the owner
+- ``BOARD#<b>#toolcalls`` / ``CALL#<ts>#<id>``  — audit log of every tool call (TTL)
 """
 
 from __future__ import annotations
@@ -32,10 +34,17 @@ from botocore.exceptions import ClientError
 
 import runtime
 from contract_constants import (
+    BOARD_APPROVAL_TTL_DAYS,
     BOARD_CHAIR_DEFAULT,
     BOARD_CHAT_JOB_TTL_SECONDS,
     BOARD_DEFAULT_DAILY_BUDGET_USD,
     BOARD_KEY,
+    BOARD_PERSONA_IDS,
+    BOARD_TOOL_CALL_LOG_TTL_DAYS,
+    BOARD_TOOL_DEFAULT_GLOBAL_MODE,
+    BOARD_TOOL_DEFINITIONS,
+    BOARD_TOOL_GLOBAL_MODES,
+    BOARD_TOOL_LEVELS,
 )
 from ddb_convert import _from_ddb_nested, _to_ddb_nested
 from http_common import _utc_iso_z
@@ -104,6 +113,55 @@ def _query_all(table: Any, **kwargs: Any) -> list[dict[str, Any]]:
 # Settings
 # ---------------------------------------------------------------------------
 
+def default_tool_matrix() -> dict[str, dict[str, str]]:
+    """Contract defaults: ``{toolId: {personaId: level}}``."""
+    out: dict[str, dict[str, str]] = {}
+    for tool in BOARD_TOOL_DEFINITIONS:
+        defaults = tool.get("defaults") or {}
+        out[str(tool["id"])] = {
+            pid: str(defaults.get(pid) or "off") for pid in BOARD_PERSONA_IDS
+        }
+    return out
+
+
+def default_tools_config() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "globalMode": BOARD_TOOL_DEFAULT_GLOBAL_MODE,
+        "matrix": default_tool_matrix(),
+    }
+
+
+def normalize_tools_config(raw: Any) -> dict[str, Any]:
+    """Merge a stored / submitted tools block over the contract defaults.
+
+    Unknown tools and personas are dropped; unknown levels fall back to the
+    default for that cell; levels above a tool's ``maxLevel`` are clamped.
+    """
+    out = default_tools_config()
+    if not isinstance(raw, dict):
+        return out
+    if "enabled" in raw:
+        out["enabled"] = bool(raw.get("enabled"))
+    mode = raw.get("globalMode")
+    if isinstance(mode, str) and mode in BOARD_TOOL_GLOBAL_MODES:
+        out["globalMode"] = mode
+    matrix = raw.get("matrix")
+    if isinstance(matrix, dict):
+        max_levels = {str(t["id"]): str(t.get("maxLevel") or "act") for t in BOARD_TOOL_DEFINITIONS}
+        for tool_id, cells in matrix.items():
+            if tool_id not in out["matrix"] or not isinstance(cells, dict):
+                continue
+            cap = BOARD_TOOL_LEVELS.index(max_levels[tool_id])
+            for pid, level in cells.items():
+                if pid not in out["matrix"][tool_id]:
+                    continue
+                if isinstance(level, str) and level in BOARD_TOOL_LEVELS:
+                    idx = min(BOARD_TOOL_LEVELS.index(level), cap)
+                    out["matrix"][tool_id][pid] = BOARD_TOOL_LEVELS[idx]
+    return out
+
+
 def default_settings() -> dict[str, Any]:
     return {
         "schedule": {"morningEnabled": False, "eveningEnabled": False},
@@ -113,6 +171,7 @@ def default_settings() -> dict[str, Any]:
         "shareRepoSnapshot": False,
         "models": {"chat": "", "standup": "", "deepDive": ""},
         "dailyBudgetUsd": BOARD_DEFAULT_DAILY_BUDGET_USD,
+        "tools": default_tools_config(),
         "updatedAt": None,
     }
 
@@ -136,6 +195,7 @@ def load_settings(table: Any) -> dict[str, Any]:
         merged["models"] = {
             k: str(models.get(k) or "") for k in ("chat", "standup", "deepDive")
         }
+    merged["tools"] = normalize_tools_config(stored.get("tools"))
     return merged
 
 
@@ -532,6 +592,92 @@ def load_usage_day(table: Any, date_iso: str | None = None) -> dict[str, Any]:
         "cost": float(stored.get("cost") or 0.0),
         "calls": int(stored.get("calls") or 0),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tool approvals and audit log
+# ---------------------------------------------------------------------------
+
+def approval_key(approval_id: str) -> dict[str, str]:
+    return {"pk": board_pk("approvals"), "sk": f"APPROVAL#{approval_id}"}
+
+
+def put_approval(table: Any, doc: dict[str, Any]) -> None:
+    table.put_item(
+        Item={
+            **approval_key(str(doc["approvalId"])),
+            "expiresAt": int(time.time()) + BOARD_APPROVAL_TTL_DAYS * 86400,
+            **_to_ddb_nested(doc),
+        }
+    )
+
+
+def get_approval(table: Any, approval_id: str) -> dict[str, Any] | None:
+    res = table.get_item(Key=approval_key(approval_id))
+    item = res.get("Item") if isinstance(res, dict) else None
+    if not item:
+        return None
+    doc = _from_ddb_nested(_strip_keys(item))
+    return doc if isinstance(doc, dict) else None
+
+
+def list_approvals(table: Any) -> list[dict[str, Any]]:
+    items = _query_all(
+        table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": board_pk("approvals"), ":prefix": "APPROVAL#"},
+    )
+    out = [{k: v for k, v in _strip_keys(i).items() if k != "expiresAt"} for i in items]
+    out.sort(key=lambda a: str(a.get("createdAt") or ""), reverse=True)
+    return out
+
+
+def claim_approval_decision(table: Any, approval_id: str, *, status: str) -> bool:
+    """Move a pending approval to ``status`` exactly once."""
+    try:
+        table.update_item(
+            Key=approval_key(approval_id),
+            UpdateExpression="SET #st = :next, updatedAt = :now",
+            ConditionExpression="#st = :pending",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":next": status,
+                ":pending": "pending",
+                ":now": now_iso(),
+            },
+        )
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
+
+
+def add_tool_call(table: Any, doc: dict[str, Any]) -> dict[str, Any]:
+    created = str(doc.get("createdAt") or now_iso())
+    call_id = str(doc.get("callId") or new_id())
+    full = {**doc, "callId": call_id, "createdAt": created}
+    table.put_item(
+        Item={
+            "pk": board_pk("toolcalls"),
+            "sk": f"CALL#{created}#{call_id}",
+            "expiresAt": int(time.time()) + BOARD_TOOL_CALL_LOG_TTL_DAYS * 86400,
+            **_to_ddb_nested(full),
+        }
+    )
+    return full
+
+
+def list_tool_calls(table: Any, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Newest first."""
+    items = _query_all(
+        table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": board_pk("toolcalls"), ":prefix": "CALL#"},
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [{k: v for k, v in _strip_keys(i).items() if k != "expiresAt"} for i in items[:limit]]
 
 
 def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:

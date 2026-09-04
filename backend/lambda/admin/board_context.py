@@ -20,6 +20,7 @@ MAX_UPDATE_CHARS = 1500
 MAX_OPEN_ACTIONS = 40
 MAX_CLOSED_ACTIONS = 20
 MAX_DECISIONS = 15
+MAX_APPROVALS = 10
 MAX_MINUTES_CHARS = 6000
 MAX_REPO_CHARS = 24000
 
@@ -63,6 +64,9 @@ def build_context_pack(
             }
             break
     decisions = board_store.load_decision_log(table)[-MAX_DECISIONS:]
+    approvals = board_store.list_approvals(table)
+    pending_approvals = [a for a in approvals if a.get("status") == "pending"][:MAX_APPROVALS]
+    rejected_approvals = [a for a in approvals if a.get("status") == "rejected"][:MAX_APPROVALS]
 
     use_finance = settings.get("shareFinanceSummary") if include_finance is None else include_finance
     finance = board_finance.build_finance_summary(table) if use_finance else None
@@ -81,6 +85,8 @@ def build_context_pack(
         "closedActions": [_action_summary(a) for a in closed_actions],
         "lastMinutes": last_minutes,
         "decisions": decisions,
+        "pendingApprovals": [_approval_summary(a) for a in pending_approvals],
+        "rejectedApprovals": [_approval_summary(a) for a in rejected_approvals],
         "finance": finance,
         "repoText": _cap(str((repo or {}).get("text") or ""), MAX_REPO_CHARS) if repo else "",
         "repoFetchedAt": (repo or {}).get("fetchedAt") if repo else None,
@@ -113,6 +119,18 @@ def _action_summary(a: dict[str, Any]) -> dict[str, Any]:
         "dueAt": a.get("dueAt"),
         "note": _cap(str(a.get("note") or ""), 400),
         "createdAt": a.get("createdAt"),
+    }
+
+
+def _approval_summary(a: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "approvalId": a.get("approvalId"),
+        "persona": a.get("personaId"),
+        "summary": _cap(str(a.get("summary") or ""), 200),
+        "reason": _cap(str(a.get("reason") or ""), 300),
+        "note": _cap(str(a.get("note") or ""), 300),
+        "createdAt": a.get("createdAt"),
+        "decidedAt": a.get("decidedAt"),
     }
 
 
@@ -174,6 +192,21 @@ def render_context_pack(pack: dict[str, Any]) -> str:
         parts.append("--- Decision log (oldest first) ---")
         for d in decisions:
             parts.append(f"- [{str(d.get('date') or '')[:10]}] {d.get('text')}")
+
+    pending = pack.get("pendingApprovals") or []
+    if pending:
+        parts.append("")
+        parts.append("--- Tool actions proposed by the board, awaiting the founder's approval (do not re-propose) ---")
+        for a in pending:
+            parts.append(f"- ({a.get('persona')}) {a.get('summary')} — {a.get('reason')} [id {a.get('approvalId')}]")
+
+    rejected = pack.get("rejectedApprovals") or []
+    if rejected:
+        parts.append("")
+        parts.append("--- Proposals the founder rejected (learn from these) ---")
+        for a in rejected:
+            note = f" Founder: {a['note']}" if a.get("note") else ""
+            parts.append(f"- [{str(a.get('decidedAt') or '')[:10]}] ({a.get('persona')}) {a.get('summary')}.{note}")
 
     finance = pack.get("finance")
     if finance:
