@@ -181,6 +181,7 @@ def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> di
 
 def reset_caches_for_tests() -> None:
     global _token_cache, _token_checked, _app_secret_cache, _app_secret_checked
+    _waba_resolved.clear()
     _token_cache = None
     _token_checked = False
     _app_secret_cache = None
@@ -609,6 +610,10 @@ def _mask_for_model(text: str) -> str:
     return _mask_text(text, None)
 
 
+_waba_resolved: dict[str, str] = {}
+TEMPLATE_PAGES_MAX = 3
+
+
 def resolve_waba_id() -> str:
     explicit = waba_id()
     if explicit:
@@ -616,36 +621,59 @@ def resolve_waba_id() -> str:
     phone = wa_phone_id()
     if not phone:
         raise MetaError("META_WABA_ID or META_WA_PHONE_NUMBER_ID is not set.")
+    cached = _waba_resolved.get(phone)
+    if cached:
+        return cached
     data = graph("GET", phone, params={"fields": "whatsapp_business_account"}, timeout=HTTP_TIMEOUT_SLOW_SECONDS)
     account = data.get("whatsapp_business_account")
+    resolved = ""
     if isinstance(account, dict) and account.get("id"):
-        return str(account["id"])
-    if isinstance(account, str) and account:
-        return account
-    raise MetaError("Could not resolve the WhatsApp Business Account id from the phone-number id.")
+        resolved = str(account["id"])
+    elif isinstance(account, str) and account:
+        resolved = account
+    if not resolved:
+        raise MetaError("Could not resolve the WhatsApp Business Account id from the phone-number id.")
+    _waba_resolved[phone] = resolved
+    return resolved
 
 
 def op_list_whatsapp_templates(_ctx: Any, _args: dict[str, Any]) -> dict[str, Any]:
+    """Approved templates only (the ones a reply outside the 24h window may use)."""
     account = resolve_waba_id()
-    data = graph(
-        "GET",
-        f"{account}/message_templates",
-        params={"fields": "name,status,language,category", "limit": BOARD_META_LIST_MAX},
-        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
-    )
-    rows = []
-    for row in (data.get("data") or [])[: BOARD_META_LIST_MAX]:
-        if not isinstance(row, dict):
-            continue
-        rows.append(
-            {
-                "name": row.get("name"),
-                "status": row.get("status"),
-                "language": row.get("language"),
-                "category": row.get("category"),
-            }
-        )
-    return {"wabaId": account, "templates": rows, "count": len(rows)}
+    status = "APPROVED"
+    rows: list[dict[str, Any]] = []
+    after = ""
+    for _page in range(TEMPLATE_PAGES_MAX):
+        params: dict[str, Any] = {
+            "fields": "name,status,language,category",
+            "status": status,
+            "limit": BOARD_META_LIST_MAX,
+        }
+        if after:
+            params["after"] = after
+        data = graph("GET", f"{account}/message_templates", params=params, timeout=HTTP_TIMEOUT_SLOW_SECONDS)
+        for row in data.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            # Graph applies the status filter server-side; re-check for older API versions.
+            if str(row.get("status") or "").upper() != status:
+                continue
+            rows.append(
+                {
+                    "name": row.get("name"),
+                    "status": row.get("status"),
+                    "language": row.get("language"),
+                    "category": row.get("category"),
+                }
+            )
+            if len(rows) >= BOARD_META_LIST_MAX:
+                break
+        if len(rows) >= BOARD_META_LIST_MAX:
+            break
+        after = str(((data.get("paging") or {}).get("cursors") or {}).get("after") or "")
+        if not after or not (data.get("paging") or {}).get("next"):
+            break
+    return {"wabaId": account, "status": status, "templates": rows, "count": len(rows)}
 
 
 def _in_window(thread: dict[str, Any]) -> bool:

@@ -207,21 +207,215 @@ class TestTemplates(MetaTestCase):
         self.assertEqual(out["count"], 1)
         self.assertEqual(out["templates"][0]["name"], "hello_world")
         self.assertEqual(out["wabaId"], "waba-1")
+        template_calls = [url for _m, url, _b in self.graph.calls if "/message_templates" in url]
+        self.assertTrue(all("status=APPROVED" in url for url in template_calls), template_calls)
+
+    def test_waba_lookup_is_cached_and_pages_follow_cursors(self) -> None:
+        original = self.graph.__call__
+        pages = {"": ["a", "b"], "cur2": ["c"]}
+
+        def paged(req, timeout=None):
+            url = req.full_url
+            if "/message_templates" not in url:
+                return original(req, timeout)
+            after = url.split("after=", 1)[1].split("&", 1)[0] if "after=" in url else ""
+            self.graph.calls.append((req.get_method(), url, None))
+            payload = {
+                "data": [{"name": n, "status": "APPROVED", "language": "en", "category": "UTILITY"} for n in pages[after]]
+                + ([{"name": "pending_one", "status": "PENDING"}] if not after else []),
+            }
+            if not after:
+                payload["paging"] = {"cursors": {"after": "cur2"}, "next": "https://graph/next"}
+
+            class _R:
+                def read(self) -> bytes:
+                    return json.dumps(payload).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return None
+
+            return _R()
+
+        with patch.object(board_meta, "_urlopen", paged):
+            first = board_meta.op_list_whatsapp_templates(self._ctx(), {})
+            second = board_meta.op_list_whatsapp_templates(self._ctx(), {})
+        self.assertEqual([t["name"] for t in first["templates"]], ["a", "b", "c"])
+        self.assertEqual(first["count"], 3)
+        self.assertEqual(second["count"], 3)
+        waba_lookups = [url for _m, url, _b in self.graph.calls if "whatsapp_business_account" in url]
+        self.assertEqual(len(waba_lookups), 1, "WABA id must be resolved once per warm Lambda")
 
 
 class TestInvoicePdf(unittest.TestCase):
-    def test_pdf_bytes_are_valid_header(self) -> None:
-        pdf = board_invoice_pdf.render_invoice_pdf(
+    def _render(self, payer: str) -> board_invoice_pdf.InvoicePdf:
+        return board_invoice_pdf.render_invoice(
             number="STD-2026-0001",
             amount_hkd=388,
             fps_reference="STDABCDEF",
             issued_on="2026-09-04",
             due_on="2026-09-18",
-            payer_contact="billing@provider.example",
+            payer_contact=payer,
         )
+
+    def test_pdf_bytes_are_valid_header(self) -> None:
+        out = self._render("billing@provider.example")
+        pdf = out.data
         self.assertTrue(pdf.startswith(b"%PDF-1.4"))
         self.assertIn(b"STD-2026-0001", pdf)
         self.assertIn(b"STDABCDEF", pdf)
+        self.assertIn(b"/Encoding /WinAnsiEncoding", pdf)
+        self.assertNotIn(b"?", pdf.split(b"stream\n", 1)[1].split(b"\nendstream", 1)[0])
+        self.assertEqual(out.notes, ())
+        self.assertEqual(board_invoice_pdf.render_invoice_pdf(
+            number="STD-2026-0001", amount_hkd=388, fps_reference="STDABCDEF", issued_on="2026-09-04", due_on="2026-09-18"
+        )[:8], b"%PDF-1.4")
+
+    def test_non_latin_payer_is_dropped_and_reported(self) -> None:
+        out = self._render("陳小美 (Splash Ltd) café")
+        stream = out.data.split(b"stream\n", 1)[1].split(b"\nendstream", 1)[0]
+        self.assertIn(b"Billed to  \\(Splash Ltd\\) cafe", stream)
+        self.assertNotIn(b"?", stream)
+        self.assertEqual(out.notes, (board_invoice_pdf.NON_LATIN_NOTE,))
+        stream.decode("cp1252")
+
+    def test_xref_offsets_match_object_positions(self) -> None:
+        pdf = self._render("").data
+        xref_at = int(pdf.rsplit(b"startxref\n", 1)[1].split(b"\n", 1)[0])
+        self.assertTrue(pdf[xref_at:].startswith(b"xref"))
+        entries = pdf[xref_at:].split(b"\n")[3:8]
+        for i, entry in enumerate(entries, start=1):
+            off = int(entry.split()[0])
+            self.assertTrue(pdf[off:].startswith(f"{i} 0 obj".encode()), (i, pdf[off : off + 12]))
+
+
+class TestInvoicePdfStorage(ToolsTestCase):
+    def _db(self):
+        import board_data_api
+        from test_board_t4 import FakeAurora
+
+        db = FakeAurora()
+        db.subs.append(
+            {
+                "id": "sub-1",
+                "organization_id": "org-1",
+                "store_id": None,
+                "plan_id": "plan-1",
+                "starts_on": "2026-08-01",
+                "renews_on": "2026-10-01",
+                "status": "active",
+                "payer_contact": "billing@provider.example",
+            }
+        )
+        board_data_api.set_executor_for_tests(db)
+        self.addCleanup(lambda: board_data_api.set_executor_for_tests(None))
+        return db
+
+    def test_draft_reports_when_s3_upload_fails(self) -> None:
+        import board_receivables
+
+        db = self._db()
+        with patch("runtime._s3") as s3:
+            s3.put_object.side_effect = RuntimeError("AccessDenied")
+            out = board_receivables.op_draft_invoice(None, {"subscriptionId": "sub-1", "amountHkd": 388, "reason": "PDF."})
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["pdfKey"], "")
+        self.assertIn("could not be stored", out["pdfWarning"])
+        self.assertIsNone(db.invoices[0].get("pdf_key"))
+
+    def test_send_reports_missing_attachment(self) -> None:
+        import board_receivables
+        from test_board_mail import FakeSES
+
+        db = self._db()
+        db.invoices.append(
+            {
+                "id": "inv-1",
+                "subscription_id": "sub-1",
+                "number": "STD-2026-0001",
+                "issued_on": "2026-09-01",
+                "due_on": "2026-09-15",
+                "amount_hkd": 388,
+                "status": "draft",
+                "fps_reference": "STDREF001",
+                "pdf_key": "board/invoices/2026/inv-1.pdf",
+            }
+        )
+        ses = FakeSES()
+        env = {"BOARD_MAIL_SENDING_ENABLED": "true", "BOARD_MAIL_DOMAIN": "siutindei.com"}
+        settings = board_store.default_settings()
+        settings["tools"]["allowList"] = {"emails": ["billing@provider.example"], "phones": []}
+        ctx = ToolContext(table=self.table, settings=settings, persona_id="cfo", display_name="CFO", actor="owner", owner_sub="o")
+        with patch.dict("os.environ", env), patch.object(board_mail, "_ses_client", lambda: ses), patch("runtime._s3") as s3:
+            s3.get_object.side_effect = RuntimeError("NoSuchKey")
+            s3.head_object.side_effect = RuntimeError("NoSuchKey")
+            preview = board_receivables.owner_preview_send(ctx, {"invoiceId": "inv-1"}, op="finance_send_invoice")
+            out = board_receivables.op_send_invoice(ctx, {"invoiceId": "inv-1", "reason": "Send."})
+        self.assertEqual(preview["attachments"], [])
+        self.assertIn("missing", preview["pdfWarning"])
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["attachmentMissing"])
+        self.assertEqual(len(ses.sent), 1)
+        self.assertNotIn("application/pdf", ses.sent[-1]["Content"]["Raw"]["Data"].decode("utf-8", "replace"))
+
+
+class TestUnitEconomicsMeta(ToolsTestCase):
+    def _run(self, *, graph: dict, recorded: float):
+        import board_receivables
+        from test_board_t4 import FakeAurora
+
+        import board_data_api
+
+        db = FakeAurora()
+        board_data_api.set_executor_for_tests(db)
+        self.addCleanup(lambda: board_data_api.set_executor_for_tests(None))
+        if recorded:
+            board_store.record_ads_spend(self.table, daily_usd=recorded, monthly_usd=recorded)
+        ctx = ToolContext(table=self.table, settings=board_store.default_settings(), persona_id="cfo", display_name="CFO")
+        with patch.object(board_meta, "graph_month_spend_detail", return_value=graph):
+            return board_receivables.op_unit_economics(ctx, {})
+
+    def test_graph_actuals_win_over_recorded_commitments(self) -> None:
+        out = self._run(graph={"spend": 30.0, "currency": "USD", "available": True}, recorded=4.0)
+        self.assertEqual(out["metaAdsMonthlyUsd"], 30.0)
+        self.assertEqual(out["metaAdsSource"], "graph")
+        self.assertEqual(out["metaAdsRecordedMonthlyUsd"], 4.0)
+
+    def test_recorded_used_when_graph_unavailable(self) -> None:
+        out = self._run(graph={"spend": 0.0, "currency": "", "available": False}, recorded=4.0)
+        self.assertEqual(out["metaAdsMonthlyUsd"], 4.0)
+        self.assertEqual(out["metaAdsSource"], "recorded")
+
+    def test_non_usd_account_is_labelled_not_converted(self) -> None:
+        out = self._run(graph={"spend": 250.0, "currency": "HKD", "available": True}, recorded=0.0)
+        self.assertNotIn("metaAdsMonthlyUsd", out)
+        self.assertEqual(out["metaAdsCurrency"], "HKD")
+        self.assertIn("HKD", out["note"])
+
+    def test_unit_economics_is_a_slow_op(self) -> None:
+        self.assertEqual(REGISTRY["finance_unit_economics"].timeout_seconds, board_tools.BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS)
+
+
+class TestGraphErrors(MetaTestCase):
+    def test_socket_timeout_while_reading_becomes_meta_error(self) -> None:
+        import socket
+
+        class _Stalls:
+            def read(self):
+                raise socket.timeout("timed out")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return None
+
+        with patch.object(board_meta, "_urlopen", lambda req, timeout=None: _Stalls()):
+            with self.assertRaises(board_meta.MetaError):
+                board_meta.graph("GET", "act_99/insights")
+            self.assertEqual(board_meta.graph_month_spend_detail()["available"], False)
 
 
 class TestDraftInvoiceStoresPdf(ToolsTestCase):
