@@ -24,6 +24,7 @@ Key layout (``pk`` / ``sk``):
 - ``BOARD#<b>#mail#thread#<id>`` / ``MSG#<ts>#<id>`` — messages in a thread (TTL)
 - ``BOARD#<b>#mail#msgids`` / ``MSGID#<digest>`` — RFC Message-ID → thread (TTL)
 - ``BOARD#<b>#mail#pii`` / ``STATE``             — contact pseudonym map
+- ``BOARD#<b>#cache`` / ``ITEM#<key>``          — cached research / AWS / security reads (TTL)
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from contract_constants import (
     BOARD_CHAT_JOB_TTL_SECONDS,
     BOARD_DEFAULT_DAILY_BUDGET_USD,
     BOARD_KEY,
+    BOARD_CACHE_REFRESH_TTL_HOURS,
     BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES,
     BOARD_MAIL_MESSAGE_TTL_DAYS,
     BOARD_PERSONA_IDS,
@@ -817,6 +819,49 @@ def get_mail_thread_for_msgid(table: Any, digest: str) -> str | None:
     res = table.get_item(Key=_msgid_key(digest))
     item = res.get("Item") if isinstance(res, dict) else None
     return str(item["threadId"]) if item and item.get("threadId") else None
+
+
+def cache_key(name: str) -> dict[str, str]:
+    return {"pk": board_pk("cache"), "sk": f"ITEM#{name}"}
+
+
+def put_cache(table: Any, name: str, payload: dict[str, Any], *, ttl_seconds: int | None = None) -> dict[str, Any]:
+    ttl = int(ttl_seconds if ttl_seconds is not None else BOARD_CACHE_REFRESH_TTL_HOURS * 3600)
+    now = now_iso()
+    doc = {
+        "key": name,
+        "payload": payload,
+        "fetchedAt": now,
+        "expiresAt": int(time.time()) + max(60, ttl),
+    }
+    table.put_item(Item={**cache_key(name), **_to_ddb_nested(doc)})
+    return doc
+
+
+def get_cache(table: Any, name: str) -> dict[str, Any] | None:
+    res = table.get_item(Key=cache_key(name))
+    item = res.get("Item") if isinstance(res, dict) else None
+    if not item:
+        return None
+    doc = {k: v for k, v in _strip_keys(item).items()}
+    expires = doc.get("expiresAt")
+    try:
+        if expires is not None and int(expires) < int(time.time()):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return doc
+
+
+def cache_digest(table: Any) -> dict[str, Any]:
+    """Tiny summary of cached AWS / security reads for the context pack."""
+    keys = ("aws:monthly_cost", "aws:alarms", "security:findings")
+    out: dict[str, Any] = {}
+    for name in keys:
+        hit = get_cache(table, name)
+        if hit:
+            out[name] = {"fetchedAt": hit.get("fetchedAt"), "payload": hit.get("payload")}
+    return out
 
 
 def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:

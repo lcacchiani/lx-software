@@ -13,6 +13,7 @@ import board_github
 import board_mail
 import board_meeting
 import board_personas
+import board_research
 import board_store
 import board_tools
 from contract_constants import (
@@ -196,6 +197,7 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "repoWriteEnabled": board_github.write_enabled(),
         "mailSendEnabled": board_mail.sending_enabled(),
         "mailDomain": board_mail.mail_domain(),
+        "searchConfigured": board_research.search_configured(),
     }
 
 

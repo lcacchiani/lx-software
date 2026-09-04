@@ -89,6 +89,7 @@ export type BoardToolsPayload = {
   readonly repoWriteEnabled: boolean;
   readonly mailSendEnabled: boolean;
   readonly mailDomain: string;
+  readonly searchConfigured?: boolean;
 };
 
 export type BoardToolCallStatus = "ok" | "error" | "pending_approval";

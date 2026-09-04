@@ -12,6 +12,7 @@ from urllib.parse import parse_qs
 from botocore.exceptions import ClientError
 
 import bank_sync as bank_sync_mod
+import board_cache as board_cache_mod
 import board_chat as board_chat_mod
 import board_meeting as board_meeting_mod
 import parse_jobs as parse_jobs_mod
@@ -261,6 +262,10 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             board_meeting_mod.run_meeting_phase(event)
         else:
             board_meeting_mod.handle_schedule_trigger(event)
+        return {}
+
+    if isinstance(event, dict) and event.get("internal") == "board_cache_refresh":
+        board_cache_mod.handle_schedule_trigger(event)
         return {}
 
     method, path = _route(event)

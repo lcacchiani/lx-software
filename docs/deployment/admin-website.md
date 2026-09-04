@@ -240,6 +240,8 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:GitHubReadTokenSecretArn` | Secrets Manager secret holding a **fine-grained** GitHub token for the `siutindei` repository. The repository is public, so the snapshot and every GitHub *read* tool work without it; the token raises the API rate limit and is **required for the board's GitHub write tools** (issues, comments, labels) and for security alerts. |
 | `lxsoftware:BoardGitHubRepo` | `owner/name` of the repository to read (default `lx-software-ltd/siutindei`). |
 | `lxsoftware:BoardToolsEnabled` | `true` (default) / `false`. Deploy-time kill switch for every board tool call, independent of the in-app settings. |
+| `lxsoftware:SearchApiKeySecretArn` | Secrets Manager secret holding a **Brave Search** API key for the `research` tool. Leave blank to fall back to OpenRouter `:online` (uses the existing OpenRouter key and costs more). |
+| `lxsoftware:BoardAwsStackPrefix` | CloudFormation stack-name prefix used to filter Cost Explorer / CloudWatch results (default `siutindei`). |
 | `lxsoftware:BoardMailDomain` | Domain the board indexes (default `siutindei.com`). Every mailbox at this domain is copied to the board's SES inbound address by the Cloudflare Email Worker. |
 | `lxsoftware:BoardMailSendingEnabled` | `false` (default) / `true`. Flip to `true` only after the DKIM CNAMEs, SPF `include:amazonses.com`, and DMARC are in the `BoardMailDomain` zone. Creates the SES sending identity and the IAM send policy; until then mail tools stay read-only. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
@@ -295,8 +297,12 @@ function calling. Design:
 - **Tools shipped:** `github` (search/get issues and PRs, workflow runs,
   commits, files, security alerts; create issue, comment, set labels),
   `board` (read actions/minutes/decisions; add an action, update the member's
-  own actions), and `mail` (list mailboxes and threads, read a thread,
-  contact history; reply, send, or forward).
+  own actions), `mail` (list mailboxes and threads, read a thread,
+  contact history; reply, send, or forward), `research` (Brave Search /
+  OpenRouter `:online`, 24 h cache), `aws` (Cost Explorer, CloudWatch
+  alarms, Lambda health, Health events; budget-alert proposal), and
+  `security` (GitHub alerts, Security Hub, Access Analyzer, Cognito MFA;
+  remediation issue proposal).
 - **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
   for the owner), `act` (writes run directly). A **global mode**
   (`readOnly` / `propose` / `act`) caps the whole matrix, and **Tools
@@ -331,7 +337,9 @@ member's mandate, send a chat message to the CEO (reply arrives within ~30 s),
 then **Run stand-up** and confirm minutes and action items appear. For tools:
 ask the CTO "what is open on GitHub about bookings?" and check the reply lists
 a `Searched GitHub issues` row; ask the CPO to open an issue and confirm it
-lands in **Approvals** rather than on GitHub. For mail: open **Mail**, confirm
+lands in **Approvals** rather than on GitHub. Ask the CFO "what did AWS cost
+last month?" and the CISO "any HIGH findings?" — both should cite cached
+reads after the hourly `BoardCacheRefreshSchedule` has run once. For mail: open **Mail**, confirm
 mailbox chips and threads, toggle **Board's view** (addresses become
 `contact#N`), then ask the CMO "what's unread?" and confirm a `Listed threads`
 row.

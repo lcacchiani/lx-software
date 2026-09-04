@@ -288,6 +288,54 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
       "ciso": "read",
       "cmo": "act"
     }
+  },
+  {
+    "id": "research",
+    "label": "Research",
+    "description": "Web search for competitor pages, Hong Kong market news, EDB school-holiday calendars and venue listings. Read-only; results are cached for 24 hours.",
+    "maxLevel": "read",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "read",
+      "coo": "read",
+      "cpo": "read",
+      "cto": "read",
+      "cio": "read",
+      "ciso": "read",
+      "cmo": "read"
+    }
+  },
+  {
+    "id": "aws",
+    "label": "AWS",
+    "description": "Cost Explorer, CloudWatch alarms and Lambda health, plus AWS Health events, scoped to the siutindei stacks. Propose a budget-alert action for the founder; the board never changes IAM, DNS or Cognito.",
+    "maxLevel": "propose",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "read",
+      "coo": "off",
+      "cpo": "off",
+      "cto": "propose",
+      "cio": "propose",
+      "ciso": "read",
+      "cmo": "off"
+    }
+  },
+  {
+    "id": "security",
+    "label": "Security",
+    "description": "GitHub security alerts, AWS Security Hub and Access Analyzer findings, Cognito MFA posture. Remediations are always a proposed GitHub issue — never applied directly.",
+    "maxLevel": "propose",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "off",
+      "coo": "off",
+      "cpo": "off",
+      "cto": "read",
+      "cio": "read",
+      "ciso": "propose",
+      "cmo": "off"
+    }
   }
 ];
 export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
@@ -299,3 +347,7 @@ export const BOARD_MAIL_BODY_MAX_CHARS = 20000;
 export const BOARD_MAIL_SUBJECT_MAX_LEN = 200;
 export const BOARD_MAIL_MAX_RECIPIENTS = 5;
 export const BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES = 100;
+export const BOARD_RESEARCH_CACHE_TTL_HOURS = 24;
+export const BOARD_RESEARCH_QUERY_MAX_LEN = 200;
+export const BOARD_RESEARCH_MAX_RESULTS = 8;
+export const BOARD_CACHE_REFRESH_TTL_HOURS = 2;

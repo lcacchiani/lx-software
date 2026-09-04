@@ -10,9 +10,11 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+import board_aws
 import board_finance
 import board_github
 import board_mail
+import board_security
 import board_store
 
 MAX_BRIEF_CHARS = 12000
@@ -76,6 +78,8 @@ def build_context_pack(
     repo = board_store.load_repo_snapshot(table) if use_repo else None
 
     mail = board_mail.digest_for_context(table)
+    aws = board_aws.digest_for_context(table)
+    security = board_security.digest_for_context(table)
 
     pack = {
         "brief": _cap(str(brief.get("markdown") or ""), MAX_BRIEF_CHARS),
@@ -91,6 +95,8 @@ def build_context_pack(
         "pendingApprovals": [_approval_summary(a) for a in pending_approvals],
         "rejectedApprovals": [_approval_summary(a) for a in rejected_approvals],
         "mail": mail,
+        "aws": aws,
+        "security": security,
         "finance": finance,
         "repoText": _cap(str((repo or {}).get("text") or ""), MAX_REPO_CHARS) if repo else "",
         "repoFetchedAt": (repo or {}).get("fetchedAt") if repo else None,
@@ -220,6 +226,22 @@ def render_context_pack(pack: dict[str, Any]) -> str:
             f"--- Company email: {mail.get('threadCount')} threads indexed, {mail.get('unreadCount')} unread by the founder"
             + (f" ({boxes})" if boxes else "")
             + " — members with mail access use mail_list_threads for detail ---"
+        )
+
+    aws = pack.get("aws") or {}
+    if aws.get("totalUsd") is not None or aws.get("alarmCount"):
+        parts.append("")
+        cost = f"last month USD {aws.get('totalUsd')}" if aws.get("totalUsd") is not None else "cost not yet cached"
+        alarms = f"{aws.get('alarmCount') or 0} CloudWatch alarms in ALARM"
+        parts.append(f"--- AWS ({cost}; {alarms}) — members with aws access use aws_monthly_cost / aws_list_alarms ---")
+
+    sec = pack.get("security") or {}
+    if sec.get("openHighOrCritical") is not None or sec.get("githubOpen") is not None:
+        parts.append("")
+        parts.append(
+            f"--- Security: {sec.get('openHighOrCritical') or 0} HIGH/CRITICAL AWS findings, "
+            f"{sec.get('githubOpen') or 0} open GitHub alerts, Cognito MFA {sec.get('mfa') or 'unknown'} "
+            "— members with security access use security_aws_findings / security_github_alerts ---"
         )
 
     finance = pack.get("finance")
