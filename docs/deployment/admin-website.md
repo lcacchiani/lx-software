@@ -242,6 +242,8 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:BoardToolsEnabled` | `true` (default) / `false`. Deploy-time kill switch for every board tool call, independent of the in-app settings. |
 | `lxsoftware:SearchApiKeySecretArn` | Secrets Manager secret holding a **Brave Search** API key for the `research` tool. Leave blank to fall back to OpenRouter `:online` (uses the existing OpenRouter key and costs more). |
 | `lxsoftware:BoardAwsStackPrefix` | CloudFormation stack-name prefix used to filter Cost Explorer / CloudWatch results (default `siutindei`). |
+| `lxsoftware:SiutindeiClusterArn` | Aurora cluster ARN for the siutindei database (RDS Data API). Required for Executive Board `finance` and `product` tools. Leave blank to keep those tools returning a clear "not configured" error. |
+| `lxsoftware:SiutindeiDbSecretArn` | Secrets Manager ARN of the siutindei DB credentials the Data API uses. |
 | `lxsoftware:BoardMailDomain` | Domain the board indexes (default `siutindei.com`). Every mailbox at this domain is copied to the board's SES inbound address by the Cloudflare Email Worker. |
 | `lxsoftware:BoardMailSendingEnabled` | `false` (default) / `true`. Flip to `true` only after the DKIM CNAMEs, SPF `include:amazonses.com`, and DMARC are in the `BoardMailDomain` zone. Creates the SES sending identity and the IAM send policy; until then mail tools stay read-only. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
@@ -302,7 +304,10 @@ function calling. Design:
   OpenRouter `:online`, 24 h cache), `aws` (Cost Explorer, CloudWatch
   alarms, Lambda health, Health events; budget-alert proposal), and
   `security` (GitHub alerts, Security Hub, Access Analyzer, Cognito MFA;
-  remediation issue proposal).
+  remediation issue proposal), `product` (catalog / funnel / provider-pipeline
+  SQL views), and `finance` (listing subscriptions, invoices, aging, draft/send
+  invoice, dunning, match or record a payment, price-change proposal). The
+  board never initiates a bank payment.
 - **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
   for the owner), `act` (writes run directly). A **global mode**
   (`readOnly` / `propose` / `act`) caps the whole matrix, and **Tools
@@ -327,7 +332,8 @@ function calling. Design:
 - **Routes:** `GET/PUT /siu-tin-dei/board/tools`, `GET /siu-tin-dei/board/tools/calls`,
   `GET /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`,
   `GET /siu-tin-dei/board/mail`, `GET /siu-tin-dei/board/mail/{threadId}`,
-  `POST /siu-tin-dei/board/mail/{threadId}/read`.
+  `POST /siu-tin-dei/board/mail/{threadId}/read`,
+  `GET /siu-tin-dei/board/receivables`.
   Admin-group JWT only.
 - **Emergency stop:** set `lxsoftware:BoardToolsEnabled=false` and redeploy,
   or flip **Tools enabled** off in the app. Both leave the matrix intact.
@@ -342,7 +348,37 @@ last month?" and the CISO "any HIGH findings?" — both should cite cached
 reads after the hourly `BoardCacheRefreshSchedule` has run once. For mail: open **Mail**, confirm
 mailbox chips and threads, toggle **Board's view** (addresses become
 `contact#N`), then ask the CMO "what's unread?" and confirm a `Listed threads`
-row.
+row. For receivables: apply `scripts/siutindei/receivables.sql` on the
+siutindei cluster, set the two Data API parameters, open **Receivables**, and
+ask the CFO to draft the first listing plan (`finance_propose_price_change`).
+Nightly `BoardReceivablesMirrorSchedule` (00:30 HKT) writes `[receivables]`
+lines into the Siu Tin Dei book; daily `BoardDunningSchedule` (09:00 HKT)
+queues D+7 / D+21 / D+35 reminders in **Approvals**.
+
+### Board receivables (Aurora Data API)
+
+Listing invoices live in the **siutindei** Aurora database so the product can
+show billing state later; this admin app only reaches them through the RDS
+Data API (no VPC). Design:
+[`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md) §5.4–§5.7.
+
+1. Enable the Data API on the siutindei Aurora cluster if it is not already on.
+2. Apply `scripts/siutindei/receivables.sql` in that repo (tables
+   `listing_plans`, `listing_subscriptions`, `invoices`, `payments`, plus
+   views `v_catalog_health`, `v_funnel_daily`, `v_provider_pipeline` — adjust
+   the view `FROM` clauses if product table names differ).
+3. Set `lxsoftware:SiutindeiClusterArn` and `lxsoftware:SiutindeiDbSecretArn`
+   and redeploy. The stack attaches a conditional `rds-data:ExecuteStatement`
+   / `BatchExecuteStatement` policy plus `secretsmanager:GetSecretValue` on
+   the DB secret.
+4. Invoice numbers are `STD-{year}-0001`; each draft also gets a unique FPS
+   reference. `finance_send_invoice` / `finance_send_reminder` email from
+   `billing@siutindei.com` and stay in **Approvals** unless the payer is on
+   the mail allow-list. `finance_match_payment` acts only when amount and FPS
+   reference agree.
+5. Bank ingest (alert mail or an API-first HK account) is **T4b** — the
+   account has not been opened yet. Until then use
+   `finance_record_manual_payment`.
 
 ### Board mail (Cloudflare + SES)
 
