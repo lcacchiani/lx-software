@@ -1,10 +1,11 @@
 # Executive Board — tools and connectors
 
-Status: **approved; T1, T2, T3 and T4 shipped** (tool loop, `github` / `board` /
-`mail` / `research` / `aws` / `security` / `product` / `finance` tools,
-permission matrix, approvals queue, email ingest, Mail view, receivables
-tables + Data API, Receivables view, hourly cache refresh, nightly
-statement-book mirror, daily dunning — see §10). T4b–T7 remain proposals. This
+Status: **approved; T1–T5 shipped** (tool loop, `github` / `board` /
+`mail` / `research` / `aws` / `security` / `product` / `meta` / `finance`
+tools, permission matrix, approvals queue, email ingest, Mail view,
+receivables + Data API, Meta webhook, hourly cache refresh, nightly
+statement-book mirror, daily dunning — see §10). T4b, T6 and T7 remain
+proposals. This
 document extends [`executive-board-plan.md`](./executive-board-plan.md) (the
 board itself, shipped) with the ability for each board member to **seek
 information and take action through tools** instead of relying only on the
@@ -27,6 +28,7 @@ Where T1 lives in the code:
 | Tests | `backend/lambda/admin/test_board_tools.py`, `test_board_mail.py`, `test_board_t2.py`, `test_board_t4.py` |
 | T2 reads | `board_research.py`, `board_aws.py`, `board_security.py`, `board_cache.py`; `BOARD#…#cache`; `BoardCacheRefreshSchedule` |
 | T4 receivables | `board_data_api.py`, `board_receivables.py`, `board_product.py`; `scripts/siutindei/receivables.sql`; `BoardReceivablesMirrorSchedule`, `BoardDunningSchedule` |
+| T5 Meta | `board_meta.py`; unauthenticated `GET/POST /webhooks/meta`; `BOARD#…#meta#` rows; `MetaBoardToken` / app secret |
 
 ## 1. Decisions already taken by the owner
 
@@ -389,7 +391,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | T3 ✅ | Email ingest and index (§5.2) incl. sending identity, `mail` tools, Mail view | T1 |
 | T4 ✅ | Receivables: siutindei migration and views (§5.4, §5.7), Data API access, `finance` and `product` tools, statement-book mirror, `record_manual_payment`, Receivables view, dunning Scheduler | T1 |
 | T4b | Bank ingest adapter (§5.6): API client for an API-first account, or alert-mail parser + statement reconciliation for a traditional bank | T4, T3, account opened |
-| T5 | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
+| T5 ✅ | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
 | T6 | `stores` (App Store Connect, Google Play) tools and review replies | T1 |
 | T7 | `act` level rollout: allow-lists, spend caps enforcement, ads tooling | T3–T6 |
 
@@ -408,5 +410,5 @@ blocking, and the board itself can work on them now that T1–T4 have shipped:
 2. **Listing prices** — decides the first `listing_plans` rows; suggested
    first CFO/CPO stand-up action, approved through the queue.
 
-Next sign-off: **T5** (Meta) or **T6** (stores). T4b waits on the HK
-account.
+Next sign-off: **T6** (stores). T4b waits on the HK account; T7 is the
+`act` rollout.

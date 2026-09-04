@@ -91,6 +91,7 @@ export type BoardToolsPayload = {
   readonly mailDomain: string;
   readonly searchConfigured?: boolean;
   readonly dataApiConfigured?: boolean;
+  readonly metaConfigured?: boolean;
 };
 
 export type BoardToolCallStatus = "ok" | "error" | "pending_approval";

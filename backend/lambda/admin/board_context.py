@@ -14,6 +14,7 @@ import board_aws
 import board_finance
 import board_github
 import board_mail
+import board_meta
 import board_receivables
 import board_security
 import board_store
@@ -82,6 +83,7 @@ def build_context_pack(
     aws = board_aws.digest_for_context(table)
     security = board_security.digest_for_context(table)
     receivables = board_receivables.digest_for_context()
+    meta = board_meta.digest_for_context(table)
 
     pack = {
         "brief": _cap(str(brief.get("markdown") or ""), MAX_BRIEF_CHARS),
@@ -100,6 +102,7 @@ def build_context_pack(
         "aws": aws,
         "security": security,
         "receivables": receivables,
+        "meta": meta,
         "finance": finance,
         "repoText": _cap(str((repo or {}).get("text") or ""), MAX_REPO_CHARS) if repo else "",
         "repoFetchedAt": (repo or {}).get("fetchedAt") if repo else None,
@@ -253,6 +256,15 @@ def render_context_pack(pack: dict[str, Any]) -> str:
         parts.append(
             f"--- Receivables: HK${recv.get('outstandingHkd')} outstanding, "
             f"{recv.get('overdue') or 0} past due — members with finance access use finance_aging_report ---"
+        )
+
+    meta = pack.get("meta") or {}
+    if meta.get("threads"):
+        parts.append("")
+        parts.append(
+            f"--- Meta: {meta.get('unread') or 0} unread threads "
+            f"({meta.get('whatsappThreads') or 0} WhatsApp) — members with meta access "
+            "use meta_list_whatsapp / meta_list_dms ---"
         )
 
     finance = pack.get("finance")

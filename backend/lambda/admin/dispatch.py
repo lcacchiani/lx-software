@@ -279,6 +279,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     method, path = _route(event)
 
+    if path == "/webhooks/meta":
+        import board_meta as board_meta_mod
+
+        return board_meta_mod.handle_http(event, method)
+
     if method == "GET" and path == "/health":
         return _json_response(200, {"status": "ok"})
 

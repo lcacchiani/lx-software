@@ -233,6 +233,59 @@ export class LxsoftwareStack extends cdk.Stack {
           "Secrets Manager ARN of the siutindei DB credentials used by the RDS Data API.",
       }
     );
+    const metaBoardTokenSecretArn = new cdk.CfnParameter(
+      this,
+      "MetaBoardTokenSecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the Secrets Manager secret holding the Meta System User token (Executive Board meta tool + webhook writes).",
+      }
+    );
+    const metaAppSecretSecretArn = new cdk.CfnParameter(
+      this,
+      "MetaAppSecretSecretArn",
+      {
+        type: "String",
+        default: "",
+        noEcho: true,
+        description:
+          "ARN of the Secrets Manager secret holding the Meta app secret used to verify X-Hub-Signature-256 on POST /webhooks/meta.",
+      }
+    );
+    const metaVerifyToken = new cdk.CfnParameter(this, "MetaVerifyToken", {
+      type: "String",
+      default: "",
+      noEcho: true,
+      description:
+        "Verify token Meta sends on GET /webhooks/meta (hub.verify_token). Leave blank to keep the handshake rejected.",
+    });
+    const metaPageId = new cdk.CfnParameter(this, "MetaPageId", {
+      type: "String",
+      default: "",
+      description: "Facebook Page id for Executive Board meta tools.",
+    });
+    const metaIgUserId = new cdk.CfnParameter(this, "MetaIgUserId", {
+      type: "String",
+      default: "",
+      description: "Instagram professional-account id for Executive Board meta tools.",
+    });
+    const metaWaPhoneNumberId = new cdk.CfnParameter(
+      this,
+      "MetaWaPhoneNumberId",
+      {
+        type: "String",
+        default: "",
+        description:
+          "WhatsApp Cloud API phone-number id. Enable coexistence so the owner's phone keeps working.",
+      }
+    );
+    const metaAdAccountId = new cdk.CfnParameter(this, "MetaAdAccountId", {
+      type: "String",
+      default: "",
+      description: "Meta ad account id (with or without act_ prefix).",
+    });
     const boardAwsStackPrefix = new cdk.CfnParameter(
       this,
       "BoardAwsStackPrefix",
@@ -625,6 +678,13 @@ export class LxsoftwareStack extends cdk.Stack {
         USER_POOL_ID: this.auth.userPool.userPoolId,
         SIUTINDEI_CLUSTER_ARN: siutindeiClusterArn.valueAsString,
         SIUTINDEI_DB_SECRET_ARN: siutindeiDbSecretArn.valueAsString,
+        META_BOARD_TOKEN_SECRET_ARN: metaBoardTokenSecretArn.valueAsString,
+        META_APP_SECRET_SECRET_ARN: metaAppSecretSecretArn.valueAsString,
+        META_VERIFY_TOKEN: metaVerifyToken.valueAsString,
+        META_PAGE_ID: metaPageId.valueAsString,
+        META_IG_USER_ID: metaIgUserId.valueAsString,
+        META_WA_PHONE_NUMBER_ID: metaWaPhoneNumberId.valueAsString,
+        META_AD_ACCOUNT_ID: metaAdAccountId.valueAsString,
         // BOARD_MAIL_DOMAIN / _RAW_SEGMENT / _INBOUND_ADDRESS are added with the
         // inbound-mail resources below (they depend on InboundMailDomain).
         BOARD_MAIL_SENDING_ENABLED: boardMailSendingEnabled.valueAsString,
@@ -834,6 +894,36 @@ export class LxsoftwareStack extends cdk.Stack {
     searchSecretPolicy.attachToRole(adminFn.role!);
     const cfnSearchSecretPolicy = searchSecretPolicy.node.defaultChild as iam.CfnPolicy;
     cfnSearchSecretPolicy.cfnOptions.condition = hasSearchSecret;
+
+    const metaTokenArnValue = metaBoardTokenSecretArn.valueAsString;
+    const hasMetaToken = new cdk.CfnCondition(this, "HasMetaBoardTokenSecret", {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(metaTokenArnValue, "")),
+    });
+    const metaTokenPolicy = new iam.Policy(this, "AdminMetaBoardTokenSecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [metaTokenArnValue],
+        }),
+      ],
+    });
+    metaTokenPolicy.attachToRole(adminFn.role!);
+    (metaTokenPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasMetaToken;
+
+    const metaAppSecretArnValue = metaAppSecretSecretArn.valueAsString;
+    const hasMetaAppSecret = new cdk.CfnCondition(this, "HasMetaAppSecretSecret", {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(metaAppSecretArnValue, "")),
+    });
+    const metaAppSecretPolicy = new iam.Policy(this, "AdminMetaAppSecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [metaAppSecretArnValue],
+        }),
+      ],
+    });
+    metaAppSecretPolicy.attachToRole(adminFn.role!);
+    (metaAppSecretPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasMetaAppSecret;
 
     // Executive Board aws + security read tools (plan §8). Cost Explorer and
     // Health are account-scoped APIs; CloudWatch / Security Hub / Analyzer /
@@ -1150,6 +1240,14 @@ export class LxsoftwareStack extends cdk.Stack {
     this.httpApi.addRoutes({
       path: "/health",
       methods: [apigwv2.HttpMethod.GET],
+      integration,
+    });
+
+    // First non-JWT admin route. Meta's verify handshake + HMAC-signed
+    // inbound webhooks. The handler checks hub.verify_token / X-Hub-Signature-256.
+    this.httpApi.addRoutes({
+      path: "/webhooks/meta",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
       integration,
     });
 

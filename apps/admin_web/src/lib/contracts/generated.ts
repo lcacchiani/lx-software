@@ -354,6 +354,22 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
     }
   },
   {
+    "id": "meta",
+    "label": "Meta",
+    "description": "Facebook Page, Instagram and WhatsApp Cloud API on the existing number. Reads insights, comments, DMs and WhatsApp threads. Writes (post, story, reply, ad set, lead relay) go to Approvals. WhatsApp act is only inside the 24-hour window and only to allow-listed recipients.",
+    "maxLevel": "act",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "read",
+      "coo": "act",
+      "cpo": "read",
+      "cto": "off",
+      "cio": "off",
+      "ciso": "read",
+      "cmo": "act"
+    }
+  },
+  {
     "id": "finance",
     "label": "Finance",
     "description": "Listing subscriptions, invoices, aging and unit economics. Draft/send invoices and dunning reminders; record or match payments. The board never initiates a bank payment.",
@@ -385,3 +401,5 @@ export const BOARD_RESEARCH_MAX_RESULTS = 8;
 export const BOARD_CACHE_REFRESH_TTL_HOURS = 2;
 export const BOARD_INVOICE_NUMBER_PREFIX = "STD";
 export const BOARD_RECEIVABLES_LIST_MAX = 100;
+export const BOARD_META_ADS_MONTHLY_CAP_USD = 50;
+export const BOARD_META_LIST_MAX = 40;

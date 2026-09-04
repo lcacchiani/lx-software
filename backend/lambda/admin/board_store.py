@@ -25,6 +25,8 @@ Key layout (``pk`` / ``sk``):
 - ``BOARD#<b>#mail#msgids`` / ``MSGID#<digest>`` — RFC Message-ID → thread (TTL)
 - ``BOARD#<b>#mail#pii`` / ``STATE``             — contact pseudonym map
 - ``BOARD#<b>#cache`` / ``ITEM#<key>``          — cached research / AWS / security reads (TTL)
+- ``BOARD#<b>#meta#threads`` / ``THREAD#<id>``  — WhatsApp / Page / IG thread summaries (TTL)
+- ``BOARD#<b>#meta#thread#<id>`` / ``MSG#<ts>#<id>`` — inbound Meta messages (masked, TTL)
 """
 
 from __future__ import annotations
@@ -880,3 +882,65 @@ def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:
             ":calls": int(calls),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Meta (Page / Instagram / WhatsApp) index
+# ---------------------------------------------------------------------------
+
+def _meta_expires_at() -> int:
+    return int(time.time()) + BOARD_MAIL_MESSAGE_TTL_DAYS * 86400
+
+
+def meta_thread_key(thread_id: str) -> dict[str, str]:
+    return {"pk": board_pk("meta#threads"), "sk": f"THREAD#{thread_id}"}
+
+
+def put_meta_thread(table: Any, doc: dict[str, Any]) -> None:
+    table.put_item(
+        Item={
+            **meta_thread_key(str(doc["threadId"])),
+            "expiresAt": _meta_expires_at(),
+            **_to_ddb_nested(doc),
+        }
+    )
+
+
+def get_meta_thread(table: Any, thread_id: str) -> dict[str, Any] | None:
+    res = table.get_item(Key=meta_thread_key(thread_id))
+    item = res.get("Item") if isinstance(res, dict) else None
+    if not item:
+        return None
+    doc = {k: v for k, v in _strip_keys(item).items() if k != "expiresAt"}
+    return doc if isinstance(doc, dict) else None
+
+
+def list_meta_threads(table: Any) -> list[dict[str, Any]]:
+    items = _query_all(
+        table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": board_pk("meta#threads"), ":prefix": "THREAD#"},
+    )
+    out = [{k: v for k, v in _strip_keys(i).items() if k != "expiresAt"} for i in items]
+    out.sort(key=lambda t: str(t.get("lastMessageAt") or ""), reverse=True)
+    return out
+
+
+def put_meta_message(table: Any, doc: dict[str, Any]) -> None:
+    table.put_item(
+        Item={
+            "pk": board_pk(f"meta#thread#{doc['threadId']}"),
+            "sk": f"MSG#{doc['receivedAt']}#{doc['messageId']}",
+            "expiresAt": _meta_expires_at(),
+            **_to_ddb_nested(doc),
+        }
+    )
+
+
+def list_meta_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
+    items = _query_all(
+        table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": board_pk(f"meta#thread#{thread_id}"), ":prefix": "MSG#"},
+    )
+    return [{k: v for k, v in _strip_keys(i).items() if k != "expiresAt"} for i in items]
