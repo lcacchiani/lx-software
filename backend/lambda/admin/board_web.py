@@ -322,7 +322,8 @@ def fetch_conversions(*, property_filter: str = "", limit: int = 10) -> dict[str
         events = _run_report(
             pid,
             dimensions=["eventName"],
-            metrics=["eventCount", "conversions"],
+            # GA4 renamed ``conversions`` to ``keyEvents`` (2024); the old name is deprecated.
+            metrics=["eventCount", "keyEvents"],
             limit=limit,
         )
         properties.append({"propertyId": pid, "events": events.get("rows") or [], "totals": events.get("totals") or {}})

@@ -48,46 +48,109 @@ def is_own_address(address: str, own_domains: set[str]) -> bool:
 class Pseudonymizer:
     """Lazy-loading alias map. Call :meth:`save` after masking new values."""
 
+    SAVE_RETRIES = 3
+
     def __init__(self, table: Any, *, own_domains: set[str] | None = None) -> None:
         self.table = table
         self.own_domains = {d.lower() for d in (own_domains or set())}
         self._state: dict[str, Any] | None = None
         self._dirty = False
+        # ``next`` as loaded from storage (None = no item yet); the save condition.
+        self._base_next: int | None = None
+        # Aliases allocated locally since the last load, for merging on conflict.
+        self._pending: dict[str, tuple[str, dict[str, Any]]] = {}
 
     # -- persistence --------------------------------------------------------
+
+    def _load(self) -> dict[str, Any]:
+        stored = board_store._get_state(self.table, PII_STATE_SUFFIX) or {}
+        self._base_next = int(stored["next"]) if stored.get("next") is not None else None
+        return {
+            "next": int(stored.get("next") or 1),
+            "byDigest": dict(stored.get("byDigest") or {}),
+            "byAlias": dict(stored.get("byAlias") or {}),
+        }
 
     @property
     def state(self) -> dict[str, Any]:
         if self._state is None:
-            stored = board_store._get_state(self.table, PII_STATE_SUFFIX) or {}
-            self._state = {
-                "next": int(stored.get("next") or 1),
-                "byDigest": dict(stored.get("byDigest") or {}),
-                "byAlias": dict(stored.get("byAlias") or {}),
-            }
+            self._state = self._load()
         return self._state
 
     def save(self) -> None:
-        if self._dirty and self._state is not None:
-            board_store._put_state(self.table, PII_STATE_SUFFIX, {**self._state, "updatedAt": board_store.now_iso()})
-            self._dirty = False
+        """Persist new aliases without clobbering a concurrent writer's map.
+
+        The put is conditional on the stored ``next`` counter being the one we
+        loaded. On conflict the remote map is reloaded and our new aliases are
+        merged into it (remote wins for a digest both sides aliased; our alias
+        is kept as a secondary key so text already produced still resolves).
+        """
+        if not self._dirty or self._state is None:
+            return
+        for attempt in range(self.SAVE_RETRIES + 1):
+            doc = {**self._state, "updatedAt": board_store.now_iso()}
+            if board_store._put_state_if_version(
+                self.table, PII_STATE_SUFFIX, doc, attr="next", expected=self._base_next
+            ):
+                self._dirty = False
+                self._base_next = int(self._state["next"])
+                self._pending = {}
+                return
+            if attempt == self.SAVE_RETRIES:
+                raise RuntimeError("pseudonym map save conflicted repeatedly")
+            self._merge_remote()
+
+    def _merge_remote(self) -> None:
+        remote = self._load()
+        by_digest = remote["byDigest"]
+        by_alias = remote["byAlias"]
+        next_n = int(remote["next"])
+        for digest, (alias, entry) in self._pending.items():
+            if digest in by_digest:
+                by_alias.setdefault(alias, entry)
+                continue
+            if alias in by_alias and by_alias[alias] != entry:
+                alias = f"{entry['kind']}#{next_n}"
+                next_n += 1
+            by_digest[digest] = alias
+            by_alias[alias] = entry
+            next_n = max(next_n, int(alias.rsplit("#", 1)[1]) + 1)
+        remote["next"] = max(next_n, int(self._state["next"]) if self._state else 1)
+        self._state = remote
 
     # -- aliases ------------------------------------------------------------
 
-    def alias_for(self, kind: str, value: str) -> str:
-        normalized = normalize_email(value) if kind == "contact" else normalize_phone(value)
-        if not normalized:
-            return value
-        digest = _digest(kind, normalized)
+    def _allocate(self, kind: str, digest: str, entry: dict[str, Any]) -> str:
         alias = self.state["byDigest"].get(digest)
         if alias:
             return str(alias)
         alias = f"{kind}#{self.state['next']}"
         self.state["next"] += 1
         self.state["byDigest"][digest] = alias
-        self.state["byAlias"][alias] = {"kind": kind, "value": normalized}
+        self.state["byAlias"][alias] = entry
+        self._pending[digest] = (alias, entry)
         self._dirty = True
         return alias
+
+    def alias_for(self, kind: str, value: str) -> str:
+        normalized = normalize_email(value) if kind == "contact" else normalize_phone(value)
+        if not normalized:
+            return value
+        return self._allocate(kind, _digest(kind, normalized), {"kind": kind, "value": normalized})
+
+    def alias_for_external(self, namespace: str, external_id: str, *, display: str = "") -> str:
+        """``contact#N`` for a third-party user id (e.g. a Facebook commenter).
+
+        The alias is keyed on ``namespace:id`` so it is stable across reads even
+        when the platform shows a different display name; the name is stored
+        only for the owner-side resolve.
+        """
+        ident = str(external_id or "").strip()
+        if not ident:
+            return "contact#unknown"
+        key = f"{namespace}:{ident}"
+        entry = {"kind": "contact", "value": (display or key)[:120], "externalId": key}
+        return self._allocate("contact", _digest("contact", key), entry)
 
     def alias_for_address(self, address: str) -> str:
         """Own-domain mailboxes stay visible; everyone else becomes ``contact#N``."""

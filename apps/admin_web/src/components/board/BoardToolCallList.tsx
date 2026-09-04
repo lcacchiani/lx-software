@@ -17,7 +17,7 @@ export function BoardToolCallList({ calls, isLive, onOpenApproval, className }: 
         const status = TOOL_CALL_STATUS_ICON[c.status] ?? TOOL_CALL_STATUS_ICON.error;
         return (
           <li key={c.callId} className="d-flex align-items-start gap-2">
-            <i className={`bi ${status.icon} ${status.className} flex-shrink-0`} aria-label={status.label} />
+            <i className={`bi ${status.icon} ${status.className} flex-shrink-0`} role="img" aria-label={status.label} />
             <span className="min-w-0">
               <span className={`badge rounded-pill ${c.kind === "write" ? "text-bg-warning" : "text-bg-light border text-muted"} me-1`}>
                 {c.toolLabel}
@@ -38,7 +38,7 @@ export function BoardToolCallList({ calls, isLive, onOpenApproval, className }: 
       })}
       {isLive ? (
         <li className="d-flex align-items-center gap-2 text-muted">
-          <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+          <span className="spinner-border spinner-border-sm" aria-hidden="true" />
           <span>{calls.length > 0 ? "Thinking about what it found…" : "Thinking…"}</span>
         </li>
       ) : null}

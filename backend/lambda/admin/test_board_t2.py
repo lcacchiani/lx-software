@@ -81,7 +81,9 @@ class FakeCW:
         }
 
     def get_metric_data(self, **kwargs: Any) -> dict[str, Any]:
-        return {"MetricDataResults": [{"Id": "errors", "Values": [1]}, {"Id": "duration", "Values": [120.5]}]}
+        canned = {"errors": [1], "duration": [120.5], "signInThrottles": [2, 0], "signInSuccesses": [40]}
+        ids = [q.get("Id") for q in kwargs.get("MetricDataQueries") or []]
+        return {"MetricDataResults": [{"Id": i, "Values": canned.get(i, [])} for i in ids]}
 
 
 class FakeHealth:
@@ -205,7 +207,9 @@ class TestAwsAndSecurity(ToolsTestCase):
         super().setUp()
         os.environ["USER_POOL_ID"] = "ap-southeast-1_test"
         os.environ["BOARD_AWS_STACK_PREFIX"] = "siutindei"
+        os.environ["BOARD_AWS_LAMBDA_NAMES"] = "siutindei-api, siutindei-worker"
         self.addCleanup(lambda: os.environ.pop("USER_POOL_ID", None))
+        self.addCleanup(lambda: os.environ.pop("BOARD_AWS_LAMBDA_NAMES", None))
         p1 = patch.object(board_aws, "_client", _aws_client)
         p2 = patch.object(board_security, "_client", _aws_client)
         p1.start()
@@ -221,6 +225,8 @@ class TestAwsAndSecurity(ToolsTestCase):
         cost = board_aws.op_monthly_cost(tctx, {})
         self.assertEqual(cost["totalUsd"], 15.75)
         self.assertEqual(cost["byService"][0]["service"], "AWS Lambda")
+        self.assertEqual(cost["scope"], "siutindei")
+        self.assertEqual(cost["note"], "")
         cached = board_aws.op_monthly_cost(tctx, {})
         self.assertTrue(cached["cached"])
         alarms = board_aws.op_alarms(tctx, {})
@@ -228,6 +234,8 @@ class TestAwsAndSecurity(ToolsTestCase):
         self.assertIn("siutindei-AdminApiFn-errors", names)
         self.assertNotIn("unrelated-prod-cpu", names)
         health = board_aws.op_lambda_health(tctx, {})
+        self.assertEqual(health["functionNames"], ["siutindei-api", "siutindei-worker"])
+        self.assertEqual(health["functions"][0]["function"], "siutindei-api")
         self.assertEqual(health["functions"][0]["errors24h"], 1)
 
     def test_budget_alert_propose_then_execute(self) -> None:
@@ -261,6 +269,10 @@ class TestAwsAndSecurity(ToolsTestCase):
         self.assertEqual(findings["securityHub"]["findings"][0]["title"], "S3 bucket is public")
         cognito = board_security.op_cognito(tctx, {})
         self.assertEqual(cognito["mfa"], "OPTIONAL")
+        self.assertEqual(cognito["advancedSecurityMode"], "AUDIT")
+        self.assertIsNone(cognito["failedSignIns"])
+        self.assertEqual(cognito["signInThrottles24h"], 2)
+        self.assertEqual(cognito["signInSuccesses24h"], 40)
         self.assertNotIn("Users", cognito)
 
     def test_cache_refresh_and_context_digest(self) -> None:

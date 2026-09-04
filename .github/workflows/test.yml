@@ -98,21 +98,21 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: backend/infrastructure/package-lock.json
 
       - name: Install infrastructure dependencies
-        run: |
-          if [ -f "backend/infrastructure/package.json" ]; then
-            cd backend/infrastructure
-            npm ci
-          else
-            echo "Missing backend/infrastructure/package.json"
-          fi
+        run: npm ci
+        working-directory: backend/infrastructure
 
-      - name: Run infrastructure tests
-        run: |
-          if [ -f "backend/infrastructure/package.json" ]; then
-            cd backend/infrastructure
-            npm run test --if-present
-          else
-            echo "Missing backend/infrastructure/package.json"
-          fi
+      - name: Build CDK app
+        run: npm run build
+        working-directory: backend/infrastructure
+
+      # Synthesizes the stacks with aws-cdk-lib/assertions (no AWS credentials
+      # or Docker needed; asset bundling is disabled in the tests).
+      - name: Run CDK assertion tests
+        run: npm test
+        working-directory: backend/infrastructure
+        env:
+          CI: "true"

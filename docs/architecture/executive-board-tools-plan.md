@@ -121,8 +121,19 @@ denial from the existing client stays on. Message bodies are stored with a
   filtered by role and by the current permission matrix **before** the
   schemas are sent to the model, so a role never sees tools it cannot use.
 - **Execution**: tool executors run inside `AdminApiFn` with short
-  timeouts (10 s default, 25 s for GitHub search and Meta insights). Slow
-  or failing tools return a structured error the model can reason about.
+  timeouts (`toolCallTimeoutSeconds` 10 s default; `toolCallTimeoutSlowSeconds`
+  25 s for GitHub search / file / security alerts and Meta insights,
+  comments, ad spend and WhatsApp templates). Slow or failing tools return
+  a structured error the model can reason about.
+- **Wall-clock budget**: a persona turn is bounded by `chatToolLoopMaxSeconds`
+  (120 s) or `meetingToolLoopMaxSeconds` (60 s). Every model call inside the
+  loop is capped at the smaller of the OpenRouter timeout and the seconds
+  left; ops late in the turn are clamped the same way; calls requested after
+  the deadline are answered with a structured "time budget exhausted" error;
+  the final answer call gets at least 45 s. A chat turn therefore ends within
+  ~165 s (below `chatPollDeadlineMs` 270 s and the 300 s Lambda) and a
+  meeting member within ~105 s. The daily budget is re-checked before every
+  tool round, not only before the turn.
 
 ## 4. Connector inventory
 
@@ -133,7 +144,7 @@ denial from the existing client stays on. Message bodies are stored with a
 | `stores` | App Store Connect API, Google Play Developer API | downloads, installs, crashes, ratings, review text, review status | reply to review, release notes draft | reply to review | Two key pairs in Secrets Manager; App Store Connect JWT signed in Lambda |
 | `web` | GA4 Data API + GTM (several properties / containers) | sessions, top pages, referrers, conversions, live container version | GTM publish (T8c) | — | Dedicated service account; see §5.8 |
 | `ads` | Google Ads (T8b) | spend, campaigns | new campaign | campaign within USD 50 / month cap | Developer token + OAuth; not the Analytics SA |
-| `mail` | All `siutindei.com` mailboxes | thread list, thread body, attachments (PDF text), sender history | reply, new email, forward to provider | reply/new email to allow-listed recipients | Design in §5.2 |
+| `mail` | All `siutindei.com` mailboxes | thread list, thread body, attachment names (PDF text not extracted), sender history | reply, new email, forward to provider | reply/new email to allow-listed recipients | Design in §5.2 |
 | `meta` | Facebook Page, Instagram, WhatsApp Cloud API | Page/IG insights, comments, DMs, WhatsApp threads, template status, ad account spend and results | post, story, reply to comment/DM, WhatsApp reply outside 24-h window (template), new ad set | reply inside open WhatsApp window, reply to comments, boost within cap | Design in §5.3 |
 | `finance` | This admin app's Siu Tin Dei finance sheets + receivables | balances, cash-flow, subscriptions, invoices, overdue list, unit economics | create invoice, send invoice, dunning reminder, price change proposal | send dunning reminder to allow-listed provider | Design in §5.4–5.6 |
 | `research` | Web search API (Brave Search or OpenRouter `:online` models) | competitor pages, HK market news, EDB/holiday calendars, venue listings | — | — | Read-only; results cached 24 h |
@@ -150,8 +161,9 @@ tools add on-demand `search_issues`, `get_issue`, `list_pull_requests`,
 `get_workflow_runs`, `get_file`, `list_security_alerts`. Writes use one
 fine-grained token restricted to the `siutindei` repo with `issues: write`,
 `pull_requests: read`, `contents: read`, `security_events: read`. The
-existing `GitHubReadToken` secret is replaced by `GitHubBoardToken`; the
-CDK condition and policy pattern stay identical.
+existing `GitHubReadTokenSecretArn` stack parameter **is** the board token:
+point it at the fine-grained token above (no separate `GitHubBoardToken`
+parameter exists); the CDK condition and policy pattern stay identical.
 
 ### 5.2 Email — every `siutindei.com` mailbox
 
@@ -173,8 +185,10 @@ client changes.
    `inbound-raw/siutindei/`. No DNS change on `siutindei.com` is needed
    for reading.
 2. **Index**: a new S3 event branch in `inbound_email_handler.py`
-   (`board_mail.py`) parses headers, text body, and PDF attachments (via the
-   existing statement-parser text extraction), masks PII (§2.3) and writes
+   (`board_mail.py`) parses headers, text body and `text/*` attachments (PDF
+   attachments are listed by name only; their text is not extracted because
+   no local PDF reader ships in the Lambda bundle — see §12), masks PII
+   (§2.3) and writes
    `BOARD#MAIL#<threadId>` / `MSG#<ts>` rows plus a per-mailbox unread
    counter. Bank alert emails (§5.6) are routed from here to the receivables
    matcher.
@@ -187,8 +201,9 @@ client changes.
    unchanged so the owner's client keeps the thread. All outbound is BCC'd
    back into the index.
 4. **Levels**: CEO/COO/CMO/CFO `propose` by default; `act` only to
-   allow-listed providers and vendors. CISO reads only, and gets a
-   `report_phishing` tool that flags a thread to the owner.
+   allow-listed providers and vendors. CISO reads only, and gets
+   `mail_report_phishing` (available at mail **read**) that always queues
+   to Approvals and, once approved, opens a now-priority action.
 
 ### 5.3 Meta — Facebook Page, Instagram, WhatsApp on the existing number
 
@@ -223,7 +238,9 @@ client changes.
   (`metaAdsDailyUsd`, default 10) and monthly (`metaAdsMonthlyUsd`, default
   50) caps on the Tools card. Hitting either (recorded board commitment plus
   Graph month-to-date spend) downgrades the call to `propose`. `act` runs
-  when the global mode is `act` and the proposed budget still fits.
+  when the global mode is `act` and the proposed budget still fits. This
+  supersedes the "new ad set: propose" cell in §4: an ad set inside both caps
+  may run at `act`; one that would breach a cap is always a proposal.
 
 ### 5.4 Receivables — paid listings, paid offline
 
@@ -249,8 +266,12 @@ imported into the `lxsoftware` stack as parameters. Writes are limited to
 
 **Mirror**: a nightly Scheduler job (`board_receivables_mirror`) writes
 issued invoices as receivable rows and matched payments as income rows into
-the Siu Tin Dei finance sheet (`finance_store.py`), tagged
-`source=receivables` so re-runs are idempotent.
+the Siu Tin Dei finance sheet (`finance_store.py`). Idempotence is by line
+id: invoice lines are `recv-inv-<invoiceId>`, payment lines
+`recv-pay-<paymentId>`, every line carries `source: "receivables"`; each run
+computes the full desired set, upserts by id and removes `recv-*` lines that
+are no longer desired (a paid invoice keeps only its payment line). Manual
+lines are never touched.
 
 ### 5.5 CFO / COO finance tools
 
@@ -258,7 +279,7 @@ the Siu Tin Dei finance sheet (`finance_store.py`), tagged
 |------|-----------------|--------------|
 | `list_subscriptions`, `list_invoices`, `aging_report` | read | Standard receivables views incl. DSO, past-due by provider |
 | `unit_economics` | read | Revenue per provider/store, cost per acquisition from `aws` + `meta` spend, gross margin |
-| `draft_invoice` | propose | Creates a `draft` invoice with a unique FPS reference; PDF rendered by a small template Lambda into S3 |
+| `draft_invoice` | propose | Creates a `draft` invoice with a unique FPS reference; PDF is rendered in `AdminApiFn` and stored under `board/invoices/` on the assets bucket |
 | `send_invoice` | propose → act for allow-listed payers | Emails the invoice from `billing@siutindei.com` |
 | `send_reminder` | propose → act for allow-listed payers | Dunning at D+7 / D+21 / D+35, email or WhatsApp template |
 | `match_payment` | act | Attaches a `payments` row to an invoice when reference and amount agree; otherwise `propose` with candidates |
@@ -319,7 +340,12 @@ needs without giving the LLM raw table access:
   edit, subscription status.
 
 The `product` tools call these views only; parameters are limited to date
-ranges and district/category filters.
+ranges and district/category filters. The views are written against the
+live siutindei Alembic schema (`organizations`, `activities`,
+`locations` + `geographic_areas`, `activity_categories`, pricing and
+schedule). There is no `stores` table — venues are `locations`. Funnel
+rows live in `listing_events_daily` (created by the same SQL file) until
+the product writes daily events.
 
 ### 5.8 Web — GA4, GTM, later Ads
 
@@ -382,7 +408,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | Area | Change |
 |------|--------|
 | `backend/lambda/admin/` | New `board_tools.py` (registry, loop, level enforcement, audit), `board_mail.py`, `board_meta.py`, `board_receivables.py`, `board_product.py`, `board_stores.py`, `board_aws.py`, `board_research.py`; `board_github.py` gains write and search calls; `openrouter_client.py` gains tool-call support; `board_meeting.py` and `board_chat.py` call the loop |
-| Routes | `GET/POST /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `GET …/board/receivables/*`, `POST /webhooks/meta` (no JWT, HMAC-verified), `GET /webhooks/meta` (verify) |
+| Routes | `GET /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/tools/calls` (audit log), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `POST …/board/mail/{threadId}/read`, `GET …/board/receivables` (aging for the owner), `POST /webhooks/meta` (no JWT, HMAC-verified, throttled), `GET /webhooks/meta` (verify). Proposals are created only by the tool loop, never by a `POST …/approvals` route. |
 | DynamoDB | `BOARD#TOOLCALL#`, `BOARD#APPROVAL#`, `BOARD#MAIL#`, `BOARD#META#`, `BOARD#CACHE#`, `BOARD#USAGE#` prefixes; all covered by the existing `BOARD#` scan filter |
 | Contracts | `contracts/board-tools.json`: tool ids, default matrix, `maxToolRoundsPerTurn`, `toolResultMaxChars`, cap names; synced to Python, TS and CDK |
 | Secrets / params | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `GoogleAnalyticsServiceAccount` (dedicated, not Play), `Ga4PropertyIds`, `GtmContainers`, `SearchApiKey`, `BankApiKey` (if an API-first account is chosen), plus `SiutindeiClusterArn` and `SiutindeiDbSecretArn` parameters for the Data API — each behind a `has…` condition like the GitHub secret today |
@@ -423,6 +449,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | T8 ✅ | `web`: GA4 reads + GTM live version, multi-id lists, hourly cache | T1, T2 |
 | T8b | `ads`: Google Ads spend / campaigns + propose campaign (USD 50 / month cap) | T7, T8 |
 | T8c | `gtm_propose_publish` always Approvals | T8 |
+| Follow-ups | Meeting action writes, Meta spend in unit economics, product views vs live schema, 25s timeouts, stable Meta PII, `mail_report_phishing`, invoice PDF, WhatsApp templates, owner-friendly approval edit | T1–T8 |
 
 Each milestone ships behind the global mode switch and adds its own
 Python unit tests (`test_board_tools.py`, fakes for every external API)
@@ -441,3 +468,27 @@ blocking, and the board itself can work on them now that T1–T4 have shipped:
 
 Next sign-off: **T8b** (Google Ads) when scheduled. T8c is GTM publish
 (always Approvals). T4b waits on the HK account.
+
+## 12. Known gaps
+
+Shipped behaviour that is narrower than the connector table in §4; each tool
+description says so to the model.
+
+- **Stores metrics**: App Store Connect downloads come from the daily
+  `salesReports` summary and Google Play crash rate from
+  `crashRateMetricSet`; installs are not available from either API and are
+  returned as `null`. Ratings, reviews and review replies are complete.
+- **Mail attachments**: PDF attachment text is not extracted into threads
+  (no local PDF text extractor in the Lambda bundle); PDFs are listed by name
+  and size, and the statement-parser path handles bank statements separately.
+- **Bank alerts**: the "hook bank alerts to receivables" flow waits on T4b
+  (which HK account is chosen); until then payments are matched from FPS
+  references in imported statements and manual records.
+- **`listing_events_daily`** has no writer in the siutindei product yet, so
+  `product_funnel` returns empty rows until that lands (tracked in
+  `scripts/siutindei/receivables.sql`).
+- **GitHub discussions**: not readable (GraphQL only); releases are.
+- **Research quota**: search calls are counted per day in
+  `BOARD#USAGE#external`; the OpenRouter `:online` fallback is billed to the
+  daily budget. There is no hard cap on search calls yet, only visibility on
+  the Settings card.

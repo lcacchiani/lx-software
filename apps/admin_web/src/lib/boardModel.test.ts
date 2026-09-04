@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BOARD_PERSONA_DEFAULTS } from "./contracts/generated";
 import {
+  approvalEditableFields,
   formatUsageCost,
   groupActionsByPriority,
   MAIL_ALLOW_LIST_ENTRY_RE,
@@ -106,6 +107,39 @@ describe("allow-list parsing", () => {
       "coach@swimhk.example",
       "+85291234567",
     ]);
+  });
+});
+
+describe("approvalEditableFields", () => {
+  const preview = {
+    kind: "email" as const,
+    from: "hello@siutindei.com",
+    to: ["parent@example.com"],
+    cc: [],
+    subject: "Class on Saturday",
+    text: "Hello Wendy, see you Saturday",
+    threadId: "t1",
+    sendEnabled: true,
+  };
+
+  it("offers only the body for a reply (subject comes from the thread)", () => {
+    const fields = approvalEditableFields({ threadId: "t1", body: "Hello contact#3, see you Saturday", reason: "Reply" }, preview);
+    expect(fields.map((f) => f.key)).toEqual(["body"]);
+    expect(fields[0].value).toBe("Hello Wendy, see you Saturday");
+  });
+
+  it("offers subject and body for a new email", () => {
+    const fields = approvalEditableFields(
+      { fromMailbox: "hello", to: ["parent@example.com"], subject: "Class on Saturday", body: "Hello", reason: "New" },
+      preview,
+    );
+    expect(fields.map((f) => f.key)).toEqual(["subject", "body"]);
+    expect(fields[0].value).toBe("Class on Saturday");
+  });
+
+  it("exposes message text for Meta writes", () => {
+    const fields = approvalEditableFields({ message: "Boost this", reason: "Launch" });
+    expect(fields).toEqual([{ key: "message", label: "Message", multiline: true, value: "Boost this" }]);
   });
 });
 

@@ -26,12 +26,13 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from admin_runtime import _get_secretsmanager_client
+import board_deadline
 from http_common import _log_event, _utc_iso_z
 from openrouter_client import OpenRouterError, read_secret_string
 
 DEFAULT_REPO = "lx-software-ltd/siutindei"
 API_ORIGIN = "https://api.github.com"
-HTTP_TIMEOUT_SECONDS = 20
+HTTP_TIMEOUT_SECONDS = 25
 MAX_DOC_CHARS = 6000
 MAX_TOTAL_CHARS = 32000
 MAX_DOC_FILES = 6
@@ -43,6 +44,10 @@ MAX_ISSUE_BODY_CHARS = 4000
 MAX_COMMENT_CHARS = 1500
 MAX_COMMENTS = 10
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._\-/ ]+$")
+# ``repo:``, ``org:`` and ``user:`` qualifiers would let a search escape the
+# board's repository; they are stripped (quoted or bare values) before the
+# repo qualifier is applied.
+_SCOPE_QUALIFIER_RE = re.compile(r"(?<!\S)-?(?:repo|org|user):(?:\"[^\"]*\"|\S+)", re.IGNORECASE)
 
 _token_cache: str | None = None
 _token_checked = False
@@ -51,9 +56,47 @@ _token_checked = False
 class GitHubSnapshotError(RuntimeError):
     """User-facing failure while talking to GitHub."""
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(self, message: str, *, status: int | None = None, retry_after: int | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.retry_after = retry_after
+
+
+def _header(headers: Any, name: str) -> str | None:
+    """Case-insensitive header lookup over ``HTTPMessage`` or a plain dict."""
+    if headers is None:
+        return None
+    getter = getattr(headers, "get", None)
+    if callable(getter):
+        value = getter(name)
+        if value is None and isinstance(headers, dict):
+            lowered = name.lower()
+            value = next((v for k, v in headers.items() if str(k).lower() == lowered), None)
+        return str(value) if value is not None else None
+    return None
+
+
+def _rate_limit_wait_seconds(exc: urlerror.HTTPError) -> int | None:
+    """Seconds to wait when GitHub signalled a rate limit, else ``None``."""
+    if exc.code not in (403, 429):
+        return None
+    headers = getattr(exc, "headers", None)
+    retry_after = _header(headers, "Retry-After")
+    if retry_after:
+        try:
+            return max(1, int(float(retry_after)))
+        except ValueError:
+            return 60
+    remaining = _header(headers, "X-RateLimit-Remaining")
+    if remaining is not None and remaining.strip() == "0":
+        reset = _header(headers, "X-RateLimit-Reset")
+        try:
+            reset_at = int(float(reset)) if reset else 0
+        except ValueError:
+            reset_at = 0
+        now = int(datetime.now(timezone.utc).timestamp())
+        return max(1, reset_at - now) if reset_at else 60
+    return None
 
 
 GitHubApiError = GitHubSnapshotError
@@ -125,11 +168,17 @@ def _request(
         headers["Content-Type"] = "application/json"
     req = urlrequest.Request(url, data=data, method=method, headers=headers)  # noqa: S310 - fixed API origin
     try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with urlrequest.urlopen(req, timeout=board_deadline.remaining(timeout)) as resp:  # noqa: S310
             text = resp.read().decode("utf-8", errors="replace")
     except urlerror.HTTPError as exc:
         if exc.code == 404 and method == "GET":
             return None
+        wait = _rate_limit_wait_seconds(exc)
+        if wait is not None:
+            _log_event("warning", tag="board_github_rate_limited", status=exc.code, retryAfter=wait, path=path[:120])
+            raise GitHubSnapshotError(
+                f"GitHub rate limit; retry after {wait}s", status=exc.code, retry_after=wait
+            ) from exc
         detail = ""
         try:
             payload = json.loads(exc.read().decode("utf-8", errors="replace"))
@@ -392,9 +441,19 @@ def _issue_summary(it: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def strip_scope_qualifiers(query: str) -> tuple[str, list[str]]:
+    """Remove ``repo:``/``org:``/``user:`` qualifiers; return (query, removed)."""
+    removed = [m.group(0) for m in _SCOPE_QUALIFIER_RE.finditer(query)]
+    cleaned = " ".join(_SCOPE_QUALIFIER_RE.sub(" ", query).split())
+    return cleaned, removed
+
+
 def op_search_issues(args: dict[str, Any]) -> dict[str, Any]:
     repo = repo_full_name()
     query = " ".join(str(args.get("query") or "").split())[:200]
+    query, stripped = strip_scope_qualifiers(query)
+    if stripped:
+        _log_event("info", tag="board_github_search_qualifiers_stripped", stripped=stripped[:5])
     state = str(args.get("state") or "open").lower()
     if state not in ("open", "closed", "all"):
         state = "open"
@@ -412,12 +471,43 @@ def op_search_issues(args: dict[str, Any]) -> dict[str, Any]:
     data = _get(f"/search/issues?q={urlparse.quote(' '.join(q_parts))}&per_page={limit}&sort=updated")
     items = data.get("items") if isinstance(data, dict) else None
     results = [_issue_summary(it) for it in (items or []) if isinstance(it, dict)]
-    return {
+    out: dict[str, Any] = {
         "repo": repo,
         "query": " ".join(q_parts),
         "totalCount": int(data.get("total_count") or 0) if isinstance(data, dict) else 0,
         "items": results,
     }
+    if stripped:
+        out["strippedQualifiers"] = stripped
+        out["note"] = f"Search is limited to {repo}; repo:/org:/user: qualifiers were ignored."
+    return out
+
+
+def op_list_releases(args: dict[str, Any]) -> dict[str, Any]:
+    """GitHub releases (REST). Discussions need GraphQL and are not exposed."""
+    repo = repo_full_name()
+    limit = _clamp_int(args.get("limit"), default=10, low=1, high=MAX_TOOL_LIST)
+    raw = _get(f"/repos/{repo}/releases?per_page={limit}")
+    items: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for rel in raw:
+            if not isinstance(rel, dict):
+                continue
+            items.append(
+                {
+                    "id": rel.get("id"),
+                    "tag": rel.get("tag_name"),
+                    "name": _cap(str(rel.get("name") or rel.get("tag_name") or ""), 120),
+                    "draft": bool(rel.get("draft")),
+                    "prerelease": bool(rel.get("prerelease")),
+                    "author": ((rel.get("author") or {}).get("login") if isinstance(rel.get("author"), dict) else None),
+                    "createdAt": rel.get("created_at"),
+                    "publishedAt": rel.get("published_at"),
+                    "notes": _cap(str(rel.get("body") or ""), MAX_COMMENT_CHARS),
+                    "url": rel.get("html_url"),
+                }
+            )
+    return {"repo": repo, "items": items}
 
 
 def op_get_issue(args: dict[str, Any]) -> dict[str, Any]:

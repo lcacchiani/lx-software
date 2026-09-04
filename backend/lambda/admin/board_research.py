@@ -25,8 +25,10 @@ from contract_constants import (
     BOARD_RESEARCH_QUERY_MAX_LEN,
 )
 from http_common import _log_event
-from openrouter_client import OpenRouterError, chat_completion, read_secret_string
+from openrouter_client import OpenRouterError, read_secret_string
 
+import board_budget
+import board_deadline
 import board_store
 
 BRAVE_ORIGIN = "https://api.search.brave.com"
@@ -141,7 +143,7 @@ def _brave_search(query: str, *, count: int) -> list[dict[str, Any]]:
         },
     )
     try:
-        with urlrequest.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310
+        with urlrequest.urlopen(req, timeout=board_deadline.remaining(HTTP_TIMEOUT_SECONDS)) as resp:  # noqa: S310
             body = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
     except urlerror.HTTPError as exc:
         raise ResearchError(f"Brave Search returned status {exc.code}") from exc
@@ -167,9 +169,10 @@ def _brave_search(query: str, *, count: int) -> list[dict[str, Any]]:
     return out
 
 
-def _openrouter_online(query: str, *, count: int) -> list[dict[str, Any]]:
-    """Last-resort fallback when no Brave key is set."""
-    completion = chat_completion(
+def _openrouter_online(table: Any, query: str, *, count: int) -> list[dict[str, Any]]:
+    """Last-resort fallback when no Brave key is set; billed against the daily board budget."""
+    completion = board_budget.board_completion(
+        table=table,
         messages=[
             {
                 "role": "system",
@@ -184,7 +187,8 @@ def _openrouter_online(query: str, *, count: int) -> list[dict[str, Any]]:
         model="openrouter/auto:online",
         max_tokens=1200,
         temperature=0.1,
-        timeout_seconds=HTTP_TIMEOUT_SECONDS + 15,
+        timeout=HTTP_TIMEOUT_SECONDS + 15,
+        tag="board_research_online",
     )
     text = (completion.text or "").strip()
     try:
@@ -210,13 +214,22 @@ def _openrouter_online(query: str, *, count: int) -> list[dict[str, Any]]:
     return out
 
 
-def _live_search(query: str, *, count: int) -> tuple[list[dict[str, Any]], str]:
+def _live_search(table: Any, query: str, *, count: int) -> tuple[list[dict[str, Any]], str]:
     if _brave_key():
-        return _brave_search(query, count=count), "brave"
-    if (os.environ.get("OPENROUTER_API_KEY") or "").strip() or (
+        results = _brave_search(query, count=count), "brave"
+    elif (os.environ.get("OPENROUTER_API_KEY") or "").strip() or (
         os.environ.get("OPENROUTER_API_KEY_SECRET_ARN") or ""
     ).strip():
-        return _openrouter_online(query, count=count), "openrouter_online"
+        results = _openrouter_online(table, query, count=count), "openrouter_online"
+    else:
+        results = None
+    if results is not None:
+        # Cache misses are the only calls that cost quota; the owner sees the count in settings.
+        try:
+            board_store.add_external_usage_day(table, "searchCalls")
+        except Exception as exc:  # pragma: no cover - accounting must not break the search
+            _log_event("warning", tag="board_research_usage_failed", error=str(exc)[:200])
+        return results
     raise ResearchError(
         "Web search is not configured. Set SearchApiKeySecretArn (Brave) or rely on the existing OpenRouter key."
     )
@@ -229,7 +242,7 @@ def _run_search(ctx: Any, query: str, *, kind: str, count: int | None = None) ->
     cached = _from_cache(ctx.table, name)
     if cached:
         return cached
-    results, source = _live_search(q, count=limit)
+    results, source = _live_search(ctx.table, q, count=limit)
     payload = {"kind": kind, "query": q, "source": source, "results": results}
     stored = _store(ctx.table, name, payload)
     _log_event("info", tag="board_research", kind=kind, source=source, n=len(results))

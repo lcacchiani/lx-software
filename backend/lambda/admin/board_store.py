@@ -104,6 +104,27 @@ def _put_state(table: Any, suffix: str, doc: dict[str, Any]) -> None:
     )
 
 
+def _put_state_if_version(table: Any, suffix: str, doc: dict[str, Any], *, attr: str, expected: Any) -> bool:
+    """Optimistic write: succeed only when the stored ``attr`` still equals ``expected``.
+
+    ``expected=None`` means "no item yet". Returns False on a version conflict.
+    """
+    kwargs: dict[str, Any] = {"ConditionExpression": "attribute_not_exists(pk)"}
+    if expected is not None:
+        kwargs = {
+            "ConditionExpression": "attribute_not_exists(pk) OR #v = :expected",
+            "ExpressionAttributeNames": {"#v": attr},
+            "ExpressionAttributeValues": {":expected": expected},
+        }
+    try:
+        table.put_item(Item={"pk": board_pk(suffix), "sk": "STATE", **_to_ddb_nested(doc)}, **kwargs)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
+
+
 def _query_all(table: Any, **kwargs: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     start_key: dict[str, Any] | None = None
@@ -838,15 +859,22 @@ def set_mail_thread_unread(table: Any, thread_id: str, *, unread: bool) -> None:
     )
 
 
+def mail_message_key(thread_id: str, received_at: str, message_id: str) -> dict[str, str]:
+    return {"pk": board_pk(f"mail#thread#{thread_id}"), "sk": f"MSG#{received_at}#{message_id}"}
+
+
 def put_mail_message(table: Any, doc: dict[str, Any]) -> None:
     table.put_item(
         Item={
-            "pk": board_pk(f"mail#thread#{doc['threadId']}"),
-            "sk": f"MSG#{doc['receivedAt']}#{doc['messageId']}",
+            **mail_message_key(str(doc["threadId"]), str(doc["receivedAt"]), str(doc["messageId"])),
             "expiresAt": _mail_expires_at(),
             **_to_ddb_nested(doc),
         }
     )
+
+
+def delete_mail_message(table: Any, thread_id: str, received_at: str, message_id: str) -> None:
+    table.delete_item(Key=mail_message_key(thread_id, received_at, message_id))
 
 
 def list_mail_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
@@ -861,6 +889,11 @@ def list_mail_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
 
 def _msgid_key(digest: str) -> dict[str, str]:
     return {"pk": board_pk("mail#msgids"), "sk": f"MSGID#{digest}"}
+
+
+def delete_mail_msgid(table: Any, digest: str) -> None:
+    """Undo :func:`put_mail_msgid` when the message it claimed could not be stored."""
+    table.delete_item(Key=_msgid_key(digest))
 
 
 def put_mail_msgid(table: Any, digest: str, *, thread_id: str, message_id: str) -> bool:
@@ -947,6 +980,28 @@ def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:
             ":calls": int(calls),
         },
     )
+
+
+def external_usage_day_key(date_iso: str | None = None) -> str:
+    day = date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"usage#external#{day}"
+
+
+def add_external_usage_day(table: Any, field_name: str, amount: int = 1) -> None:
+    """Count one third-party API call (e.g. ``searchCalls``) against today."""
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9]{0,40}", field_name):
+        raise ValueError("invalid usage field name")
+    table.update_item(
+        Key={"pk": board_pk(external_usage_day_key()), "sk": "STATE"},
+        UpdateExpression="ADD #f :n",
+        ExpressionAttributeNames={"#f": field_name},
+        ExpressionAttributeValues={":n": int(amount)},
+    )
+
+
+def load_external_usage_day(table: Any, date_iso: str | None = None) -> dict[str, Any]:
+    stored = _get_state(table, external_usage_day_key(date_iso)) or {}
+    return {"searchCalls": int(stored.get("searchCalls") or 0)}
 
 
 def ads_usage_day_key(date_iso: str | None = None) -> str:
@@ -1044,6 +1099,23 @@ def put_meta_message(table: Any, doc: dict[str, Any]) -> None:
             **_to_ddb_nested(doc),
         }
     )
+
+
+def put_meta_message_if_new(table: Any, doc: dict[str, Any]) -> bool:
+    """Like :func:`put_meta_message` but returns False when the row already exists (webhook redelivery)."""
+    item = {
+        "pk": board_pk(f"meta#thread#{doc['threadId']}"),
+        "sk": f"MSG#{doc['receivedAt']}#{doc['messageId']}",
+        "expiresAt": _meta_expires_at(),
+        **_to_ddb_nested(doc),
+    }
+    try:
+        table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
 
 
 def list_meta_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:

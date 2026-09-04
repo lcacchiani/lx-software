@@ -22,19 +22,41 @@ from test_board_tools import ToolsTestCase
 
 
 class FakeGraph:
+    """Stands in for ``board_meta._urlopen``.
+
+    ``queue`` entries are served first (a dict payload, or an exception to raise);
+    otherwise the URL picks a canned payload. ``tokens`` records each
+    ``Authorization`` header so tests can prove the token never rides the URL.
+    """
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        self.tokens: list[str] = []
+        self.queue: list[Any] = []
 
     def __call__(self, req: urlrequest.Request, timeout=None):  # noqa: ARG002
         method = req.get_method()
         url = req.full_url
         body = json.loads(req.data.decode("utf-8")) if req.data else None
         self.calls.append((method, url, body))
-        if "/insights" in url:
+        self.tokens.append(str(req.get_header("Authorization") or ""))
+        if self.queue:
+            payload = self.queue.pop(0)
+            if isinstance(payload, BaseException):
+                raise payload
+        elif "/insights" in url:
             if "/act_" in url:
                 payload: Any = {"data": [{"spend": "0.00", "impressions": "1", "clicks": "0"}]}
             else:
                 payload = {"data": [{"name": "page_impressions", "values": [{"value": 12}]}]}
+        elif "/message_templates" in url:
+            payload = {
+                "data": [
+                    {"name": "hello_world", "status": "APPROVED", "language": "en", "category": "UTILITY"}
+                ]
+            }
+        elif "fields=whatsapp_business_account" in url or "whatsapp_business_account" in url:
+            payload = {"whatsapp_business_account": {"id": "waba-1"}}
         elif "/feed" in url and method == "GET":
             payload = {
                 "data": [
@@ -163,8 +185,9 @@ class TestMetaTools(MetaTestCase):
         insights = board_meta.op_page_insights(ctx, {})
         self.assertEqual(insights["count"], 1)
         comments = board_meta.op_list_comments(ctx, {})
-        self.assertIn("contact#hidden", comments["posts"][0]["message"])
-        self.assertIn("phone#hidden", comments["posts"][0]["comments"][0]["message"])
+        self.assertNotIn("wendy.chan@gmail.com", json.dumps(comments))
+        self.assertIn("contact#", comments["posts"][0]["message"])
+        self.assertIn("phone#", comments["posts"][0]["comments"][0]["message"])
         spend = board_meta.op_ad_spend(ctx, {})
         self.assertEqual(spend["adAccountId"], "act_99")
         self.assertTrue(any("/page-1/insights" in url for _m, url, _b in self.graph.calls))
@@ -183,49 +206,54 @@ class TestMetaTools(MetaTestCase):
 
     def test_whatsapp_act_requires_window_and_allow_list(self) -> None:
         now = datetime.now(timezone.utc)
-        board_store.put_meta_thread(
-            self.table,
-            {
-                "threadId": "th-open",
-                "channel": "whatsapp",
-                "lastInboundAt": now.isoformat().replace("+00:00", "Z"),
-                "unread": True,
-            },
-        )
-        board_store.put_meta_thread(
-            self.table,
-            {
-                "threadId": "th-old",
-                "channel": "whatsapp",
-                "lastInboundAt": (now - timedelta(hours=30)).isoformat().replace("+00:00", "Z"),
-                "unread": True,
-            },
-        )
+        # The window is keyed by the recipient number, so the stored thread id
+        # must be the one the webhook would derive for that number.
         settings = board_store.load_settings(self.table)
         settings["tools"]["globalMode"] = "act"
         settings["tools"]["allowList"] = ["+85291234567"]
         board_store.save_settings(self.table, settings)
         ctx = ToolContext(table=self.table, settings=settings, persona_id="coo", actor="persona")
+        board_store.put_meta_thread(
+            self.table,
+            {
+                "threadId": board_meta.whatsapp_thread_id("+85291234567"),
+                "channel": "whatsapp",
+                "senderId": "85291234567",
+                "lastInboundAt": (now - timedelta(hours=30)).isoformat().replace("+00:00", "Z"),
+                "unread": True,
+            },
+        )
         blocked_window = execute_call(
             ctx,
             REGISTRY["meta_reply_whatsapp"],
-            {"to": "+85291234567", "threadId": "th-old", "message": "Hi", "reason": "Follow up."},
+            {"to": "+85291234567", "message": "Hi", "reason": "Follow up."},
         )
         self.assertEqual(blocked_window.status, "pending_approval")
         self.assertIn("24-hour", blocked_window.result["message"])
+        board_store.put_meta_thread(
+            self.table,
+            {
+                "threadId": board_meta.whatsapp_thread_id("+85291234567"),
+                "channel": "whatsapp",
+                "senderId": "85291234567",
+                "lastInboundAt": now.isoformat().replace("+00:00", "Z"),
+                "unread": True,
+            },
+        )
         blocked_list = execute_call(
             ctx,
             REGISTRY["meta_reply_whatsapp"],
-            {"to": "+85299999999", "threadId": "th-open", "message": "Hi", "reason": "Follow up."},
+            {"to": "+85299999999", "message": "Hi", "reason": "Follow up."},
         )
         self.assertEqual(blocked_list.status, "pending_approval")
         self.assertIn("allow-list", blocked_list.result["message"])
         ok = execute_call(
             ctx,
             REGISTRY["meta_reply_whatsapp"],
-            {"to": "+85291234567", "threadId": "th-open", "message": "Hi", "reason": "In window."},
+            {"to": "+85291234567", "message": "Hi", "reason": "In window."},
         )
         self.assertEqual(ok.status, "ok")
+        self.assertEqual(ok.result["threadId"], board_meta.whatsapp_thread_id("+85291234567"))
 
     def test_ad_set_over_cap_is_forced_to_propose(self) -> None:
         ctx = self._ctx("cmo", global_mode="act")

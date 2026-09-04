@@ -197,6 +197,12 @@ export function BoardSettingsCard({
           <div className="form-text">
             Spent today: {formatUsageCost(overview.usageToday.cost)} over {overview.usageToday.calls ?? 0} calls. Chats and meetings are refused once the cap is reached (resets at midnight UTC). Set 0 to disable the cap.
           </div>
+          {overview.usageToday.external ? (
+            <div className="form-text">
+              External APIs: {overview.usageToday.external.searchCalls} web searches today · Meta ads USD{" "}
+              {overview.usageToday.external.metaAdsMonthUsd.toFixed(2)} this month
+            </div>
+          ) : null}
         </div>
       </div>
     </AdminEditorSection>

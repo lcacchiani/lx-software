@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { DateTimeDisplay } from "../ui";
 import {
   APPROVAL_STATUS_BADGE_CLASS,
+  approvalEditableFields,
   isMailPreview,
+  isPhishingPreview,
   memberLabel,
   PHASE_LABELS,
   type BoardApproval,
   type BoardMailPreview,
   type BoardMember,
+  type BoardPhishingPreview,
 } from "../../lib/boardModel";
 import { BOARD_MAX_APPROVAL_NOTE_LEN } from "../../lib/contracts/generated";
 import type { ApprovalDecisionVariables } from "../../hooks/useBoardApprovals";
@@ -46,6 +49,17 @@ function ArgumentsTable({ args }: { readonly args: Readonly<Record<string, unkno
         ))}
       </tbody>
     </table>
+  );
+}
+
+function PhishingPreviewCard({ preview }: { readonly preview: BoardPhishingPreview }) {
+  return (
+    <div className="border rounded bg-body-tertiary p-2 small">
+      <div className="fw-semibold">Suspected phishing</div>
+      <div className="text-muted">{preview.mailbox} · {preview.from}</div>
+      <div className="mt-1">{preview.subject || "(no subject)"}</div>
+      {preview.note ? <pre className="mb-0 mt-1 board-mail-body">{preview.note}</pre> : null}
+    </div>
   );
 }
 
@@ -102,6 +116,8 @@ export function BoardApprovalsList({
   const [showDecided, setShowDecided] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [editingArgsId, setEditingArgsId] = useState<string | null>(null);
+  const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({});
+  const [rawJsonMode, setRawJsonMode] = useState(false);
   const [argsDraft, setArgsDraft] = useState("");
   const [argsError, setArgsError] = useState<string | null>(null);
 
@@ -123,24 +139,39 @@ export function BoardApprovalsList({
 
   const startEditArgs = (a: BoardApproval) => {
     setEditingArgsId(a.approvalId);
+    const fields = approvalEditableFields(a.arguments, a.preview);
+    setFieldDrafts(Object.fromEntries(fields.map((f) => [f.key, f.value])));
+    setRawJsonMode(fields.length === 0);
     setArgsDraft(JSON.stringify(a.arguments, null, 2));
     setArgsError(null);
+  };
+
+  // Switching to raw JSON must carry the field edits along, not revert to the original.
+  const switchToRawJson = (a: BoardApproval) => {
+    setArgsDraft(JSON.stringify({ ...a.arguments, ...fieldDrafts }, null, 2));
+    setArgsError(null);
+    setRawJsonMode(true);
   };
 
   const approve = (a: BoardApproval) => {
     let override: Record<string, unknown> | undefined;
     if (editingArgsId === a.approvalId) {
-      try {
-        const parsed: unknown = JSON.parse(argsDraft);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Arguments must be a JSON object.");
-        override = parsed as Record<string, unknown>;
-      } catch (err) {
-        setArgsError(err instanceof Error ? err.message : "Invalid JSON.");
-        return;
+      if (rawJsonMode) {
+        try {
+          const parsed: unknown = JSON.parse(argsDraft);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Arguments must be a JSON object.");
+          override = parsed as Record<string, unknown>;
+        } catch (err) {
+          setArgsError(err instanceof Error ? err.message : "Invalid JSON.");
+          return;
+        }
+      } else {
+        override = { ...a.arguments, ...fieldDrafts };
       }
     }
     onDecide({ approvalId: a.approvalId, decision: "approve", note: noteDrafts[a.approvalId], arguments: override });
     setEditingArgsId(null);
+    setRawJsonMode(false);
   };
 
   const renderRow = (a: BoardApproval) => {
@@ -191,22 +222,58 @@ export function BoardApprovalsList({
             <MailPreviewCard preview={a.preview} onOpenThread={onOpenMailThread} />
           </div>
         ) : null}
-        {editingArgsId !== a.approvalId && a.preview && !isMailPreview(a.preview) && "error" in a.preview ? (
+        {editingArgsId !== a.approvalId && isPhishingPreview(a.preview) ? (
+          <div className="mt-2">
+            <PhishingPreviewCard preview={a.preview} />
+          </div>
+        ) : null}
+        {editingArgsId !== a.approvalId && a.preview && !isMailPreview(a.preview) && !isPhishingPreview(a.preview) && "error" in a.preview ? (
           <div className="small mt-2 text-danger">{a.preview.error}</div>
         ) : null}
 
         {editingArgsId === a.approvalId ? (
           <div className="mt-2">
-            <textarea
-              className={`form-control form-control-sm font-monospace ${argsError ? "is-invalid" : ""}`}
-              rows={Math.min(14, Math.max(4, argsDraft.split("\n").length))}
-              value={argsDraft}
-              aria-label="Edit the proposed arguments as JSON"
-              onChange={(ev) => setArgsDraft(ev.target.value)}
-            />
-            {argsError ? <div className="invalid-feedback d-block">{argsError}</div> : null}
+            {!rawJsonMode ? (
+              <>
+                {approvalEditableFields(a.arguments, a.preview).map((field) => (
+                  <label key={field.key} className="form-label small d-block mb-2">
+                    {field.label}
+                    {field.multiline ? (
+                      <textarea
+                        className="form-control form-control-sm mt-1"
+                        rows={Math.min(10, Math.max(3, (fieldDrafts[field.key] ?? field.value).split("\n").length + 1))}
+                        value={fieldDrafts[field.key] ?? field.value}
+                        aria-label={`Edit ${field.label.toLowerCase()}`}
+                        onChange={(ev) => setFieldDrafts((d) => ({ ...d, [field.key]: ev.target.value }))}
+                      />
+                    ) : (
+                      <input
+                        className="form-control form-control-sm mt-1"
+                        value={fieldDrafts[field.key] ?? field.value}
+                        aria-label={`Edit ${field.label.toLowerCase()}`}
+                        onChange={(ev) => setFieldDrafts((d) => ({ ...d, [field.key]: ev.target.value }))}
+                      />
+                    )}
+                  </label>
+                ))}
+                <button type="button" className="btn btn-link btn-sm p-0" onClick={() => switchToRawJson(a)}>
+                  Edit raw JSON
+                </button>
+              </>
+            ) : (
+              <>
+                <textarea
+                  className={`form-control form-control-sm font-monospace ${argsError ? "is-invalid" : ""}`}
+                  rows={Math.min(14, Math.max(4, argsDraft.split("\n").length))}
+                  value={argsDraft}
+                  aria-label="Edit the proposed arguments as JSON"
+                  onChange={(ev) => setArgsDraft(ev.target.value)}
+                />
+                {argsError ? <div className="invalid-feedback d-block">{argsError}</div> : null}
+              </>
+            )}
           </div>
-        ) : isMailPreview(a.preview) ? null : (
+        ) : isMailPreview(a.preview) || isPhishingPreview(a.preview) ? null : (
           <div className="mt-2">
             <ArgumentsTable args={a.arguments} />
           </div>

@@ -179,10 +179,67 @@ export type BoardMailPreview = {
   readonly sendEnabled: boolean;
 };
 
-export type BoardApprovalPreview = BoardMailPreview | { readonly error: string };
+export type BoardPhishingPreview = {
+  readonly kind: "phishing";
+  readonly threadId: string;
+  readonly subject: string;
+  readonly mailbox: string;
+  readonly from: string;
+  readonly note: string;
+};
+
+export type BoardApprovalPreview = BoardMailPreview | BoardPhishingPreview | { readonly error: string };
 
 export function isMailPreview(preview: BoardApprovalPreview | undefined): preview is BoardMailPreview {
   return !!preview && "kind" in preview && preview.kind === "email";
+}
+
+export function isPhishingPreview(preview: BoardApprovalPreview | undefined): preview is BoardPhishingPreview {
+  return !!preview && "kind" in preview && preview.kind === "phishing";
+}
+
+export type ApprovalEditField = {
+  readonly key: string;
+  readonly label: string;
+  readonly multiline: boolean;
+  readonly value: string;
+};
+
+const APPROVAL_TEXT_FIELDS: readonly { key: string; label: string; multiline: boolean }[] = [
+  { key: "subject", label: "Subject", multiline: false },
+  { key: "title", label: "Title", multiline: false },
+  { key: "body", label: "Body", multiline: true },
+  { key: "text", label: "Message", multiline: true },
+  { key: "message", label: "Message", multiline: true },
+  { key: "detail", label: "Detail", multiline: true },
+  { key: "note", label: "Note", multiline: true },
+];
+
+/** Owner-facing text fields to edit instead of raw JSON. */
+export function approvalEditableFields(
+  args: Readonly<Record<string, unknown>>,
+  preview?: BoardApprovalPreview,
+): ApprovalEditField[] {
+  const fields: ApprovalEditField[] = [];
+  const seen = new Set<string>();
+  if (isMailPreview(preview) && "body" in args) {
+    // Only offer a subject when the op actually takes one (mail_send). Replies and
+    // forwards derive it from the thread, so an edit there would be silently dropped.
+    if ("subject" in args) {
+      fields.push({ key: "subject", label: "Subject", multiline: false, value: String(args.subject ?? "") });
+      seen.add("subject");
+    }
+    // Seed from the owner-facing preview (real addresses), not the masked model text.
+    fields.push({ key: "body", label: "Body", multiline: true, value: String(preview.text ?? args.body ?? "") });
+    seen.add("body");
+  }
+  for (const spec of APPROVAL_TEXT_FIELDS) {
+    if (seen.has(spec.key)) continue;
+    if (!(spec.key in args) || typeof args[spec.key] !== "string") continue;
+    fields.push({ ...spec, value: String(args[spec.key]) });
+    seen.add(spec.key);
+  }
+  return fields;
 }
 
 export type BoardMailAttachment = {
@@ -283,7 +340,16 @@ export type BoardUsage = {
   readonly calls?: number;
 };
 
-export type BoardUsageToday = BoardUsage & { readonly budgetUsd: number };
+/** Non-OpenRouter usage counters for the current day; absent on stacks that predate them. */
+export type BoardExternalUsageToday = {
+  readonly searchCalls: number;
+  readonly metaAdsMonthUsd: number;
+};
+
+export type BoardUsageToday = BoardUsage & {
+  readonly budgetUsd: number;
+  readonly external?: BoardExternalUsageToday;
+};
 
 export type BoardMeetingStatus = "running" | "succeeded" | "failed" | "cancelled";
 

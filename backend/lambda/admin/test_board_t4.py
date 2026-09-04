@@ -20,14 +20,21 @@ from test_board_tools import ToolsTestCase
 
 
 def _unwrap(parameters: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Mimic what Postgres would hand back for each typed parameter.
+
+    Wire format is what ``board_data_api._param`` emits: typed values arrive
+    as ``stringValue`` plus a ``typeHint``. DECIMAL becomes a float so the
+    fake's arithmetic matches the real ``numeric`` columns.
+    """
     out: dict[str, Any] = {}
     for p in parameters or []:
         name = str(p.get("name") or "")
         val = p.get("value") or {}
+        hint = str(p.get("typeHint") or "")
         if val.get("isNull"):
             out[name] = None
         elif "stringValue" in val:
-            out[name] = val["stringValue"]
+            out[name] = float(val["stringValue"]) if hint == "DECIMAL" else val["stringValue"]
         elif "longValue" in val:
             out[name] = val["longValue"]
         elif "doubleValue" in val:
@@ -39,6 +46,12 @@ def _unwrap(parameters: list[dict[str, Any]] | None) -> dict[str, Any]:
 
 def _norm(sql: str) -> str:
     return " ".join(sql.split())
+
+
+def _unique_violation(constraint: str) -> board_data_api.DataApiError:
+    return board_data_api.DataApiError(
+        f'Data API: ERROR: duplicate key value violates unique constraint "{constraint}"; SQLState: 23505'
+    )
 
 
 class FakeAurora:
@@ -53,9 +66,23 @@ class FakeAurora:
         self.funnel: list[dict[str, Any]] = []
         self.pipeline: list[dict[str, Any]] = []
         self.sqls: list[str] = []
+        self.parameters: list[list[dict[str, Any]] | None] = []
+        # When > 0, the next invoice INSERT loses a race: a competing row with
+        # the same number lands first and the statement fails with 23505.
+        self.race_invoice_inserts = 0
+
+    def _sub_rows(self, sub: dict[str, Any]) -> dict[str, Any]:
+        plan = next((pl for pl in self.plans if pl["id"] == sub.get("plan_id")), None)
+        return {
+            **sub,
+            "plan_name": (plan or {}).get("name"),
+            "price_hkd": (plan or {}).get("price_hkd"),
+            "billing_period": (plan or {}).get("billing_period"),
+        }
 
     def __call__(self, sql: str, parameters: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         self.sqls.append(sql)
+        self.parameters.append(parameters)
         p = _unwrap(parameters)
         s = _norm(sql)
         low = s.lower()
@@ -72,6 +99,26 @@ class FakeAurora:
             )
             return []
         if low.startswith("insert into invoices"):
+            if self.race_invoice_inserts > 0:
+                self.race_invoice_inserts -= 1
+                self.invoices.append(
+                    {
+                        "id": f"racer-{len(self.invoices)}",
+                        "subscription_id": p["sub"],
+                        "number": p["number"],
+                        "issued_on": p["issued"],
+                        "due_on": p["due"],
+                        "amount_hkd": p["amount"],
+                        "status": "draft",
+                        "fps_reference": f"RACE{len(self.invoices)}",
+                        "pdf_key": None,
+                    }
+                )
+                raise _unique_violation("invoices_number_key")
+            if any(i["number"] == p["number"] for i in self.invoices):
+                raise _unique_violation("invoices_number_key")
+            if any(i["fps_reference"] == p["fps"] for i in self.invoices):
+                raise _unique_violation("invoices_fps_reference_key")
             self.invoices.append(
                 {
                     "id": p["id"],
@@ -100,18 +147,24 @@ class FakeAurora:
                 }
             )
             return []
+        if low.startswith("update invoices set pdf_key"):
+            inv = next((i for i in self.invoices if i["id"] == p["id"]), None)
+            if inv:
+                inv["pdf_key"] = p.get("key")
+            return []
         if low.startswith("update invoices set status"):
             inv = next((i for i in self.invoices if i["id"] == p["id"]), None)
             if not inv:
                 return []
-            if "status = 'paid'" in low:
-                inv["status"] = "paid"
-            elif "status = 'overdue'" in low:
-                inv["status"] = "overdue"
-            elif "status = 'sent'" in low:
-                if "status = 'draft'" in low or "status in ('draft', 'sent')" in low:
-                    if inv["status"] in ("draft", "sent"):
-                        inv["status"] = "sent"
+            # Honour the statement's own WHERE status guard, as Postgres would.
+            m = re.search(r"where id = :id and status (?:= '(\w+)'|in \(([^)]*)\))", low)
+            if m:
+                allowed = {m.group(1)} if m.group(1) else {x.strip().strip("'") for x in m.group(2).split(",")}
+                if inv["status"] not in allowed:
+                    return []
+            target = re.search(r"set status = '(\w+)'", low)
+            if target:
+                inv["status"] = target.group(1)
             return []
         if low.startswith("update payments set invoice_id"):
             pay = next((x for x in self.payments if x["id"] == p["id"]), None)
@@ -120,26 +173,16 @@ class FakeAurora:
                 pay["matched_by"] = p.get("who")
             return []
 
-        if "from listing_subscriptions s" in low:
-            rows = []
-            for sub in self.subs:
-                if p.get("status") and sub["status"] != p["status"]:
-                    continue
-                plan = next((pl for pl in self.plans if pl["id"] == sub.get("plan_id")), None)
-                rows.append(
-                    {
-                        **sub,
-                        "plan_name": (plan or {}).get("name"),
-                        "price_hkd": (plan or {}).get("price_hkd"),
-                        "billing_period": (plan or {}).get("billing_period"),
-                    }
-                )
+        if "from listing_subscriptions s" in low and "from invoices i" not in low:
+            rows = [self._sub_rows(sub) for sub in self.subs if not p.get("status") or sub["status"] == p["status"]]
             return rows[: int(p.get("lim") or 100)]
         if "from listing_subscriptions where id" in low:
             return [dict(x) for x in self.subs if x["id"] == p.get("id")]
         if "count(*)" in low and "listing_subscriptions" in low:
-            n = sum(1 for x in self.subs if x["status"] in ("trial", "active"))
-            return [{"n": n}]
+            rows = [x for x in self.subs if x["status"] in ("trial", "active")]
+            if "starts_on >= :since" in low:
+                rows = [x for x in rows if str(x.get("starts_on") or "") >= str(p["since"])]
+            return [{"n": len(rows)}]
 
         if "from invoices where number like" in low:
             prefix = str(p.get("p") or "").rstrip("%")
@@ -149,14 +192,42 @@ class FakeAurora:
         if "from invoices where id" in low or "from invoices where id = :id" in low:
             return [dict(x) for x in self.invoices if x["id"] == p.get("id")]
         if "sum(amount_hkd)" in low and "invoices" in low:
-            total = sum(float(i["amount_hkd"]) for i in self.invoices if i["status"] == "paid")
-            return [{"total": total}]
+            paid = [i for i in self.invoices if i["status"] == "paid"]
+            if "issued_on >= :since" in low:
+                paid = [i for i in paid if str(i.get("issued_on") or "") >= str(p["since"])]
+            return [{"total": sum(float(i["amount_hkd"]) for i in paid)}]
+        if "from invoices i left join listing_subscriptions s" in low:
+            rows = []
+            for inv in self.invoices:
+                if inv["status"] not in ("sent", "overdue"):
+                    continue
+                sub = next((x for x in self.subs if x["id"] == inv.get("subscription_id")), None) or {}
+                rows.append(
+                    {
+                        **{k: inv.get(k) for k in ("id", "number", "amount_hkd", "status", "due_on", "fps_reference", "subscription_id")},
+                        "organization_id": sub.get("organization_id"),
+                        "payer_contact": sub.get("payer_contact"),
+                    }
+                )
+            rows.sort(key=lambda r: str(r.get("due_on") or ""))
+            return rows
+        if "abs(amount_hkd - :amount)" in low:
+            rows = []
+            for inv in self.invoices:
+                if inv["status"] not in ("draft", "sent", "overdue"):
+                    continue
+                amount_ok = abs(float(inv["amount_hkd"]) - float(p["amount"])) <= float(p["tol"])
+                ref_ok = str(inv.get("fps_reference") or "").upper() == str(p["ref"])
+                if amount_ok or ref_ok:
+                    rows.append(dict(inv))
+            rows.sort(key=lambda r: str(r.get("due_on") or ""))
+            return rows[: int(p.get("lim") or 100)]
         if "from invoices" in low:
             rows = [dict(i) for i in self.invoices]
-            if "status in ('sent', 'overdue', 'paid')" in low:
-                rows = [i for i in rows if i["status"] in ("sent", "overdue", "paid")]
-            elif "status in ('sent', 'overdue')" in low:
-                rows = [i for i in rows if i["status"] in ("sent", "overdue")]
+            m = re.search(r"where status in \(([^)]*)\)", low)
+            if m:
+                allowed = {x.strip().strip("'") for x in m.group(1).split(",")}
+                rows = [i for i in rows if i["status"] in allowed]
             if p.get("status"):
                 rows = [i for i in rows if i["status"] == p["status"]]
             return rows[: int(p.get("lim") or 100)]
@@ -352,9 +423,12 @@ class TestFinanceReadsAndDraft(ReceivablesTestCase):
                 "pdf_key": None,
             }
         )
+        board_store.record_ads_spend(self.table, daily_usd=4.0, monthly_usd=4.0)
         out = board_receivables.op_unit_economics(self._ctx(), {})
         self.assertEqual(out["paidInvoicesHkd"], 388.0)
         self.assertEqual(out["activeSubscriptions"], 1)
+        self.assertEqual(out["metaAdsRecordedMonthlyUsd"], 4.0)
+        self.assertIn("Meta ads", out["note"])
 
 
 class TestFinanceWritesAndGuards(ReceivablesTestCase):
@@ -496,7 +570,7 @@ class TestMirrorAndDunning(ReceivablesTestCase):
         self.assertTrue(all("[receivables]" in ln["description"] for ln in book["lines"]))
 
     def test_dunning_creates_one_approval_per_invoice(self) -> None:
-        due = (date.today() - timedelta(days=10)).isoformat()
+        due = (date.today() - timedelta(days=7)).isoformat()
         self.db.invoices.append(
             {
                 "id": "inv-d7",

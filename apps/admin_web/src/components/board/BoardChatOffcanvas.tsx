@@ -112,13 +112,16 @@ export function BoardChatOffcanvas({ member, isChair, toolLabels = [], onClose, 
         <div className="d-flex flex-column gap-3">
           {messages.map((m) => (
             <div key={m.messageId} className={`board-chat-row ${m.role === "user" ? "board-chat-row-user" : ""}`}>
-              <div className={`board-chat-bubble ${m.role === "user" ? "board-chat-bubble-user" : ""}`}>
+              <div
+                className={`board-chat-bubble ${m.role === "user" ? "board-chat-bubble-user" : ""}`}
+                aria-live={m.isPending ? "polite" : undefined}
+              >
                 {m.isPending ? (
                   m.toolCalls && m.toolCalls.length > 0 ? (
                     <BoardToolCallList calls={m.toolCalls} isLive className="small" />
                   ) : (
                     <span className="d-inline-flex align-items-center gap-2 text-muted small">
-                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                      <span className="spinner-border spinner-border-sm" aria-hidden="true" />
                       {member.displayName} is thinking…
                     </span>
                   )

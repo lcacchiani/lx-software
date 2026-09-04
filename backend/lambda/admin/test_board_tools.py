@@ -143,6 +143,28 @@ class ToolsTestCase(BoardTestCase):
         self.assertEqual(status, 200)
         return job
 
+    def propose_issue(self) -> dict[str, Any]:
+        self.use_script(
+            [[("github_create_issue", {"title": "Add FPS reference to invoices", "body": "Details", "labels": ["billing"], "reason": "Needed for receivables."})]],
+            "I have proposed a new issue; it awaits your approval.",
+        )
+        job = self.chat("cto", "Please open an issue for FPS references")
+        call = job["message"]["toolCalls"][0]
+        self.assertEqual(call["status"], "pending_approval")
+        self.assertTrue(call["approvalId"])
+        self.assertEqual([r[0] for r in self.github.requests], [], "nothing must reach GitHub at propose level")
+        status, body = self.call("/siu-tin-dei/board/approvals", query="status=pending")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["approvals"]), 1)
+        approval = body["approvals"][0]
+        self.assertEqual(approval["op"], "github_create_issue")
+        self.assertEqual(approval["personaId"], "cto")
+        self.assertEqual(approval["reason"], "Needed for receivables.")
+        self.assertEqual(approval["arguments"]["labels"], ["billing"])
+        _, overview = self.call("/siu-tin-dei/board")
+        self.assertEqual(overview["pendingApprovalCount"], 1)
+        return approval
+
 
 # ---------------------------------------------------------------------------
 # Levels and registry
@@ -179,7 +201,8 @@ class TestLevels(unittest.TestCase):
         self.assertIn("board_add_action", cto_chat)
         cto_meeting = {op.name for op, _ in board_tools.available_ops(settings, "cto", context="meeting")}
         self.assertIn("github_get_file", cto_meeting)
-        self.assertNotIn("board_add_action", cto_meeting, "board writes are chat-only")
+        self.assertIn("board_add_action", cto_meeting)
+        self.assertIn("board_update_action", cto_meeting)
         cfo_chat = {op.name for op, _ in board_tools.available_ops(settings, "cfo", context="chat")}
         self.assertFalse(any(n.startswith("github_") for n in cfo_chat))
         self.assertIn("board_list_actions", cfo_chat)
@@ -385,28 +408,6 @@ class TestChatToolLoop(ToolsTestCase):
         self.assertEqual(len(tool_msgs), 11)
         self.assertIn("budget", tool_msgs[-1]["content"].lower())
 
-    def propose_issue(self) -> dict[str, Any]:
-        self.use_script(
-            [[("github_create_issue", {"title": "Add FPS reference to invoices", "body": "Details", "labels": ["billing"], "reason": "Needed for receivables."})]],
-            "I have proposed a new issue; it awaits your approval.",
-        )
-        job = self.chat("cto", "Please open an issue for FPS references")
-        call = job["message"]["toolCalls"][0]
-        self.assertEqual(call["status"], "pending_approval")
-        self.assertTrue(call["approvalId"])
-        self.assertEqual([r[0] for r in self.github.requests], [], "nothing must reach GitHub at propose level")
-        status, body = self.call("/siu-tin-dei/board/approvals", query="status=pending")
-        self.assertEqual(status, 200)
-        self.assertEqual(len(body["approvals"]), 1)
-        approval = body["approvals"][0]
-        self.assertEqual(approval["op"], "github_create_issue")
-        self.assertEqual(approval["personaId"], "cto")
-        self.assertEqual(approval["reason"], "Needed for receivables.")
-        self.assertEqual(approval["arguments"]["labels"], ["billing"])
-        _, overview = self.call("/siu-tin-dei/board")
-        self.assertEqual(overview["pendingApprovalCount"], 1)
-        return approval
-
     def test_write_at_propose_level_creates_approval(self) -> None:
         self.propose_issue()
 
@@ -601,7 +602,7 @@ class TestMeetingTools(ToolsTestCase):
         # Members were offered only meeting-context operations.
         position_requests = [r for r in scripted.requests if "For EACH agenda item" in r["messages"][-1]["content"] and r.get("tools")]
         offered = {t["function"]["name"] for r in position_requests for t in r["tools"]}
-        self.assertNotIn("board_add_action", offered)
+        self.assertIn("board_add_action", offered)
         # The synthesis prompt does not include the tool-turn text.
         synthesis = next(r for r in scripted.requests if "Write the minutes" in r["messages"][-1]["content"])
         self.assertNotIn("Checked CI runs", synthesis["messages"][-1]["content"])
@@ -652,6 +653,37 @@ class TestGitHubOps(ToolsTestCase):
         _, overview = self.call("/siu-tin-dei/board")
         self.assertTrue(overview["repoSnapshotEnabled"])
         self.assertFalse(overview["repoWriteEnabled"])
+
+    def test_search_stays_in_repo_and_strips_scope_qualifiers(self) -> None:
+        out = board_github.op_search_issues({"query": "booking REPO:evil/other org:acme user:bob label:bug"})
+        self.assertEqual(out["items"][0]["number"], 42)
+        self.assertEqual(out["strippedQualifiers"], ["REPO:evil/other", "org:acme", "user:bob"])
+        self.assertEqual(out["query"], "repo:lx-software-ltd/siutindei state:open type:issue booking label:bug")
+        _, path, _, _ = self.github.requests[0]
+        self.assertEqual(path.count("repo%3A"), 1)
+        self.assertNotIn("evil", path)
+
+    def test_list_releases(self) -> None:
+        inner = self.github
+
+        def with_releases(req, timeout=None):
+            if "/releases" in req.full_url:
+                inner.requests.append((req.get_method(), req.full_url.replace(board_github.API_ORIGIN, ""), dict(req.headers), None))
+                return _FakeResp(
+                    json.dumps(
+                        [
+                            {"id": 1, "tag_name": "v1.4.0", "name": "1.4.0", "draft": False, "prerelease": False, "author": {"login": "lx"}, "published_at": "2026-09-01T00:00:00Z", "body": "Bug fixes", "html_url": "https://github.com/x/releases/v1.4.0"},
+                        ]
+                    ).encode("utf-8")
+                )
+            return inner(req, timeout)
+
+        self.router.github = with_releases
+        out = board_github.op_list_releases({"limit": 5})
+        self.assertEqual(out["items"][0]["tag"], "v1.4.0")
+        self.assertEqual(out["items"][0]["notes"], "Bug fixes")
+        self.assertFalse(out["items"][0]["draft"])
+        self.assertEqual(self.github.requests[0][1], "/repos/lx-software-ltd/siutindei/releases?per_page=5")
 
 
 if __name__ == "__main__":

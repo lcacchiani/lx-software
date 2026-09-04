@@ -177,7 +177,14 @@ def _overview() -> dict[str, Any]:
             "toolsEnabled": board_tools.tools_enabled(settings),
             "runningMeeting": board_meeting.public_meeting_summary(running) if running else None,
             "latestMeeting": board_meeting.public_meeting_summary(latest_done) if latest_done else None,
-            "usageToday": {**usage, "budgetUsd": board_budget.daily_budget_usd(settings)},
+            "usageToday": {
+                **usage,
+                "budgetUsd": board_budget.daily_budget_usd(settings),
+                "external": {
+                    "searchCalls": board_store.load_external_usage_day(table)["searchCalls"],
+                    "metaAdsMonthUsd": round(board_store.load_ads_spend(table)["monthlyUsd"], 2),
+                },
+            },
             "models": {
                 "chat": board_budget.model_for("chat", settings),
                 "standup": board_budget.model_for("standup", settings),
@@ -335,6 +342,8 @@ def _approval_decide(event: dict[str, Any], approval_id: str, *, approve: bool, 
         )
     except LookupError as exc:
         return _json_response(404, {"message": str(exc)})
+    except board_tools.InvalidArgumentsError as exc:
+        return _json_response(400, {"message": str(exc)})
     except ValueError as exc:
         return _json_response(409, {"message": str(exc)})
     _audit(user_sub, "BOARD_APPROVAL_APPROVE" if approve else "BOARD_APPROVAL_REJECT", approval_id, event)

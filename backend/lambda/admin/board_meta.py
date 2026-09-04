@@ -29,6 +29,7 @@ from urllib import request as urlrequest
 from urllib.parse import parse_qs
 
 from admin_runtime import _get_secretsmanager_client
+import board_deadline
 import board_mail
 import board_pii
 import board_store
@@ -42,7 +43,9 @@ from openrouter_client import read_secret_string
 
 GRAPH_ORIGIN = "https://graph.facebook.com/v21.0"
 HTTP_TIMEOUT_SECONDS = 12
+HTTP_TIMEOUT_SLOW_SECONDS = 25
 WINDOW_HOURS = 24
+GRAPH_PAGES_MAX = 3
 
 _token_cache: str | None = None
 _token_checked = False
@@ -51,7 +54,11 @@ _app_secret_checked = False
 
 
 class MetaError(RuntimeError):
-    """User-facing Meta / webhook failure."""
+    """User-facing Meta / webhook failure. ``status`` is the Graph HTTP code, if any."""
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def configured() -> bool:
@@ -75,6 +82,10 @@ def ig_user_id() -> str:
 
 def wa_phone_id() -> str:
     return (os.environ.get("META_WA_PHONE_NUMBER_ID") or "").strip()
+
+
+def waba_id() -> str:
+    return (os.environ.get("META_WABA_ID") or "").strip()
 
 
 def ad_account_id() -> str:
@@ -118,30 +129,43 @@ def ads_caps(settings: dict[str, Any] | None = None) -> tuple[float, float]:
     return daily, monthly
 
 
-def graph_month_spend() -> float:
+def graph_month_spend_detail() -> dict[str, Any]:
+    """Month-to-date ad account spend from Graph: ``{"spend", "currency", "available"}``.
+
+    Graph reports spend in the ad account's own currency; callers must not
+    label it USD unless ``currency`` says so. Any Graph failure yields
+    ``available=False`` rather than an exception.
+    """
     aid = ad_account_id()
     if not aid or not board_token():
-        return 0.0
+        return {"spend": 0.0, "currency": "", "available": False}
     try:
         data = graph(
             "GET",
             f"{aid}/insights",
-            params={"fields": "spend", "date_preset": "this_month", "level": "account"},
+            params={"fields": "spend,account_currency", "date_preset": "this_month", "level": "account"},
         )
-    except MetaError:
-        return 0.0
+    except MetaError as exc:
+        _log_event("warning", tag="board_meta_spend_unavailable", error=str(exc)[:200])
+        return {"spend": 0.0, "currency": "", "available": False}
     rows = data.get("data") or []
-    if not rows:
-        return 0.0
+    if not rows or not isinstance(rows[0], dict):
+        return {"spend": 0.0, "currency": "", "available": True}
     try:
-        return float(rows[0].get("spend") or 0)
+        spend = float(rows[0].get("spend") or 0)
     except (TypeError, ValueError):
-        return 0.0
+        spend = 0.0
+    return {"spend": spend, "currency": str(rows[0].get("account_currency") or ""), "available": True}
 
 
-def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> dict[str, float]:
+def graph_month_spend(detail: dict[str, Any] | None = None) -> float:
+    return float((detail or graph_month_spend_detail())["spend"])
+
+
+def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     recorded = board_store.load_ads_spend(table) if table is not None else {"dailyUsd": 0.0, "monthlyUsd": 0.0}
-    graph_month = graph_month_spend()
+    detail = graph_month_spend_detail()
+    graph_month = graph_month_spend(detail)
     daily_cap, monthly_cap = ads_caps(settings)
     recorded_daily = float(recorded.get("dailyUsd") or 0.0)
     recorded_month = float(recorded.get("monthlyUsd") or 0.0)
@@ -149,7 +173,11 @@ def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> di
         "recordedDailyUsd": recorded_daily,
         "recordedMonthlyUsd": recorded_month,
         "graphMonthlyUsd": graph_month,
+        "graphCurrency": detail["currency"],
+        "graphAvailable": bool(detail["available"]),
         "dailyUsd": recorded_daily,
+        # Cap check stays conservative: commitments the board made this month
+        # plus what Graph has already billed.
         "monthlyUsd": recorded_month + graph_month,
         "dailyCapUsd": daily_cap,
         "monthlyCapUsd": monthly_cap,
@@ -158,6 +186,7 @@ def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> di
 
 def reset_caches_for_tests() -> None:
     global _token_cache, _token_checked, _app_secret_cache, _app_secret_checked
+    _waba_resolved.clear()
     _token_cache = None
     _token_checked = False
     _app_secret_cache = None
@@ -211,30 +240,46 @@ def status_summary(table: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _urlopen(req: urlrequest.Request, timeout: float | None = None) -> Any:
-    return urlrequest.urlopen(req, timeout=timeout or HTTP_TIMEOUT_SECONDS)
+    return urlrequest.urlopen(req, timeout=board_deadline.remaining(timeout or HTTP_TIMEOUT_SECONDS))
 
 
-def graph(method: str, path: str, *, params: dict[str, Any] | None = None, body: dict[str, Any] | None = None) -> dict[str, Any]:
+def graph(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    body: dict[str, Any] | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
     token = board_token()
     if not token:
         raise MetaError("MetaBoardToken is not configured.")
+    # Token travels in the Authorization header so it never lands in access
+    # logs / referrers; ``appsecret_proof`` (if the caller set it) stays a param.
     query = dict(params or {})
-    query["access_token"] = token
-    url = f"{GRAPH_ORIGIN}/{path.lstrip('/')}?{urlparse.urlencode(query, doseq=True)}"
+    query.pop("access_token", None)
+    url = f"{GRAPH_ORIGIN}/{path.lstrip('/')}"
+    if query:
+        url = f"{url}?{urlparse.urlencode(query, doseq=True)}"
     data = None
-    headers = {"User-Agent": "lxsoftware-board-meta"}
+    headers = {"User-Agent": "lxsoftware-board-meta", "Authorization": f"Bearer {token}"}
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urlrequest.Request(url, data=data, method=method.upper(), headers=headers)
     try:
-        with _urlopen(req) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except urlerror.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:300]
-        raise MetaError(f"Meta Graph {exc.code}: {detail or exc.reason}") from exc
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:300]
+        except (OSError, AttributeError):
+            detail = ""
+        raise MetaError(f"Meta Graph {exc.code}: {detail or exc.reason}", status=int(exc.code)) from exc
     except urlerror.URLError as exc:
         raise MetaError(f"Meta Graph unreachable: {exc.reason}") from exc
+    except OSError as exc:  # socket.timeout while reading the body is not a URLError
+        raise MetaError(f"Meta Graph unreachable: {exc}") from exc
     if not raw:
         return {}
     try:
@@ -242,6 +287,35 @@ def graph(method: str, path: str, *, params: dict[str, Any] | None = None, body:
     except json.JSONDecodeError as exc:
         raise MetaError("Meta Graph returned non-JSON") from exc
     return parsed if isinstance(parsed, dict) else {"data": parsed}
+
+
+def graph_pages(
+    method: str,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    max_pages: int = GRAPH_PAGES_MAX,
+    limit: int = BOARD_META_LIST_MAX,
+    timeout: float | None = None,
+) -> list[dict[str, Any]]:
+    """``data[]`` rows across cursor pages (``paging.cursors.after``), capped at ``limit``."""
+    rows: list[dict[str, Any]] = []
+    after = ""
+    for _page in range(max(1, max_pages)):
+        query = dict(params or {})
+        if after:
+            query["after"] = after
+        data = graph(method, path, params=query, timeout=timeout)
+        for row in data.get("data") or []:
+            if isinstance(row, dict):
+                rows.append(row)
+            if len(rows) >= limit:
+                return rows[:limit]
+        paging = data.get("paging") or {}
+        after = str(((paging.get("cursors") or {}).get("after") if isinstance(paging, dict) else "") or "")
+        if not after or not (isinstance(paging, dict) and paging.get("next")):
+            break
+    return rows[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +384,7 @@ def ingest_webhook(table: Any, payload: dict[str, Any]) -> dict[str, Any]:
     obj = str(payload.get("object") or "")
     entries = payload.get("entry") or []
     stored = 0
+    duplicates = 0
     pseud = board_pii.Pseudonymizer(table)
     now = _utc_iso_z(datetime.now(timezone.utc))
     for entry in entries:
@@ -317,11 +392,13 @@ def ingest_webhook(table: Any, payload: dict[str, Any]) -> dict[str, Any]:
             continue
         channel = "whatsapp" if obj == "whatsapp_business_account" else ("instagram" if obj == "instagram" else "page")
         for msg in _iter_inbound(entry, channel=channel):
-            _store_inbound(table, pseud, msg, received_at=now)
-            stored += 1
+            if _store_inbound(table, pseud, msg, received_at=now):
+                stored += 1
+            else:
+                duplicates += 1
     pseud.save()
-    _log_event("info", tag="board_meta_ingested", stored=stored, object=obj)
-    return {"stored": stored}
+    _log_event("info", tag="board_meta_ingested", stored=stored, duplicates=duplicates, object=obj)
+    return {"stored": stored, "duplicates": duplicates}
 
 
 def _iter_inbound(entry: dict[str, Any], *, channel: str) -> list[dict[str, Any]]:
@@ -333,7 +410,10 @@ def _iter_inbound(entry: dict[str, Any], *, channel: str) -> list[dict[str, Any]
         message = item.get("message") or {}
         if not isinstance(message, dict):
             continue
-        sender = (item.get("sender") or {}).get("id") or (item.get("from") or {}).get("id") or ""
+        if message.get("is_echo"):
+            # Our own outbound messages come back through the webhook too.
+            continue
+        sender = _sender_id(item.get("sender")) or _sender_id(item.get("from"))
         text = str(message.get("text") or message.get("body") or "")
         mid = str(message.get("mid") or message.get("id") or board_store.new_id())
         ts = item.get("timestamp") or entry.get("time") or int(time.time() * 1000)
@@ -354,10 +434,12 @@ def _iter_inbound(entry: dict[str, Any], *, channel: str) -> list[dict[str, Any]
         if not isinstance(value, dict):
             continue
         if change.get("field") in ("messages", "whatsapp_business_account"):
+            contacts = value.get("contacts") or []
+            contact_wa_id = str((contacts[0] or {}).get("wa_id") or "") if contacts and isinstance(contacts[0], dict) else ""
             for m in value.get("messages") or []:
                 if not isinstance(m, dict):
                     continue
-                sender = str((m.get("from") or value.get("contacts", [{}])[0].get("wa_id") if value.get("contacts") else "") or "")
+                sender = _phone_digits(str(m.get("from") or contact_wa_id or ""))
                 text = str((m.get("text") or {}).get("body") or m.get("body") or "")
                 mid = str(m.get("id") or board_store.new_id())
                 out.append(
@@ -367,14 +449,16 @@ def _iter_inbound(entry: dict[str, Any], *, channel: str) -> list[dict[str, Any]
                         "senderId": sender,
                         "messageId": mid,
                         "text": text,
-                        "timestampMs": int(m.get("timestamp") or time.time()),
+                        "timestampMs": _int_or(m.get("timestamp"), int(time.time())),
                     }
                 )
         if change.get("field") in ("comments", "feed"):
             comment = value.get("comment") or value
+            if not isinstance(comment, dict):
+                continue
             text = str(comment.get("message") or comment.get("text") or "")
             cid = str(comment.get("id") or board_store.new_id())
-            sender = str(comment.get("from", {}).get("id") or comment.get("from") or "")
+            sender = _sender_id(comment.get("from"))
             out.append(
                 {
                     "channel": "instagram" if channel == "instagram" else "page",
@@ -382,15 +466,37 @@ def _iter_inbound(entry: dict[str, Any], *, channel: str) -> list[dict[str, Any]
                     "senderId": sender,
                     "messageId": cid,
                     "text": text,
-                    "timestampMs": int(time.time() * 1000),
+                    "timestampMs": _int_or(comment.get("created_time"), int(time.time() * 1000)),
                     "kind": "comment",
                 }
             )
     return out
 
 
-def _store_inbound(table: Any, pseud: board_pii.Pseudonymizer, msg: dict[str, Any], *, received_at: str) -> None:
-    thread_id = hashlib.sha256(f"{msg.get('channel')}:{msg.get('threadKey')}".encode()).hexdigest()[:20]
+def _sender_id(raw: Any) -> str:
+    """Graph ``from`` / ``sender`` is usually ``{"id": ...}`` but can be a bare id string."""
+    if isinstance(raw, dict):
+        return str(raw.get("id") or "")
+    return str(raw or "")
+
+
+def _int_or(raw: Any, default: int) -> int:
+    text = str(raw or "").strip()
+    return int(text) if text.isdigit() else default
+
+
+def thread_id_for(channel: str, thread_key: str) -> str:
+    return hashlib.sha256(f"{channel}:{thread_key}".encode()).hexdigest()[:20]
+
+
+def whatsapp_thread_id(number: str) -> str:
+    """Stored thread id for a WhatsApp number; the same derivation the webhook uses."""
+    return thread_id_for("whatsapp", _phone_digits(number))
+
+
+def _store_inbound(table: Any, pseud: board_pii.Pseudonymizer, msg: dict[str, Any], *, received_at: str) -> bool:
+    """Store one inbound message; returns False when Meta redelivered a known message."""
+    thread_id = thread_id_for(str(msg.get("channel")), str(msg.get("threadKey")))
     text = str(msg.get("text") or "")
     masked = pseud.mask_text(text)
     ts_ms = int(msg.get("timestampMs") or 0)
@@ -399,6 +505,20 @@ def _store_inbound(table: Any, pseud: board_pii.Pseudonymizer, msg: dict[str, An
         received = _utc_iso_z(datetime.fromtimestamp(ts_ms / 1000, timezone.utc))
     elif ts_ms > 1_000_000_000:
         received = _utc_iso_z(datetime.fromtimestamp(ts_ms, timezone.utc))
+    is_new = board_store.put_meta_message_if_new(
+        table,
+        {
+            "threadId": thread_id,
+            "messageId": str(msg.get("messageId")),
+            "receivedAt": received,
+            "direction": "in",
+            "textMasked": masked[:4000],
+            "channel": msg.get("channel"),
+        },
+    )
+    if not is_new:
+        _log_event("info", tag="board_meta_duplicate_delivery", threadId=thread_id, messageId=str(msg.get("messageId")))
+        return False
     existing = board_store.get_meta_thread(table, thread_id) or {}
     board_store.put_meta_thread(
         table,
@@ -414,17 +534,7 @@ def _store_inbound(table: Any, pseud: board_pii.Pseudonymizer, msg: dict[str, An
             "messageCount": int(existing.get("messageCount") or 0) + 1,
         },
     )
-    board_store.put_meta_message(
-        table,
-        {
-            "threadId": thread_id,
-            "messageId": str(msg.get("messageId")),
-            "receivedAt": received,
-            "direction": "in",
-            "textMasked": masked[:4000],
-            "channel": msg.get("channel"),
-        },
-    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -436,8 +546,12 @@ def op_page_insights(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     if not pid:
         raise MetaError("META_PAGE_ID is not set.")
     metric = str(args.get("metric") or "page_impressions,page_engaged_users")
-    data = graph("GET", f"{pid}/insights", params={"metric": metric, "period": "day"})
-    rows = (data.get("data") or [])[: BOARD_META_LIST_MAX]
+    rows = graph_pages(
+        "GET",
+        f"{pid}/insights",
+        {"metric": metric, "period": "day"},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
     return {"pageId": pid, "insights": rows, "count": len(rows)}
 
 
@@ -446,29 +560,48 @@ def op_ig_insights(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     if not iid:
         raise MetaError("META_IG_USER_ID is not set.")
     metric = str(args.get("metric") or "impressions,reach,profile_views")
-    data = graph("GET", f"{iid}/insights", params={"metric": metric, "period": "day"})
-    rows = (data.get("data") or [])[: BOARD_META_LIST_MAX]
+    rows = graph_pages(
+        "GET",
+        f"{iid}/insights",
+        {"metric": metric, "period": "day"},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
     return {"igUserId": iid, "insights": rows, "count": len(rows)}
 
 
-def op_list_comments(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+def op_list_comments(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     pid = str(args.get("pageId") or page_id())
     if not pid:
         raise MetaError("META_PAGE_ID is not set.")
-    data = graph("GET", f"{pid}/feed", params={"fields": "id,message,comments.limit(10){from,message,created_time}", "limit": min(int(args.get("limit") or 10), BOARD_META_LIST_MAX)})
+    limit = max(1, min(int(args.get("limit") or 10), BOARD_META_LIST_MAX))
+    rows = graph_pages(
+        "GET",
+        f"{pid}/feed",
+        {"fields": "id,message,comments.limit(10){from,message,created_time}", "limit": limit},
+        limit=limit,
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
+    table = getattr(ctx, "table", None)
+    pseud = board_pii.Pseudonymizer(table, own_domains=board_mail.own_domains()) if table is not None else None
     posts = []
-    for post in (data.get("data") or [])[: BOARD_META_LIST_MAX]:
+    for post in rows:
         comments = ((post.get("comments") or {}).get("data") or [])
         posts.append(
             {
                 "id": post.get("id"),
-                "message": _mask_for_model(str(post.get("message") or "")),
+                "message": _mask_text(str(post.get("message") or ""), pseud),
                 "comments": [
-                    {"id": c.get("id"), "from": "contact#hidden", "message": _mask_for_model(str(c.get("message") or ""))}
+                    {
+                        "id": c.get("id"),
+                        "from": _mask_sender(c.get("from"), pseud),
+                        "message": _mask_text(str(c.get("message") or ""), pseud),
+                    }
                     for c in comments
                 ],
             }
         )
+    if pseud is not None:
+        pseud.save()
     return {"posts": posts, "count": len(posts)}
 
 
@@ -488,6 +621,7 @@ def op_ad_spend(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         "GET",
         f"{aid}/insights",
         params={"fields": "spend,impressions,clicks,actions", "date_preset": "this_month", "level": "account"},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
     )
     rows = data.get("data") or []
     spend = 0.0
@@ -527,8 +661,96 @@ def _list_stored(table: Any, *, channel: str, limit: int) -> dict[str, Any]:
     }
 
 
-def _mask_for_model(text: str) -> str:
+def _mask_text(text: str, pseud: board_pii.Pseudonymizer | None) -> str:
+    if pseud is not None:
+        return pseud.mask_text(text)
     return board_pii.EMAIL_RE.sub("contact#hidden", board_pii.PHONE_RE.sub("phone#hidden", text))
+
+
+def _mask_sender(raw: Any, pseud: board_pii.Pseudonymizer | None) -> str:
+    """Alias a Graph ``from`` object. Display names never reach the model."""
+    if isinstance(raw, dict):
+        ident = str(raw.get("id") or "")
+        display = str(raw.get("name") or raw.get("username") or "")
+    else:
+        ident, display = str(raw or ""), ""
+    if not ident and not display:
+        return "contact#unknown"
+    if pseud is None:
+        return "contact#hidden"
+    if ident:
+        return pseud.alias_for_external("fb", ident, display=display)
+    return pseud.alias_for_external("fbname", display, display=display)
+
+
+def _mask_for_model(text: str) -> str:
+    return _mask_text(text, None)
+
+
+_waba_resolved: dict[str, str] = {}
+TEMPLATE_PAGES_MAX = 3
+
+
+def resolve_waba_id() -> str:
+    explicit = waba_id()
+    if explicit:
+        return explicit
+    phone = wa_phone_id()
+    if not phone:
+        raise MetaError("META_WABA_ID or META_WA_PHONE_NUMBER_ID is not set.")
+    cached = _waba_resolved.get(phone)
+    if cached:
+        return cached
+    data = graph("GET", phone, params={"fields": "whatsapp_business_account"}, timeout=HTTP_TIMEOUT_SLOW_SECONDS)
+    account = data.get("whatsapp_business_account")
+    resolved = ""
+    if isinstance(account, dict) and account.get("id"):
+        resolved = str(account["id"])
+    elif isinstance(account, str) and account:
+        resolved = account
+    if not resolved:
+        raise MetaError("Could not resolve the WhatsApp Business Account id from the phone-number id.")
+    _waba_resolved[phone] = resolved
+    return resolved
+
+
+def op_list_whatsapp_templates(_ctx: Any, _args: dict[str, Any]) -> dict[str, Any]:
+    """Approved templates only (the ones a reply outside the 24h window may use)."""
+    account = resolve_waba_id()
+    status = "APPROVED"
+    rows: list[dict[str, Any]] = []
+    after = ""
+    for _page in range(TEMPLATE_PAGES_MAX):
+        params: dict[str, Any] = {
+            "fields": "name,status,language,category",
+            "status": status,
+            "limit": BOARD_META_LIST_MAX,
+        }
+        if after:
+            params["after"] = after
+        data = graph("GET", f"{account}/message_templates", params=params, timeout=HTTP_TIMEOUT_SLOW_SECONDS)
+        for row in data.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            # Graph applies the status filter server-side; re-check for older API versions.
+            if str(row.get("status") or "").upper() != status:
+                continue
+            rows.append(
+                {
+                    "name": row.get("name"),
+                    "status": row.get("status"),
+                    "language": row.get("language"),
+                    "category": row.get("category"),
+                }
+            )
+            if len(rows) >= BOARD_META_LIST_MAX:
+                break
+        if len(rows) >= BOARD_META_LIST_MAX:
+            break
+        after = str(((data.get("paging") or {}).get("cursors") or {}).get("after") or "")
+        if not after or not (data.get("paging") or {}).get("next"):
+            break
+    return {"wabaId": account, "status": status, "templates": rows, "count": len(rows)}
 
 
 def _in_window(thread: dict[str, Any]) -> bool:
@@ -578,37 +800,86 @@ def op_reply_comment(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "commentId": data.get("id"), "parent": comment_id}
 
 
-def op_reply_dm(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-    recipient = str(args.get("recipientId") or "").strip()
+def _stored_thread(table: Any, args: dict[str, Any], *, channels: tuple[str, ...]) -> dict[str, Any] | None:
+    """The stored inbound thread named by ``args.threadId`` when it is a message thread on ``channels``."""
+    thread_id = str(args.get("threadId") or "").strip()
+    if not thread_id or table is None:
+        return None
+    thread = board_store.get_meta_thread(table, thread_id)
+    if not thread or thread.get("channel") not in channels or (thread.get("kind") or "message") != "message":
+        return None
+    return thread
+
+
+def resolve_dm_recipient(table: Any, args: dict[str, Any]) -> str:
+    """Page-scoped recipient id: from the stored thread when ``threadId`` is given, else ``recipientId``.
+
+    Raises when both are supplied and disagree, so a thread can never be used to reach someone else.
+    """
+    explicit = str(args.get("recipientId") or "").strip()
+    thread = _stored_thread(table, args, channels=("page", "instagram"))
+    stored = str((thread or {}).get("senderId") or "").strip()
+    if stored and explicit and stored != explicit:
+        raise MetaError(f"threadId {args.get('threadId')} does not belong to recipientId {explicit}")
+    return stored or explicit
+
+
+def resolve_whatsapp_recipient(table: Any, args: dict[str, Any]) -> str:
+    """WhatsApp number: from the stored thread when ``threadId`` is given, else ``to``.
+
+    Raises when both are supplied and disagree. The 24-hour window is never
+    read from this thread; callers re-derive it from the number (:func:`whatsapp_thread_id`).
+    """
+    explicit = str(args.get("to") or "").strip()
+    thread = _stored_thread(table, args, channels=("whatsapp",))
+    stored = str((thread or {}).get("senderId") or "").strip()
+    if stored and explicit and _phone_digits(stored) != _phone_digits(explicit):
+        raise MetaError(f"threadId {args.get('threadId')} does not belong to {explicit}")
+    return stored or explicit
+
+
+def op_reply_dm(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    recipient = resolve_dm_recipient(getattr(ctx, "table", None), args)
     message = str(args.get("message") or "").strip()
     pid = str(args.get("pageId") or page_id())
     if not recipient or not message or not pid:
-        raise MetaError("recipientId, message and pageId are required")
+        raise MetaError("threadId (or recipientId), message and pageId are required")
     data = graph("POST", f"{pid}/messages", body={"recipient": {"id": recipient}, "message": {"text": message}})
-    return {"ok": True, "messageId": data.get("message_id"), "recipientId": recipient}
+    return {"ok": True, "messageId": data.get("message_id"), "recipientId": recipient, "threadId": str(args.get("threadId") or "")}
 
 
-def op_reply_whatsapp(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-    to = str(args.get("to") or "").strip()
-    message = str(args.get("message") or "").strip()
+def _send_whatsapp(to: str, *, message: str = "", template: str = "", language: str = "en") -> dict[str, Any]:
+    """Session text (inside the window) or a pre-approved template (any time)."""
     phone = wa_phone_id()
-    if not to or not message or not phone:
-        raise MetaError("to, message and META_WA_PHONE_NUMBER_ID are required")
-    payload: dict[str, Any] = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": message},
-    }
-    if args.get("template"):
-        payload = {
+    if not phone:
+        raise MetaError("META_WA_PHONE_NUMBER_ID is not set.")
+    to = _phone_digits(to)
+    if not to:
+        raise MetaError("a WhatsApp number is required")
+    if template:
+        payload: dict[str, Any] = {
             "messaging_product": "whatsapp",
             "to": to,
             "type": "template",
-            "template": {"name": str(args["template"]), "language": {"code": str(args.get("language") or "en")}},
+            "template": {"name": template, "language": {"code": language or "en"}},
         }
+    elif message:
+        payload = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": message}}
+    else:
+        raise MetaError("message or template is required")
     data = graph("POST", f"{phone}/messages", body=payload)
     return {"ok": True, "messageId": (data.get("messages") or [{}])[0].get("id"), "to": to}
+
+
+def op_reply_whatsapp(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    to = resolve_whatsapp_recipient(getattr(ctx, "table", None), args)
+    message = str(args.get("message") or "").strip()
+    template = str(args.get("template") or "").strip()
+    if not to or not (message or template):
+        raise MetaError("threadId (or to) and message or template are required")
+    out = _send_whatsapp(to, message=message, template=template, language=str(args.get("language") or "en"))
+    out["threadId"] = whatsapp_thread_id(to)
+    return out
 
 
 def _parse_daily_budget(args: dict[str, Any]) -> float:
@@ -745,31 +1016,76 @@ def op_boost_post(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _relay_lead_action(ctx: Any, *, provider: str, provider_phone: str, parent: str, summary: str) -> dict[str, Any]:
+    """Open action so the founder can see the hand-off was made and chase the provider."""
+    now = datetime.now(timezone.utc)
+    who = provider or provider_phone
+    doc = {
+        "actionId": board_store.new_id(),
+        "title": f"Lead hand-off: {who}"[:200],
+        "detail": (summary or f"Parent {parent} introduced to {who}.")[:800],
+        "persona": getattr(ctx, "persona_id", None) or "coo",
+        "priority": "now",
+        "effort": "S",
+        "metric": "Provider replied to the parent within one working day",
+        "dependsOn": [],
+        "status": "open",
+        "note": "",
+        "meetingId": getattr(ctx, "meeting_id", "") or "",
+        # Reachable only via act to allow-listed contacts or after founder approval.
+        "source": "approval",
+        "reaffirmedByMeetingIds": [],
+        "dueAt": _utc_iso_z(now + timedelta(days=1)),
+        "createdAt": _utc_iso_z(now),
+        "updatedAt": _utc_iso_z(now),
+        "providerEmail": provider,
+        "providerPhone": provider_phone,
+        "parentEmail": parent,
+    }
+    board_store.put_action(ctx.table, doc)
+    return doc
+
+
 def op_relay_lead(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-    """Draft the provider hand-off and parent confirmation (email via board_mail)."""
+    """Hand a parent lead to the provider (email and/or WhatsApp template), confirm to the parent, record an action."""
     provider = str(args.get("providerEmail") or "").strip()
+    provider_phone = str(args.get("providerPhone") or "").strip()
+    template = str(args.get("template") or "").strip()
     parent = str(args.get("parentEmail") or "").strip()
     summary = str(args.get("summary") or args.get("reason") or "").strip()
-    if not provider or not parent:
-        raise MetaError("providerEmail and parentEmail are required")
+    if not parent or not (provider or provider_phone):
+        raise MetaError("parentEmail and providerEmail or providerPhone are required")
+    if provider_phone and not template:
+        raise MetaError("template is required for a WhatsApp hand-off (providerPhone)")
+    action = _relay_lead_action(ctx, provider=provider, provider_phone=provider_phone, parent=parent, summary=summary)
+    out: dict[str, Any] = {
+        "ok": True,
+        "actionId": action["actionId"],
+        "providerEmail": provider,
+        "providerPhone": provider_phone,
+        "parentEmail": parent,
+    }
+    if provider_phone:
+        out["whatsapp"] = _send_whatsapp(provider_phone, template=template, language=str(args.get("language") or "en"))
     if not board_mail.sending_enabled():
-        return {
-            "ok": True,
-            "sent": False,
-            "note": "Mail sending is off; the hand-off is recorded as a board action only.",
-            "providerEmail": provider,
-            "parentEmail": parent,
-        }
-    handoff = board_mail.outgoing_plan(
-        ctx.table,
-        op="mail_send",
-        args={
-            "fromMailbox": "hello",
-            "to": [provider],
-            "subject": "New parent lead from siutindei",
-            "body": summary or "A parent asked to be introduced. Please reply within one working day.",
-        },
-    )
+        out["sent"] = False
+        out["note"] = "Mail sending is off; the hand-off is recorded as a board action" + (
+            " and sent to the provider on WhatsApp." if provider_phone else " only."
+        )
+        return out
+    sent_by = getattr(ctx, "persona_id", "coo")
+    if provider:
+        handoff = board_mail.outgoing_plan(
+            ctx.table,
+            op="mail_send",
+            args={
+                "fromMailbox": "hello",
+                "to": [provider],
+                "subject": "New parent lead from siutindei",
+                "body": summary or "A parent asked to be introduced. Please reply within one working day.",
+            },
+        )
+        out["provider"] = board_mail.send_plan(ctx.table, handoff, sent_by=sent_by)
     confirm = board_mail.outgoing_plan(
         ctx.table,
         op="mail_send",
@@ -780,26 +1096,43 @@ def op_relay_lead(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             "body": "Thanks — we have introduced you to the provider. They will contact you shortly.",
         },
     )
-    r1 = board_mail.send_plan(ctx.table, handoff, sent_by=getattr(ctx, "persona_id", "coo"))
-    r2 = board_mail.send_plan(ctx.table, confirm, sent_by=getattr(ctx, "persona_id", "coo"))
-    return {"ok": True, "provider": r1, "parent": r2}
+    out["parent"] = board_mail.send_plan(ctx.table, confirm, sent_by=sent_by)
+    out["sent"] = True
+    return out
 
 
 def act_guard_whatsapp(ctx: Any, args: dict[str, Any]) -> str | None:
-    to = str(args.get("to") or "").strip()
-    thread_id = str(args.get("threadId") or "").strip()
-    if to and not _recipient_allowed(ctx.settings, to):
+    """Act only to an allow-listed number whose *own* thread is inside the 24-hour window.
+
+    The window is looked up by the recipient number, never by a model-supplied
+    ``threadId``. A template outside the window is a proposal (plan §5.3).
+    """
+    try:
+        to = resolve_whatsapp_recipient(ctx.table, args)
+    except MetaError as exc:
+        return str(exc)
+    if not to:
+        return "to or threadId is required"
+    if not _recipient_allowed(ctx.settings, to):
         return f"{to} is not on the allow-list"
-    thread = board_store.get_meta_thread(ctx.table, thread_id) if thread_id else None
-    if thread and not _in_window(thread) and not args.get("template"):
+    thread = board_store.get_meta_thread(ctx.table, whatsapp_thread_id(to))
+    if thread and _in_window(thread):
+        return None
+    if args.get("template"):
+        return "the 24-hour WhatsApp window is closed for this recipient; template messages outside it need approval"
+    if thread:
         return "the 24-hour WhatsApp customer-service window is closed; use a pre-approved template"
-    if not thread and not args.get("template"):
-        return "no open WhatsApp window for this recipient"
-    return None
+    return "no open WhatsApp window for this recipient"
 
 
 def act_guard_allow_list(ctx: Any, args: dict[str, Any], *, field: str) -> str | None:
-    value = str(args.get(field) or "").strip()
+    if field == "recipientId":
+        try:
+            value = resolve_dm_recipient(ctx.table, args)
+        except MetaError as exc:
+            return str(exc)
+    else:
+        value = str(args.get(field) or "").strip()
     if not value:
         return f"{field} is required"
     if not _recipient_allowed(ctx.settings, value):
@@ -808,7 +1141,12 @@ def act_guard_allow_list(ctx: Any, args: dict[str, Any], *, field: str) -> str |
 
 
 def act_guard_relay(ctx: Any, args: dict[str, Any]) -> str | None:
-    for field in ("providerEmail", "parentEmail"):
+    fields = ["parentEmail"]
+    if str(args.get("providerPhone") or "").strip():
+        fields.append("providerPhone")
+    if str(args.get("providerEmail") or "").strip() or not str(args.get("providerPhone") or "").strip():
+        fields.append("providerEmail")
+    for field in fields:
         reason = act_guard_allow_list(ctx, args, field=field)
         if reason:
             return reason
@@ -872,18 +1210,40 @@ def _recipient_allowed(settings: dict[str, Any], value: str) -> bool:
     return any(_phone_digits(str(e)) == digits for e in entries if isinstance(e, str) and "@" not in str(e))
 
 
-def owner_preview_message(_ctx: Any, args: dict[str, Any], *, op: str) -> dict[str, Any]:
-    to = args.get("to") or args.get("recipientId") or args.get("providerEmail") or args.get("parentEmail")
-    return {
-        "kind": "email" if "@" in str(to or "") else "meta",
+def owner_preview_message(ctx: Any, args: dict[str, Any], *, op: str) -> dict[str, Any]:
+    """Owner-facing payload: real recipients (resolved from the stored thread), never aliases."""
+    table = getattr(ctx, "table", None)
+    recipients: list[str] = []
+    error = ""
+    try:
+        if op == "meta_reply_whatsapp":
+            recipients = [resolve_whatsapp_recipient(table, args)]
+        elif op == "meta_reply_dm":
+            recipients = [resolve_dm_recipient(table, args)]
+        elif op == "meta_relay_lead":
+            recipients = [
+                str(args.get(k) or "").strip()
+                for k in ("providerEmail", "providerPhone", "parentEmail")
+            ]
+        else:
+            recipients = [str(args.get("to") or args.get("recipientId") or "").strip()]
+    except MetaError as exc:
+        error = str(exc)
+    recipients = [r for r in recipients if r]
+    first = recipients[0] if recipients else ""
+    out = {
+        "kind": "email" if "@" in first else "meta",
         "from": "whatsapp" if "whatsapp" in op else ("instagram" if "story" in op else "facebook"),
-        "to": [str(to)] if to else [],
+        "to": recipients,
         "cc": [],
         "subject": str(args.get("name") or args.get("postId") or args.get("template") or op),
         "text": str(args.get("message") or args.get("caption") or args.get("summary") or args.get("reason") or ""),
         "threadId": str(args.get("threadId") or ""),
         "sendEnabled": configured(),
     }
+    if error:
+        out["error"] = error
+    return out
 
 
 def digest_for_context(table: Any) -> dict[str, Any]:

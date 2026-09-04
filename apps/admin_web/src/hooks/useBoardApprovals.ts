@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import { BOARD_API_BASE, boardApprovalDecisionPath, type BoardApproval } from "../lib/boardModel";
 import { BOARD_QUERY_KEY } from "./useBoard";
@@ -15,6 +15,40 @@ export type ApprovalDecisionVariables = {
   readonly arguments?: Readonly<Record<string, unknown>>;
 };
 
+/**
+ * Mutation options for approving / rejecting a queued tool call, kept apart
+ * from the hook so the request body and cache invalidation are unit-testable
+ * without rendering React.
+ */
+export function approvalDecisionMutationOptions(qc: QueryClient) {
+  return {
+    mutationFn: async ({ approvalId, decision, note, arguments: args }: ApprovalDecisionVariables) => {
+      const res = await adminFetchJson<{ approval: BoardApproval }>(boardApprovalDecisionPath(approvalId, decision), {
+        method: "POST",
+        body: JSON.stringify({ note: note ?? "", ...(args && decision === "approve" ? { arguments: args } : {}) }),
+      });
+      return res.approval;
+    },
+    onSuccess: (approval: BoardApproval, variables: ApprovalDecisionVariables) => {
+      qc.setQueryData<BoardApproval[]>(BOARD_APPROVALS_KEY, (prev) =>
+        (prev ?? []).map((a) => (a.approvalId === approval.approvalId ? approval : a)),
+      );
+      if (variables.decision === "approve" || approval.status === "executed") {
+        // An approved write may have sent mail, raised an invoice, replied on
+        // Meta or added an action: refresh every board query (the root prefix
+        // covers the overview, approvals, tool calls, mail, receivables, meta
+        // threads and actions) so the executed result shows without a reload.
+        void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY });
+        return;
+      }
+      void qc.invalidateQueries({ queryKey: BOARD_APPROVALS_KEY });
+      void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY, exact: true });
+      void qc.invalidateQueries({ queryKey: BOARD_TOOL_CALLS_KEY });
+      void qc.invalidateQueries({ queryKey: BOARD_ACTIONS_KEY });
+    },
+  };
+}
+
 export function useBoardApprovals() {
   const qc = useQueryClient();
 
@@ -26,25 +60,7 @@ export function useBoardApprovals() {
     },
   });
 
-  const decide = useMutation<BoardApproval, Error, ApprovalDecisionVariables>({
-    mutationFn: async ({ approvalId, decision, note, arguments: args }) => {
-      const res = await adminFetchJson<{ approval: BoardApproval }>(boardApprovalDecisionPath(approvalId, decision), {
-        method: "POST",
-        body: JSON.stringify({ note: note ?? "", ...(args && decision === "approve" ? { arguments: args } : {}) }),
-      });
-      return res.approval;
-    },
-    onSuccess: (approval) => {
-      qc.setQueryData<BoardApproval[]>(BOARD_APPROVALS_KEY, (prev) =>
-        (prev ?? []).map((a) => (a.approvalId === approval.approvalId ? approval : a)),
-      );
-      void qc.invalidateQueries({ queryKey: BOARD_APPROVALS_KEY });
-      void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY, exact: true });
-      void qc.invalidateQueries({ queryKey: BOARD_TOOL_CALLS_KEY });
-      // Approved board_add_action / board_update_action calls change the actions list.
-      void qc.invalidateQueries({ queryKey: BOARD_ACTIONS_KEY });
-    },
-  });
+  const decide = useMutation<BoardApproval, Error, ApprovalDecisionVariables>(approvalDecisionMutationOptions(qc));
 
   return {
     approvals: query.data ?? [],

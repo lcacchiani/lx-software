@@ -30,16 +30,17 @@ export function BoardTranscript({ turns, isRunning, currentPhaseLabel, onOpenApp
                 <div className="small">
                   <span className="fw-semibold">{t.displayName}</span>
                   <span className="text-muted"> · {t.title}</span>
-                  {t.kind === "tool" ? (
-                    <span className="text-muted">
-                      {" "}· <i className="bi bi-tools" aria-hidden="true" /> looked up {toolCalls.length} thing{toolCalls.length === 1 ? "" : "s"}
-                    </span>
-                  ) : null}
                   {t.usage ? <span className="text-muted"> · {formatUsageCost(t.usage.cost)}</span> : null}
                 </div>
                 {t.kind === "tool" ? (
                   toolCalls.length > 0 ? (
-                    <BoardToolCallList calls={toolCalls} onOpenApproval={onOpenApproval} className="small text-muted" />
+                    <details className="small text-muted board-transcript-tools">
+                      <summary>
+                        <i className="bi bi-tools me-1" aria-hidden="true" />
+                        {t.displayName} looked at {toolCalls.length} thing{toolCalls.length === 1 ? "" : "s"}
+                      </summary>
+                      <BoardToolCallList calls={toolCalls} onOpenApproval={onOpenApproval} className="mt-1" />
+                    </details>
                   ) : (
                     <BoardMarkdown text={t.text} className="small text-muted" />
                   )
@@ -52,8 +53,8 @@ export function BoardTranscript({ turns, isRunning, currentPhaseLabel, onOpenApp
         );
       })}
       {isRunning ? (
-        <div className="d-flex align-items-center gap-2 text-muted small mt-2">
-          <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+        <div className="d-flex align-items-center gap-2 text-muted small mt-2" aria-live="polite">
+          <span className="spinner-border spinner-border-sm" aria-hidden="true" />
           {currentPhaseLabel}…
         </div>
       ) : turns.length === 0 ? (

@@ -177,6 +177,9 @@ class TestParseAndIngest(MailTestCase):
         self.assertEqual([a["name"] for a in parsed.attachments], ["prices.pdf", "list.csv"])
         self.assertEqual(parsed.attachments[1]["text"], "a,b\n1,2\n")
         self.assertNotIn("text", parsed.attachments[0])
+        # No local PDF text extractor in the Lambda bundle: PDFs are named, not read.
+        self.assertEqual(parsed.attachments_skipped, ["prices.pdf"])
+        self.assertFalse(parsed.truncated)
         self.assertEqual(parsed.date, "2026-09-04T02:15:00.000Z")
 
     def test_mailbox_detection_prefers_delivery_headers(self) -> None:
