@@ -34,6 +34,22 @@
         "ciso": "act",
         "cmo": "act"
       }
+    },
+    {
+      "id": "mail",
+      "label": "Email",
+      "description": "Every siutindei.com mailbox: threads, messages and attachment names, with contacts pseudonymised. Writes reply, forward or send from a siutindei.com address; recipients outside the allow-list always go to the founder for approval.",
+      "maxLevel": "act",
+      "defaults": {
+        "ceo": "propose",
+        "cfo": "act",
+        "coo": "act",
+        "cpo": "read",
+        "cto": "read",
+        "cio": "read",
+        "ciso": "read",
+        "cmo": "act"
+      }
     }
   ],
   "limits": {
@@ -46,6 +62,12 @@
     "maxPendingApprovals": 200,
     "approvalTtlDays": 60,
     "toolCallLogTtlDays": 90,
-    "maxApprovalNoteLen": 1000
+    "maxApprovalNoteLen": 1000,
+    "mailMessageTtlDays": 90,
+    "mailBodyMaxChars": 20000,
+    "mailSubjectMaxLen": 200,
+    "mailMaxRecipients": 5,
+    "mailListMaxThreads": 200,
+    "mailAllowListMaxEntries": 100
   }
 }

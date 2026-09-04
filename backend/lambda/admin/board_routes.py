@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import parse_qs
 
 import board_actions
 import board_budget
 import board_chat
 import board_github
+import board_mail
 import board_meeting
 import board_personas
 import board_store
 import board_tools
 from contract_constants import (
     BOARD_CHAIR_DEFAULT,
+    BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES,
+    BOARD_MAIL_LIST_MAX_THREADS,
     BOARD_MAX_APPROVAL_NOTE_LEN,
     BOARD_MAX_BRIEF_LEN,
     BOARD_MAX_DAILY_BUDGET_USD,
@@ -25,6 +30,7 @@ from contract_constants import (
 from http_common import _audit, _json_response, _log_event, _parse_json_body
 
 BOARD_BASE_PATH = "/siu-tin-dei/board"
+ALLOW_LIST_ENTRY_RE = re.compile(r"^(?:[a-z0-9._%+\-]+)?@[a-z0-9.\-]+\.[a-z]{2,}$")
 
 
 def handle_board_route(
@@ -116,6 +122,14 @@ def handle_board_route(
         if len(rest) == 3 and rest[2] in ("approve", "reject") and method == "POST":
             return _approval_decide(event, rest[1], approve=rest[2] == "approve", user_sub=user_sub)
 
+    if head == "mail":
+        if len(rest) == 1 and method == "GET":
+            return _mail_list(event)
+        if len(rest) == 2 and method == "GET":
+            return _mail_thread_get(event, rest[1])
+        if len(rest) == 3 and rest[2] == "read" and method == "POST":
+            return _mail_thread_read(event, rest[1], user_sub)
+
     return _json_response(404, {"message": "Not found"})
 
 
@@ -135,6 +149,7 @@ def _overview() -> dict[str, Any]:
     latest_done = next((m for m in meetings if m.get("status") == "succeeded"), None)
     usage = board_store.load_usage_day(table)
     pending_approvals = sum(1 for a in board_store.list_approvals(table) if a.get("status") == "pending")
+    mail = board_mail.status_summary(table)
     return _json_response(
         200,
         {
@@ -145,6 +160,8 @@ def _overview() -> dict[str, Any]:
             "chairDefault": BOARD_CHAIR_DEFAULT,
             "openActionCount": open_count,
             "pendingApprovalCount": pending_approvals,
+            "unreadMailCount": mail["unreadCount"],
+            "mail": mail,
             "toolsEnabled": board_tools.tools_enabled(settings),
             "runningMeeting": board_meeting.public_meeting_summary(running) if running else None,
             "latestMeeting": board_meeting.public_meeting_summary(latest_done) if latest_done else None,
@@ -177,6 +194,8 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "registry": board_tools.public_registry(),
         "defaults": board_store.default_tools_config(),
         "repoWriteEnabled": board_github.write_enabled(),
+        "mailSendEnabled": board_mail.sending_enabled(),
+        "mailDomain": board_mail.mail_domain(),
     }
 
 
@@ -208,6 +227,19 @@ def validate_tools_config(body: Any, current: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError(f"Level for {tool_id}/{pid} must be one of {', '.join(BOARD_TOOL_LEVELS)}")
                 merged[tool_id][pid] = level
         out["matrix"] = merged
+    if "allowList" in body:
+        entries = body.get("allowList")
+        if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
+            raise ValueError("allowList must be an array of addresses or @domains")
+        if len(entries) > BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES:
+            raise ValueError(f"allowList may hold at most {BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES} entries")
+        for entry in entries:
+            cleaned = "".join(entry.split()).lower()
+            if cleaned and not ALLOW_LIST_ENTRY_RE.fullmatch(cleaned):
+                raise ValueError(
+                    f"allowList entry '{cleaned[:80]}' must be a full address (name@host.tld) or a domain (@host.tld)"
+                )
+        out["allowList"] = board_store.normalize_allow_list(entries)
     return board_store.normalize_tools_config(out)
 
 
@@ -279,6 +311,54 @@ def _approval_decide(event: dict[str, Any], approval_id: str, *, approve: bool, 
         return _json_response(409, {"message": str(exc)})
     _audit(user_sub, "BOARD_APPROVAL_APPROVE" if approve else "BOARD_APPROVAL_REJECT", approval_id, event)
     return _json_response(200, {"approval": board_tools.public_approval(decided)})
+
+
+THREAD_ID_RE = re.compile(r"^[a-f0-9]{8,40}$")
+
+
+def _mail_list(event: dict[str, Any]) -> dict[str, Any]:
+    qs = parse_qs(event.get("rawQueryString") or "")
+    try:
+        limit = min(max(1, int((qs.get("limit") or ["50"])[0])), BOARD_MAIL_LIST_MAX_THREADS)
+    except ValueError:
+        limit = 50
+    table = board_store.records_table()
+    listing = board_mail.thread_list(
+        table,
+        mailbox=(qs.get("mailbox") or [""])[0],
+        query=(qs.get("q") or [""])[0][:200],
+        unread_only=(qs.get("unread") or [""])[0] in ("1", "true"),
+        limit=limit,
+    )
+    return _json_response(200, {**listing, "status": board_mail.status_summary(table)})
+
+
+def _mail_thread_get(event: dict[str, Any], thread_id: str) -> dict[str, Any]:
+    if not THREAD_ID_RE.fullmatch(thread_id):
+        return _json_response(404, {"message": "Thread not found"})
+    qs = parse_qs(event.get("rawQueryString") or "")
+    table = board_store.records_table()
+    if (qs.get("view") or [""])[0] == "board":
+        detail = board_mail.masked_thread_detail(table, thread_id)
+    else:
+        detail = board_mail.thread_detail(table, thread_id)
+    if not detail:
+        return _json_response(404, {"message": "Thread not found"})
+    return _json_response(200, detail)
+
+
+def _mail_thread_read(event: dict[str, Any], thread_id: str, user_sub: str | None) -> dict[str, Any]:
+    if not THREAD_ID_RE.fullmatch(thread_id):
+        return _json_response(404, {"message": "Thread not found"})
+    body = _parse_json_body(event)
+    read = body.get("read", True) if isinstance(body, dict) else True
+    if not isinstance(read, bool):
+        return _json_response(400, {"message": "read must be a boolean"})
+    table = board_store.records_table()
+    if not board_mail.mark_read(table, thread_id, read=read):
+        return _json_response(404, {"message": "Thread not found"})
+    _audit(user_sub, "BOARD_MAIL_READ" if read else "BOARD_MAIL_UNREAD", thread_id, event)
+    return _json_response(200, {"thread": board_store.get_mail_thread(table, thread_id)})
 
 
 def _charter_put(event: dict[str, Any], user_sub: str | None) -> dict[str, Any]:

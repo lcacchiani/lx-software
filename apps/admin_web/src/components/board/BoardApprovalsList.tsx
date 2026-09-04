@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { DateTimeDisplay } from "../ui";
 import {
   APPROVAL_STATUS_BADGE_CLASS,
+  isMailPreview,
   memberLabel,
   PHASE_LABELS,
   type BoardApproval,
+  type BoardMailPreview,
   type BoardMember,
 } from "../../lib/boardModel";
 import { BOARD_MAX_APPROVAL_NOTE_LEN } from "../../lib/contracts/generated";
@@ -18,6 +20,7 @@ export type BoardApprovalsListProps = {
   readonly errorMessage?: string | null;
   readonly onDecide: (vars: ApprovalDecisionVariables) => void;
   readonly onOpenMeeting: (meetingId: string) => void;
+  readonly onOpenMailThread?: (threadId: string) => void;
   /** Approval to scroll to and expand (from a "review" link in a chat or transcript). */
   readonly focusApprovalId?: string | null;
 };
@@ -46,6 +49,45 @@ function ArgumentsTable({ args }: { readonly args: Readonly<Record<string, unkno
   );
 }
 
+/** What the owner would actually send: real addresses, un-masked body. */
+export function MailPreviewCard({ preview, onOpenThread }: { readonly preview: BoardMailPreview; readonly onOpenThread?: (threadId: string) => void }) {
+  return (
+    <div className="border rounded bg-body-tertiary p-2 small board-mail-preview">
+      <div className="d-flex flex-wrap gap-3 text-muted">
+        <span>
+          <span className="text-uppercase fw-semibold me-1">from</span>
+          <span className="text-body">{preview.from}</span>
+        </span>
+        <span>
+          <span className="text-uppercase fw-semibold me-1">to</span>
+          <span className="text-body">{preview.to.join(", ")}</span>
+        </span>
+        {preview.cc.length > 0 ? (
+          <span>
+            <span className="text-uppercase fw-semibold me-1">cc</span>
+            <span className="text-body">{preview.cc.join(", ")}</span>
+          </span>
+        ) : null}
+      </div>
+      <div className="fw-semibold mt-1">{preview.subject}</div>
+      <pre className="mb-0 mt-1 board-mail-body">{preview.text}</pre>
+      <div className="d-flex flex-wrap gap-3 mt-2">
+        {preview.threadId && onOpenThread ? (
+          <button type="button" className="btn btn-link btn-sm p-0 align-baseline" onClick={() => onOpenThread(preview.threadId)}>
+            open thread <i className="bi bi-arrow-right-short" aria-hidden="true" />
+          </button>
+        ) : null}
+        {!preview.sendEnabled ? (
+          <span className="text-warning-emphasis">
+            <i className="bi bi-exclamation-triangle me-1" aria-hidden="true" />
+            Sending is switched off for this deployment; approving records the decision but cannot send.
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function BoardApprovalsList({
   approvals,
   members,
@@ -54,6 +96,7 @@ export function BoardApprovalsList({
   errorMessage,
   onDecide,
   onOpenMeeting,
+  onOpenMailThread,
   focusApprovalId,
 }: BoardApprovalsListProps) {
   const [showDecided, setShowDecided] = useState(false);
@@ -136,6 +179,21 @@ export function BoardApprovalsList({
             {a.reason}
           </div>
         ) : null}
+        {a.downgradeReason ? (
+          <div className="small mt-1 text-warning-emphasis">
+            <i className="bi bi-shield-lock me-1" aria-hidden="true" />
+            Held for approval although the member may act: {a.downgradeReason}.
+          </div>
+        ) : null}
+
+        {editingArgsId !== a.approvalId && isMailPreview(a.preview) ? (
+          <div className="mt-2">
+            <MailPreviewCard preview={a.preview} onOpenThread={onOpenMailThread} />
+          </div>
+        ) : null}
+        {editingArgsId !== a.approvalId && a.preview && !isMailPreview(a.preview) && "error" in a.preview ? (
+          <div className="small mt-2 text-danger">{a.preview.error}</div>
+        ) : null}
 
         {editingArgsId === a.approvalId ? (
           <div className="mt-2">
@@ -148,7 +206,7 @@ export function BoardApprovalsList({
             />
             {argsError ? <div className="invalid-feedback d-block">{argsError}</div> : null}
           </div>
-        ) : (
+        ) : isMailPreview(a.preview) ? null : (
           <div className="mt-2">
             <ArgumentsTable args={a.arguments} />
           </div>
@@ -232,8 +290,9 @@ export function BoardApprovalsList({
           </div>
         </div>
         <p className="text-muted small">
-          Members at the <strong>Propose</strong> level queue their writes here instead of doing them. Approving
-          runs the action exactly as shown (edit it first if you want to change it); rejecting tells the member why.
+          Members at the <strong>Propose</strong> level queue their writes here instead of doing them, and emails to
+          anyone outside your allow-list land here even at <strong>Act</strong>. Approving runs the action exactly as
+          shown (edit it first if you want to change it); rejecting tells the member why.
         </p>
         {errorMessage ? <div className="alert alert-danger py-2 small">{errorMessage}</div> : null}
         {isLoading ? (

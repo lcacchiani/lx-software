@@ -12,6 +12,7 @@ from typing import Any
 
 import board_finance
 import board_github
+import board_mail
 import board_store
 
 MAX_BRIEF_CHARS = 12000
@@ -74,6 +75,8 @@ def build_context_pack(
     use_repo = settings.get("shareRepoSnapshot") if include_repo is None else include_repo
     repo = board_store.load_repo_snapshot(table) if use_repo else None
 
+    mail = board_mail.digest_for_context(table)
+
     pack = {
         "brief": _cap(str(brief.get("markdown") or ""), MAX_BRIEF_CHARS),
         "briefUpdatedAt": brief.get("updatedAt"),
@@ -87,6 +90,7 @@ def build_context_pack(
         "decisions": decisions,
         "pendingApprovals": [_approval_summary(a) for a in pending_approvals],
         "rejectedApprovals": [_approval_summary(a) for a in rejected_approvals],
+        "mail": mail,
         "finance": finance,
         "repoText": _cap(str((repo or {}).get("text") or ""), MAX_REPO_CHARS) if repo else "",
         "repoFetchedAt": (repo or {}).get("fetchedAt") if repo else None,
@@ -207,6 +211,16 @@ def render_context_pack(pack: dict[str, Any]) -> str:
         for a in rejected:
             note = f" Founder: {a['note']}" if a.get("note") else ""
             parts.append(f"- [{str(a.get('decidedAt') or '')[:10]}] ({a.get('persona')}) {a.get('summary')}.{note}")
+
+    mail = pack.get("mail") or {}
+    if mail.get("threadCount"):
+        parts.append("")
+        boxes = ", ".join(f"{m.get('address')} {m.get('unreadCount')}" for m in (mail.get("mailboxes") or []))
+        parts.append(
+            f"--- Company email: {mail.get('threadCount')} threads indexed, {mail.get('unreadCount')} unread by the founder"
+            + (f" ({boxes})" if boxes else "")
+            + " — members with mail access use mail_list_threads for detail ---"
+        )
 
     finance = pack.get("finance")
     if finance:

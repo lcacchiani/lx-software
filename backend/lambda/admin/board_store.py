@@ -20,6 +20,10 @@ Key layout (``pk`` / ``sk``):
 - ``BOARD#<b>#usage#<yyyy-mm-dd>`` / ``STATE``  — daily token / cost totals
 - ``BOARD#<b>#approvals`` / ``APPROVAL#<id>``   — proposed tool actions awaiting the owner
 - ``BOARD#<b>#toolcalls`` / ``CALL#<ts>#<id>``  — audit log of every tool call (TTL)
+- ``BOARD#<b>#mail#threads`` / ``THREAD#<id>``  — email thread summaries (TTL)
+- ``BOARD#<b>#mail#thread#<id>`` / ``MSG#<ts>#<id>`` — messages in a thread (TTL)
+- ``BOARD#<b>#mail#msgids`` / ``MSGID#<digest>`` — RFC Message-ID → thread (TTL)
+- ``BOARD#<b>#mail#pii`` / ``STATE``             — contact pseudonym map
 """
 
 from __future__ import annotations
@@ -39,6 +43,8 @@ from contract_constants import (
     BOARD_CHAT_JOB_TTL_SECONDS,
     BOARD_DEFAULT_DAILY_BUDGET_USD,
     BOARD_KEY,
+    BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES,
+    BOARD_MAIL_MESSAGE_TTL_DAYS,
     BOARD_PERSONA_IDS,
     BOARD_TOOL_CALL_LOG_TTL_DAYS,
     BOARD_TOOL_DEFAULT_GLOBAL_MODE,
@@ -129,7 +135,33 @@ def default_tools_config() -> dict[str, Any]:
         "enabled": True,
         "globalMode": BOARD_TOOL_DEFAULT_GLOBAL_MODE,
         "matrix": default_tool_matrix(),
+        "allowList": [],
     }
+
+
+def normalize_allow_list(raw: Any) -> list[str]:
+    """Lower-cased, de-duplicated ``user@host`` addresses or ``@domain`` entries."""
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        value = "".join(entry.split()).lower().strip("<>")
+        if not value or value in seen:
+            continue
+        if "@" not in value or value.count("@") != 1:
+            continue
+        local, host = value.split("@")
+        if not host or "." not in host:
+            continue
+        # ``@domain.tld`` allows everyone at that domain; otherwise one address.
+        seen.add(value)
+        out.append(value if local else f"@{host}")
+        if len(out) >= BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES:
+            break
+    return out
 
 
 def normalize_tools_config(raw: Any) -> dict[str, Any]:
@@ -146,6 +178,7 @@ def normalize_tools_config(raw: Any) -> dict[str, Any]:
     mode = raw.get("globalMode")
     if isinstance(mode, str) and mode in BOARD_TOOL_GLOBAL_MODES:
         out["globalMode"] = mode
+    out["allowList"] = normalize_allow_list(raw.get("allowList"))
     matrix = raw.get("matrix")
     if isinstance(matrix, dict):
         max_levels = {str(t["id"]): str(t.get("maxLevel") or "act") for t in BOARD_TOOL_DEFINITIONS}
@@ -678,6 +711,112 @@ def list_tool_calls(table: Any, *, limit: int = 50) -> list[dict[str, Any]]:
         Limit=limit,
     )
     return [{k: v for k, v in _strip_keys(i).items() if k != "expiresAt"} for i in items[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Mail index
+# ---------------------------------------------------------------------------
+
+def _mail_expires_at() -> int:
+    return int(time.time()) + BOARD_MAIL_MESSAGE_TTL_DAYS * 86400
+
+
+def _public_mail(item: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in _strip_keys(item).items() if k != "expiresAt"}
+
+
+def mail_thread_key(thread_id: str) -> dict[str, str]:
+    return {"pk": board_pk("mail#threads"), "sk": f"THREAD#{thread_id}"}
+
+
+def put_mail_thread(table: Any, doc: dict[str, Any]) -> None:
+    table.put_item(
+        Item={
+            **mail_thread_key(str(doc["threadId"])),
+            "expiresAt": _mail_expires_at(),
+            **_to_ddb_nested(doc),
+        }
+    )
+
+
+def get_mail_thread(table: Any, thread_id: str) -> dict[str, Any] | None:
+    res = table.get_item(Key=mail_thread_key(thread_id))
+    item = res.get("Item") if isinstance(res, dict) else None
+    if not item:
+        return None
+    doc = _public_mail(item)
+    return doc if isinstance(doc, dict) else None
+
+
+def list_mail_threads(table: Any) -> list[dict[str, Any]]:
+    """Newest activity first."""
+    items = _query_all(
+        table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": board_pk("mail#threads"), ":prefix": "THREAD#"},
+    )
+    out = [_public_mail(i) for i in items]
+    out.sort(key=lambda t: str(t.get("lastMessageAt") or ""), reverse=True)
+    return out
+
+
+def set_mail_thread_unread(table: Any, thread_id: str, *, unread: bool) -> None:
+    table.update_item(
+        Key=mail_thread_key(thread_id),
+        UpdateExpression="SET unread = :u, updatedAt = :now",
+        ConditionExpression="attribute_exists(threadId)",
+        ExpressionAttributeValues={":u": bool(unread), ":now": now_iso()},
+    )
+
+
+def put_mail_message(table: Any, doc: dict[str, Any]) -> None:
+    table.put_item(
+        Item={
+            "pk": board_pk(f"mail#thread#{doc['threadId']}"),
+            "sk": f"MSG#{doc['receivedAt']}#{doc['messageId']}",
+            "expiresAt": _mail_expires_at(),
+            **_to_ddb_nested(doc),
+        }
+    )
+
+
+def list_mail_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
+    """Oldest first."""
+    items = _query_all(
+        table,
+        KeyConditionExpression="pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues={":pk": board_pk(f"mail#thread#{thread_id}"), ":prefix": "MSG#"},
+    )
+    return [_public_mail(i) for i in items]
+
+
+def _msgid_key(digest: str) -> dict[str, str]:
+    return {"pk": board_pk("mail#msgids"), "sk": f"MSGID#{digest}"}
+
+
+def put_mail_msgid(table: Any, digest: str, *, thread_id: str, message_id: str) -> bool:
+    """Record an RFC Message-ID; returns False when it was already indexed."""
+    try:
+        table.put_item(
+            Item={
+                **_msgid_key(digest),
+                "threadId": thread_id,
+                "messageId": message_id,
+                "expiresAt": _mail_expires_at(),
+            },
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
+
+
+def get_mail_thread_for_msgid(table: Any, digest: str) -> str | None:
+    res = table.get_item(Key=_msgid_key(digest))
+    item = res.get("Item") if isinstance(res, dict) else None
+    return str(item["threadId"]) if item and item.get("threadId") else None
 
 
 def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:

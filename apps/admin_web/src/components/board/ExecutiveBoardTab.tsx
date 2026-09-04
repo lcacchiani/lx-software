@@ -6,6 +6,7 @@ import { BoardBriefEditor } from "./BoardBriefEditor";
 import { BoardCharterEditor } from "./BoardCharterEditor";
 import { BoardChatOffcanvas } from "./BoardChatOffcanvas";
 import { BoardHeaderStrip } from "./BoardHeaderStrip";
+import { BoardMailView } from "./BoardMailView";
 import { BoardMeetingHistory } from "./BoardMeetingHistory";
 import { BoardMeetingPanel } from "./BoardMeetingPanel";
 import { BoardMemberEditor } from "./BoardMemberEditor";
@@ -28,13 +29,14 @@ import {
 import { getAdminApiErrorMessage } from "../../lib/apiAdminClient";
 import { effectiveToolLevel, type BoardMeetingMode } from "../../lib/boardModel";
 
-type BoardSection = "actions" | "approvals" | "meetings" | "members" | "brief" | "settings";
+type BoardSection = "actions" | "approvals" | "mail" | "meetings" | "members" | "brief" | "settings";
 
 const CLOSED_MEETING = "__closed__";
 
 const SECTIONS: readonly { readonly id: BoardSection; readonly label: string; readonly icon: string }[] = [
   { id: "actions", label: "Next actions", icon: "bi-list-check" },
   { id: "approvals", label: "Approvals", icon: "bi-shield-check" },
+  { id: "mail", label: "Mail", icon: "bi-envelope" },
   { id: "meetings", label: "Meetings", icon: "bi-people" },
   { id: "members", label: "Board members", icon: "bi-person-badge" },
   { id: "brief", label: "Charter & brief", icon: "bi-journal-richtext" },
@@ -63,6 +65,7 @@ export function ExecutiveBoardTab() {
   const [selectedMeeting, setSelectedMeeting] = useState<string | null>(null);
   const [startForm, setStartForm] = useState<{ mode: BoardMeetingMode; topic: string } | null>(null);
   const [focusApprovalId, setFocusApprovalId] = useState<string | null>(null);
+  const [focusThreadId, setFocusThreadId] = useState<string | null>(null);
   const [showCallLog, setShowCallLog] = useState(false);
   const callLog = useBoardToolCalls(section === "settings" && showCallLog);
 
@@ -91,6 +94,11 @@ export function ExecutiveBoardTab() {
     setChatPersonaId(null);
     setFocusApprovalId(approvalId);
     setSection("approvals");
+  }, []);
+
+  const openMailThread = useCallback((threadId: string) => {
+    setFocusThreadId(threadId);
+    setSection("mail");
   }, []);
 
   const chatToolLabels = useMemo(() => {
@@ -159,6 +167,9 @@ export function ExecutiveBoardTab() {
                   {s.id === "approvals" && overview.pendingApprovalCount > 0 ? (
                     <span className="badge rounded-pill text-bg-warning ms-2">{overview.pendingApprovalCount}</span>
                   ) : null}
+                  {s.id === "mail" && overview.unreadMailCount > 0 ? (
+                    <span className="badge rounded-pill text-bg-light border ms-2">{overview.unreadMailCount}</span>
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -183,7 +194,17 @@ export function ExecutiveBoardTab() {
               errorMessage={errorText(approvals.error) ?? errorText(approvals.decide.error)}
               onDecide={(vars) => approvals.decide.mutate(vars)}
               onOpenMeeting={openMeeting}
+              onOpenMailThread={openMailThread}
               focusApprovalId={focusApprovalId}
+            />
+          ) : null}
+
+          {section === "mail" ? (
+            <BoardMailView
+              status={overview.mail}
+              focusThreadId={focusThreadId}
+              onFocusConsumed={() => setFocusThreadId(null)}
+              errorText={errorText}
             />
           ) : null}
 

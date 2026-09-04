@@ -14,6 +14,7 @@ export const BOARD_TOOL_CALLS_KEY = [...BOARD_QUERY_KEY, "toolCalls"] as const;
 
 export type ToolsConfigPatch = Partial<Pick<BoardToolsConfig, "enabled" | "globalMode">> & {
   readonly matrix?: BoardToolMatrix;
+  readonly allowList?: readonly string[];
 };
 
 export function useBoardTools() {

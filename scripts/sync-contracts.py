@@ -139,6 +139,12 @@ def write_python(finance: dict, timeouts: dict, domains: dict) -> None:
         "BOARD_APPROVAL_TTL_DAYS = int(_BOARD_TOOL_LIMITS[\"approvalTtlDays\"])",
         "BOARD_TOOL_CALL_LOG_TTL_DAYS = int(_BOARD_TOOL_LIMITS[\"toolCallLogTtlDays\"])",
         "BOARD_MAX_APPROVAL_NOTE_LEN = int(_BOARD_TOOL_LIMITS[\"maxApprovalNoteLen\"])",
+        "BOARD_MAIL_MESSAGE_TTL_DAYS = int(_BOARD_TOOL_LIMITS[\"mailMessageTtlDays\"])",
+        "BOARD_MAIL_BODY_MAX_CHARS = int(_BOARD_TOOL_LIMITS[\"mailBodyMaxChars\"])",
+        "BOARD_MAIL_SUBJECT_MAX_LEN = int(_BOARD_TOOL_LIMITS[\"mailSubjectMaxLen\"])",
+        "BOARD_MAIL_MAX_RECIPIENTS = int(_BOARD_TOOL_LIMITS[\"mailMaxRecipients\"])",
+        "BOARD_MAIL_LIST_MAX_THREADS = int(_BOARD_TOOL_LIMITS[\"mailListMaxThreads\"])",
+        "BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES = int(_BOARD_TOOL_LIMITS[\"mailAllowListMaxEntries\"])",
         "",
     ]
     PY_OUT.write_text("\n".join(lines), encoding="utf-8")
@@ -252,6 +258,11 @@ export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
 export const BOARD_MAX_TOOL_ROUNDS_PER_TURN = {tool_limits["maxToolRoundsPerTurn"]};
 export const BOARD_MAX_TOOL_CALLS_PER_TURN = {tool_limits["maxToolCallsPerTurn"]};
 export const BOARD_MAX_APPROVAL_NOTE_LEN = {tool_limits["maxApprovalNoteLen"]};
+export const BOARD_MAIL_MESSAGE_TTL_DAYS = {tool_limits["mailMessageTtlDays"]};
+export const BOARD_MAIL_BODY_MAX_CHARS = {tool_limits["mailBodyMaxChars"]};
+export const BOARD_MAIL_SUBJECT_MAX_LEN = {tool_limits["mailSubjectMaxLen"]};
+export const BOARD_MAIL_MAX_RECIPIENTS = {tool_limits["mailMaxRecipients"]};
+export const BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES = {tool_limits["mailAllowListMaxEntries"]};
 """
     TS_OUT.write_text(body, encoding="utf-8")
 

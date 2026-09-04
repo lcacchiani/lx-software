@@ -48,6 +48,8 @@ export type BoardToolsConfig = {
   readonly enabled: boolean;
   readonly globalMode: BoardToolGlobalMode;
   readonly matrix: BoardToolMatrix;
+  /** Addresses (`name@host.tld`) or domains (`@host.tld`) the board may email at `act` level. */
+  readonly allowList: readonly string[];
 };
 
 export type BoardSettings = {
@@ -85,6 +87,8 @@ export type BoardToolsPayload = {
   readonly registry: readonly BoardToolRegistryEntry[];
   readonly defaults: BoardToolsConfig;
   readonly repoWriteEnabled: boolean;
+  readonly mailSendEnabled: boolean;
+  readonly mailDomain: string;
 };
 
 export type BoardToolCallStatus = "ok" | "error" | "pending_approval";
@@ -136,6 +140,106 @@ export type BoardApproval = {
   readonly note?: string;
   readonly result?: Readonly<Record<string, unknown>>;
   readonly errorMessage?: string;
+  /** Present when an `act`-level call was held back (e.g. recipient not allow-listed). */
+  readonly downgradeReason?: string;
+  /** Owner-facing rendering of the payload (un-masked), when the operation provides one. */
+  readonly preview?: BoardApprovalPreview;
+};
+
+export type BoardMailPreview = {
+  readonly kind: "email";
+  readonly from: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly subject: string;
+  readonly text: string;
+  readonly threadId: string;
+  readonly sendEnabled: boolean;
+};
+
+export type BoardApprovalPreview = BoardMailPreview | { readonly error: string };
+
+export function isMailPreview(preview: BoardApprovalPreview | undefined): preview is BoardMailPreview {
+  return !!preview && "kind" in preview && preview.kind === "email";
+}
+
+export type BoardMailAttachment = {
+  readonly name: string;
+  readonly contentType: string;
+  readonly size: number;
+  readonly text?: string;
+};
+
+export type BoardMailThread = {
+  readonly threadId: string;
+  readonly mailbox: string;
+  readonly subject: string;
+  readonly participants: readonly string[];
+  readonly firstMessageAt: string;
+  readonly lastMessageAt: string;
+  readonly lastDirection: "in" | "out";
+  readonly lastFrom: string;
+  readonly lastFromName?: string;
+  readonly messageCount: number;
+  readonly unread: boolean;
+  readonly hasAttachments: boolean;
+  readonly snippet: string;
+};
+
+export type BoardMailMessage = {
+  readonly messageId: string;
+  readonly threadId: string;
+  readonly direction: "in" | "out";
+  readonly source: string;
+  readonly mailbox: string;
+  readonly from: { readonly address: string; readonly name: string };
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly subject: string;
+  readonly date: string;
+  readonly receivedAt: string;
+  readonly text: string;
+  readonly attachments: readonly BoardMailAttachment[];
+};
+
+/** Masked rendering (`?view=board`): what a persona sees through the mail tools. */
+export type BoardMailMaskedMessage = {
+  readonly messageId: string;
+  readonly direction: "in" | "out";
+  readonly from: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly date: string;
+  readonly subject: string;
+  readonly text: string;
+  readonly attachments: readonly BoardMailAttachment[];
+};
+
+export type BoardMailboxSummary = {
+  readonly address: string;
+  readonly threadCount: number;
+  readonly unreadCount: number;
+  readonly lastMessageAt: string;
+};
+
+export type BoardMailStatus = {
+  readonly threadCount: number;
+  readonly unreadCount: number;
+  readonly domain: string;
+  readonly sendEnabled: boolean;
+  readonly inboundAddress: string;
+};
+
+export type BoardMailListPayload = {
+  readonly threads: readonly BoardMailThread[];
+  readonly total: number;
+  readonly mailboxes: readonly BoardMailboxSummary[];
+  readonly status: BoardMailStatus;
+};
+
+export type BoardMailThreadPayload = {
+  readonly thread: BoardMailThread;
+  readonly messages: readonly BoardMailMessage[];
 };
 
 export type BoardCharter = {
@@ -308,6 +412,8 @@ export type BoardOverview = {
   readonly repo: string;
   readonly pendingApprovalCount: number;
   readonly toolsEnabled: boolean;
+  readonly unreadMailCount: number;
+  readonly mail: BoardMailStatus;
 };
 
 export const BOARD_API_BASE = "/siu-tin-dei/board";
@@ -541,4 +647,35 @@ export function boardActionPath(actionId: string): string {
 
 export function boardApprovalDecisionPath(approvalId: string, decision: "approve" | "reject"): string {
   return `${BOARD_API_BASE}/approvals/${encodeURIComponent(approvalId)}/${decision}`;
+}
+
+export function boardMailThreadPath(threadId: string): string {
+  return `${BOARD_API_BASE}/mail/${encodeURIComponent(threadId)}`;
+}
+
+/** `hello@siutindei.com` → `hello@`; keeps full addresses from other domains. */
+export function mailboxShortLabel(address: string, domain?: string): string {
+  const at = address.indexOf("@");
+  if (at < 0) return address;
+  const host = address.slice(at + 1);
+  return domain && host === domain ? `${address.slice(0, at)}@` : address;
+}
+
+export function formatMailBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Full address or `@domain` wildcard, mirroring the Lambda's allow-list check. */
+export const MAIL_ALLOW_LIST_ENTRY_RE = /^(?:[a-z0-9._%+-]+)?@[a-z0-9.-]+\.[a-z]{2,}$/;
+
+/** One entry per line or comma; lower-cased, de-duplicated, blanks dropped. */
+export function parseAllowListText(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/[\n,;]+/)) {
+    const entry = raw.replace(/\s+/g, "").toLowerCase();
+    if (entry && !out.includes(entry)) out.push(entry);
+  }
+  return out;
 }

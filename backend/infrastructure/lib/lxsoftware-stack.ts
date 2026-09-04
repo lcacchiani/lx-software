@@ -215,6 +215,23 @@ export class LxsoftwareStack extends cdk.Stack {
       default: "lx-software-ltd/siutindei",
       description: "owner/name of the repository the Executive Board reads.",
     });
+    const boardMailDomain = new cdk.CfnParameter(this, "BoardMailDomain", {
+      type: "String",
+      default: "siutindei.com",
+      description:
+        "Company mail domain the Executive Board reads. Every message to any mailbox at this domain is fanned out by a Cloudflare Email Worker to the board's SES inbound address and indexed (docs/architecture/executive-board-tools-plan.md §5.2).",
+    });
+    const boardMailSendingEnabled = new cdk.CfnParameter(
+      this,
+      "BoardMailSendingEnabled",
+      {
+        type: "String",
+        default: "false",
+        allowedValues: ["true", "false"],
+        description:
+          "Set to true once BoardMailDomain is verified for sending in SES (DKIM CNAMEs, SPF include:amazonses.com, DMARC). Creates the SES identity and lets the board's mail tools send replies from that domain; false keeps mail read-only.",
+      }
+    );
     const boardChatModel = new cdk.CfnParameter(this, "BoardChatModel", {
       type: "String",
       default: "openai/gpt-4.1-mini",
@@ -563,6 +580,9 @@ export class LxsoftwareStack extends cdk.Stack {
         BOARD_MEETING_MODEL: boardMeetingModel.valueAsString,
         BOARD_DEEP_DIVE_MODEL: boardDeepDiveModel.valueAsString,
         BOARD_TOOLS_ENABLED: boardToolsEnabled.valueAsString,
+        // BOARD_MAIL_DOMAIN / _RAW_SEGMENT / _INBOUND_ADDRESS are added with the
+        // inbound-mail resources below (they depend on InboundMailDomain).
+        BOARD_MAIL_SENDING_ENABLED: boardMailSendingEnabled.valueAsString,
         ADMIN_WEB_ORIGIN: cdk.Fn.join("", [
           "https://",
           adminWebDomainName.valueAsString,
@@ -831,6 +851,77 @@ export class LxsoftwareStack extends cdk.Stack {
         ],
       });
     }
+
+    // ------------------------------------------------------------------
+    // Executive Board mail: every BoardMailDomain mailbox is copied here by a
+    // Cloudflare Email Worker (scripts/cloudflare/siutindei-mail-fanout.js).
+    // Same SES → S3 → InboundStatementMailFn path; the handler branches on the
+    // ``inbound-raw/<boardMailRawSegment>/`` prefix into board_mail.py.
+    // ------------------------------------------------------------------
+    const boardMailLocalPart = "siutindei-board";
+    const boardMailRawSegment = "siutindei";
+    const boardMailRawKeyPrefix = `${inboundRawMailPrefix}/${boardMailRawSegment}/`;
+    const boardMailInboundAddress = cdk.Fn.join("", [
+      boardMailLocalPart,
+      "@",
+      inboundMailDomain.valueAsString,
+    ]);
+
+    inboundStatementFn.addEventSource(
+      new lambdaEventSources.S3EventSource(inboundMailBucket, {
+        events: [s3.EventType.OBJECT_CREATED],
+        filters: [{ prefix: boardMailRawKeyPrefix }],
+      })
+    );
+    inboundReceiptRuleSet.addRule("InboundMailbox-board", {
+      recipients: [boardMailInboundAddress],
+      enabled: true,
+      actions: [
+        new sesActions.S3({
+          bucket: inboundMailBucket,
+          objectKeyPrefix: boardMailRawKeyPrefix,
+        }),
+      ],
+    });
+    for (const fn of [adminFn, inboundStatementFn]) {
+      fn.addEnvironment("BOARD_MAIL_DOMAIN", boardMailDomain.valueAsString);
+      fn.addEnvironment("BOARD_MAIL_RAW_SEGMENT", boardMailRawSegment);
+      fn.addEnvironment("BOARD_MAIL_INBOUND_ADDRESS", boardMailInboundAddress);
+    }
+
+    // Sending identity for BoardMailDomain, created only once the owner flips
+    // BoardMailSendingEnabled (DNS must carry the DKIM CNAMEs first). The send
+    // policy is scoped to that single identity so the board can never send
+    // from anything but the company domain.
+    const hasBoardMailSending = new cdk.CfnCondition(this, "HasBoardMailSending", {
+      expression: cdk.Fn.conditionEquals(
+        boardMailSendingEnabled.valueAsString,
+        "true"
+      ),
+    });
+    const boardMailIdentity = new ses.CfnEmailIdentity(this, "BoardMailSendingIdentity", {
+      emailIdentity: boardMailDomain.valueAsString,
+      dkimAttributes: { signingEnabled: true },
+      mailFromAttributes: { behaviorOnMxFailure: "USE_DEFAULT_VALUE" },
+    });
+    boardMailIdentity.cfnOptions.condition = hasBoardMailSending;
+    const boardMailSendPolicy = new iam.Policy(this, "AdminBoardMailSendPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["ses:SendEmail", "ses:SendRawEmail"],
+          resources: [
+            cdk.Stack.of(this).formatArn({
+              service: "ses",
+              resource: "identity",
+              resourceName: boardMailDomain.valueAsString,
+            }),
+          ],
+        }),
+      ],
+    });
+    boardMailSendPolicy.attachToRole(adminFn.role!);
+    const cfnBoardMailSendPolicy = boardMailSendPolicy.node.defaultChild as iam.CfnPolicy;
+    cfnBoardMailSendPolicy.cfnOptions.condition = hasBoardMailSending;
 
     // AWS::ApiGatewayV2::Integration TimeoutInMillis must be 50–30000 ms in this
     // account/region; CDK defaults (~29s). Do not raise via L1 overrides.
@@ -1150,6 +1241,16 @@ export class LxsoftwareStack extends cdk.Stack {
         path: "/siu-tin-dei/board/approvals/{approvalId}/reject",
         methods: [apigwv2.HttpMethod.POST],
       },
+      // Company mail index (owner view; personas use the mail tools)
+      { path: "/siu-tin-dei/board/mail", methods: [apigwv2.HttpMethod.GET] },
+      {
+        path: "/siu-tin-dei/board/mail/{threadId}",
+        methods: [apigwv2.HttpMethod.GET],
+      },
+      {
+        path: "/siu-tin-dei/board/mail/{threadId}/read",
+        methods: [apigwv2.HttpMethod.POST],
+      },
     ];
     for (const route of boardRoutes) {
       this.httpApi.addRoutes({
@@ -1352,6 +1453,24 @@ export class LxsoftwareStack extends cdk.Stack {
       description: "S3 bucket where SES stores raw inbound messages before processing.",
       exportName: "lxsoftware-InboundMailBucketName",
     });
+
+    new cdk.CfnOutput(this, "BoardMailInboundAddress", {
+      value: boardMailInboundAddress,
+      description:
+        "Destination the Cloudflare Email Worker forwards every BoardMailDomain message to (verify it once in Cloudflare; the verification mail lands in the inbound bucket).",
+      exportName: "lxsoftware-BoardMailInboundAddress",
+    });
+
+    for (const n of [1, 2, 3] as const) {
+      const output = new cdk.CfnOutput(this, `BoardMailDkimCname${n}`, {
+        value: cdk.Fn.join(" CNAME ", [
+          boardMailIdentity.getAtt(`DkimDNSTokenName${n}`).toString(),
+          boardMailIdentity.getAtt(`DkimDNSTokenValue${n}`).toString(),
+        ]),
+        description: `DKIM CNAME ${n} of 3 to add to the BoardMailDomain zone (name CNAME value).`,
+      });
+      output.condition = hasBoardMailSending;
+    }
 
     new cdk.CfnOutput(this, "EnableBankingSigningKeyId", {
       value: enableBankingSigningKey.keyId,

@@ -272,9 +272,30 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
       "ciso": "act",
       "cmo": "act"
     }
+  },
+  {
+    "id": "mail",
+    "label": "Email",
+    "description": "Every siutindei.com mailbox: threads, messages and attachment names, with contacts pseudonymised. Writes reply, forward or send from a siutindei.com address; recipients outside the allow-list always go to the founder for approval.",
+    "maxLevel": "act",
+    "defaults": {
+      "ceo": "propose",
+      "cfo": "act",
+      "coo": "act",
+      "cpo": "read",
+      "cto": "read",
+      "cio": "read",
+      "ciso": "read",
+      "cmo": "act"
+    }
   }
 ];
 export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
 export const BOARD_MAX_TOOL_ROUNDS_PER_TURN = 4;
 export const BOARD_MAX_TOOL_CALLS_PER_TURN = 8;
 export const BOARD_MAX_APPROVAL_NOTE_LEN = 1000;
+export const BOARD_MAIL_MESSAGE_TTL_DAYS = 90;
+export const BOARD_MAIL_BODY_MAX_CHARS = 20000;
+export const BOARD_MAIL_SUBJECT_MAX_LEN = 200;
+export const BOARD_MAIL_MAX_RECIPIENTS = 5;
+export const BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES = 100;
