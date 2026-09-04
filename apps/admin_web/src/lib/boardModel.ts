@@ -223,16 +223,14 @@ export function approvalEditableFields(
   const fields: ApprovalEditField[] = [];
   const seen = new Set<string>();
   if (isMailPreview(preview) && "body" in args) {
-    if ("subject" in args || preview.subject) {
-      fields.push({
-        key: "subject",
-        label: "Subject",
-        multiline: false,
-        value: String(args.subject ?? preview.subject ?? ""),
-      });
+    // Only offer a subject when the op actually takes one (mail_send). Replies and
+    // forwards derive it from the thread, so an edit there would be silently dropped.
+    if ("subject" in args) {
+      fields.push({ key: "subject", label: "Subject", multiline: false, value: String(args.subject ?? "") });
       seen.add("subject");
     }
-    fields.push({ key: "body", label: "Body", multiline: true, value: String(args.body ?? preview.text ?? "") });
+    // Seed from the owner-facing preview (real addresses), not the masked model text.
+    fields.push({ key: "body", label: "Body", multiline: true, value: String(preview.text ?? args.body ?? "") });
     seen.add("body");
   }
   for (const spec of APPROVAL_TEXT_FIELDS) {

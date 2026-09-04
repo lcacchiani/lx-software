@@ -146,6 +146,13 @@ export function BoardApprovalsList({
     setArgsError(null);
   };
 
+  // Switching to raw JSON must carry the field edits along, not revert to the original.
+  const switchToRawJson = (a: BoardApproval) => {
+    setArgsDraft(JSON.stringify({ ...a.arguments, ...fieldDrafts }, null, 2));
+    setArgsError(null);
+    setRawJsonMode(true);
+  };
+
   const approve = (a: BoardApproval) => {
     let override: Record<string, unknown> | undefined;
     if (editingArgsId === a.approvalId) {
@@ -249,7 +256,7 @@ export function BoardApprovalsList({
                     )}
                   </label>
                 ))}
-                <button type="button" className="btn btn-link btn-sm p-0" onClick={() => setRawJsonMode(true)}>
+                <button type="button" className="btn btn-link btn-sm p-0" onClick={() => switchToRawJson(a)}>
                   Edit raw JSON
                 </button>
               </>

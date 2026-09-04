@@ -111,19 +111,27 @@ describe("allow-list parsing", () => {
 });
 
 describe("approvalEditableFields", () => {
-  it("prefers mail body and subject over raw JSON keys", () => {
+  const preview = {
+    kind: "email" as const,
+    from: "hello@siutindei.com",
+    to: ["parent@example.com"],
+    cc: [],
+    subject: "Class on Saturday",
+    text: "Hello Wendy, see you Saturday",
+    threadId: "t1",
+    sendEnabled: true,
+  };
+
+  it("offers only the body for a reply (subject comes from the thread)", () => {
+    const fields = approvalEditableFields({ threadId: "t1", body: "Hello contact#3, see you Saturday", reason: "Reply" }, preview);
+    expect(fields.map((f) => f.key)).toEqual(["body"]);
+    expect(fields[0].value).toBe("Hello Wendy, see you Saturday");
+  });
+
+  it("offers subject and body for a new email", () => {
     const fields = approvalEditableFields(
-      { threadId: "t1", body: "Hello parent", reason: "Reply" },
-      {
-        kind: "email",
-        from: "hello@siutindei.com",
-        to: ["parent@example.com"],
-        cc: [],
-        subject: "Class on Saturday",
-        text: "Hello parent",
-        threadId: "t1",
-        sendEnabled: true,
-      },
+      { fromMailbox: "hello", to: ["parent@example.com"], subject: "Class on Saturday", body: "Hello", reason: "New" },
+      preview,
     );
     expect(fields.map((f) => f.key)).toEqual(["subject", "body"]);
     expect(fields[0].value).toBe("Class on Saturday");
