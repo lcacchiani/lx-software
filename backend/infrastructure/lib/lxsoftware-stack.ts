@@ -326,6 +326,28 @@ export class LxsoftwareStack extends cdk.Stack {
           "Google Play package name (e.g. com.siutindei.app). May also live inside the service-account secret.",
       }
     );
+    const googleAnalyticsServiceAccountSecretArn = new cdk.CfnParameter(
+      this,
+      "GoogleAnalyticsServiceAccountSecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the Secrets Manager secret holding the Google service-account JSON for GA4 Data API + GTM read (Executive Board web tool). Use a dedicated SA, not the Play publisher key.",
+      }
+    );
+    const ga4PropertyIds = new cdk.CfnParameter(this, "Ga4PropertyIds", {
+      type: "String",
+      default: "",
+      description:
+        "Comma-separated GA4 property ids (numeric, with or without a properties/ prefix). Several properties are supported.",
+    });
+    const gtmContainers = new cdk.CfnParameter(this, "GtmContainers", {
+      type: "String",
+      default: "",
+      description:
+        "Comma-separated GTM account:container pairs (e.g. 123:456,123:789). Used for web_gtm_status.",
+    });
     const boardAwsStackPrefix = new cdk.CfnParameter(
       this,
       "BoardAwsStackPrefix",
@@ -729,6 +751,10 @@ export class LxsoftwareStack extends cdk.Stack {
         GOOGLE_PLAY_SERVICE_ACCOUNT_SECRET_ARN: googlePlayServiceAccountSecretArn.valueAsString,
         APP_STORE_CONNECT_APP_ID: appStoreConnectAppId.valueAsString,
         GOOGLE_PLAY_PACKAGE_NAME: googlePlayPackageName.valueAsString,
+        GOOGLE_ANALYTICS_SERVICE_ACCOUNT_SECRET_ARN:
+          googleAnalyticsServiceAccountSecretArn.valueAsString,
+        GA4_PROPERTY_IDS: ga4PropertyIds.valueAsString,
+        GTM_CONTAINERS: gtmContainers.valueAsString,
         // BOARD_MAIL_DOMAIN / _RAW_SEGMENT / _INBOUND_ADDRESS are added with the
         // inbound-mail resources below (they depend on InboundMailDomain).
         BOARD_MAIL_SENDING_ENABLED: boardMailSendingEnabled.valueAsString,
@@ -998,6 +1024,21 @@ export class LxsoftwareStack extends cdk.Stack {
     });
     playSaPolicy.attachToRole(adminFn.role!);
     (playSaPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasPlaySa;
+
+    const gaSaArnValue = googleAnalyticsServiceAccountSecretArn.valueAsString;
+    const hasGaSa = new cdk.CfnCondition(this, "HasGoogleAnalyticsServiceAccountSecret", {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(gaSaArnValue, "")),
+    });
+    const gaSaPolicy = new iam.Policy(this, "AdminGoogleAnalyticsServiceAccountSecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [gaSaArnValue],
+        }),
+      ],
+    });
+    gaSaPolicy.attachToRole(adminFn.role!);
+    (gaSaPolicy.node.defaultChild as iam.CfnPolicy).cfnOptions.condition = hasGaSa;
 
     // Executive Board aws + security read tools (plan §8). Cost Explorer and
     // Health are account-scoped APIs; CloudWatch / Security Hub / Analyzer /
