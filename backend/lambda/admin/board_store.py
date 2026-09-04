@@ -970,6 +970,28 @@ def add_usage_day(table: Any, usage: dict[str, Any], *, calls: int = 1) -> None:
     )
 
 
+def external_usage_day_key(date_iso: str | None = None) -> str:
+    day = date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"usage#external#{day}"
+
+
+def add_external_usage_day(table: Any, field_name: str, amount: int = 1) -> None:
+    """Count one third-party API call (e.g. ``searchCalls``) against today."""
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9]{0,40}", field_name):
+        raise ValueError("invalid usage field name")
+    table.update_item(
+        Key={"pk": board_pk(external_usage_day_key()), "sk": "STATE"},
+        UpdateExpression="ADD #f :n",
+        ExpressionAttributeNames={"#f": field_name},
+        ExpressionAttributeValues={":n": int(amount)},
+    )
+
+
+def load_external_usage_day(table: Any, date_iso: str | None = None) -> dict[str, Any]:
+    stored = _get_state(table, external_usage_day_key(date_iso)) or {}
+    return {"searchCalls": int(stored.get("searchCalls") or 0)}
+
+
 def ads_usage_day_key(date_iso: str | None = None) -> str:
     day = date_iso or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return f"usage#ads#{day}"

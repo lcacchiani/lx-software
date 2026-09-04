@@ -439,6 +439,21 @@ def _board_update_action(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
             doc["status"] = status
             doc["statusChangedAt"] = board_store.now_iso()
             changed = True
+    priority = args.get("priority")
+    if isinstance(priority, str) and priority:
+        if priority not in BOARD_ACTION_PRIORITIES:
+            return {"error": f"priority must be one of {', '.join(sorted(BOARD_ACTION_PRIORITIES))}"}
+        if priority != doc.get("priority"):
+            doc["priority"] = priority
+            changed = True
+    if args.get("dueInDays") is not None:
+        try:
+            due_days = int(args.get("dueInDays"))
+        except (TypeError, ValueError):
+            return {"error": "dueInDays must be a whole number of days"}
+        # 0 clears the due date; otherwise re-anchor from today.
+        doc["dueAt"] = _utc_iso_z(datetime.now(timezone.utc) + timedelta(days=min(due_days, 180))) if due_days > 0 else None
+        changed = True
     note = args.get("note")
     if isinstance(note, str) and note.strip():
         stamp = f"[{ctx.display_name or ctx.persona_id}] {note.strip()[:600]}"
@@ -446,11 +461,18 @@ def _board_update_action(ctx: ToolContext, args: dict[str, Any]) -> dict[str, An
         doc["note"] = (existing + "\n" + stamp).strip()[:2000]
         changed = True
     if not changed:
-        return {"ok": False, "message": "Nothing to change; pass status and/or note."}
+        return {"ok": False, "message": "Nothing to change; pass status, priority, dueInDays and/or note."}
     doc["updatedAt"] = board_store.now_iso()
     doc["updatedBy"] = f"{ctx.actor}:{ctx.persona_id}"
     board_store.put_action(ctx.table, doc)
-    return {"ok": True, "actionId": action_id, "status": doc.get("status"), "note": doc.get("note")}
+    return {
+        "ok": True,
+        "actionId": action_id,
+        "status": doc.get("status"),
+        "priority": doc.get("priority"),
+        "dueAt": doc.get("dueAt"),
+        "note": doc.get("note"),
+    }
 
 
 def _summ(template: str) -> Callable[[dict[str, Any]], str]:
@@ -492,6 +514,10 @@ def _summ_update_action(args: dict[str, Any]) -> str:
     parts = []
     if args.get("status"):
         parts.append(f"status → {args['status']}")
+    if args.get("priority"):
+        parts.append(f"priority → {args['priority']}")
+    if args.get("dueInDays") is not None:
+        parts.append("due date cleared" if not args["dueInDays"] else f"due in {args['dueInDays']}d")
     if args.get("note"):
         parts.append("added a note")
     return f"Update action {_short(args.get('actionId'), 12)}: {', '.join(parts) or 'no change'}"
@@ -708,11 +734,13 @@ def build_registry() -> dict[str, ToolOp]:
             name="board_update_action",
             tool_id="board",
             kind="write",
-            description="Change the status of, or append a note to, an action item you own.",
+            description="Change the status, priority or due date of, or append a note to, an action item you own.",
             parameters=_obj(
                 {
                     "actionId": _str_param("Action id from board_list_actions.", max_len=64),
                     "status": _str_param("open, done or dismissed.", enum=sorted(BOARD_ACTION_STATUSES)),
+                    "priority": _str_param("Re-prioritise: now, next or later.", enum=sorted(BOARD_ACTION_PRIORITIES)),
+                    "dueInDays": _int_param("New due date as days from today (0 clears it, max 180).", minimum=0, maximum=180),
                     "note": _str_param("Note to append.", max_len=600),
                     "reason": REASON_PARAM,
                 },

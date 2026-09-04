@@ -161,8 +161,9 @@ tools add on-demand `search_issues`, `get_issue`, `list_pull_requests`,
 `get_workflow_runs`, `get_file`, `list_security_alerts`. Writes use one
 fine-grained token restricted to the `siutindei` repo with `issues: write`,
 `pull_requests: read`, `contents: read`, `security_events: read`. The
-existing `GitHubReadToken` secret is replaced by `GitHubBoardToken`; the
-CDK condition and policy pattern stay identical.
+existing `GitHubReadTokenSecretArn` stack parameter **is** the board token:
+point it at the fine-grained token above (no separate `GitHubBoardToken`
+parameter exists); the CDK condition and policy pattern stay identical.
 
 ### 5.2 Email — every `siutindei.com` mailbox
 
@@ -235,7 +236,9 @@ client changes.
   (`metaAdsDailyUsd`, default 10) and monthly (`metaAdsMonthlyUsd`, default
   50) caps on the Tools card. Hitting either (recorded board commitment plus
   Graph month-to-date spend) downgrades the call to `propose`. `act` runs
-  when the global mode is `act` and the proposed budget still fits.
+  when the global mode is `act` and the proposed budget still fits. This
+  supersedes the "new ad set: propose" cell in §4: an ad set inside both caps
+  may run at `act`; one that would breach a cap is always a proposal.
 
 ### 5.4 Receivables — paid listings, paid offline
 
@@ -261,8 +264,12 @@ imported into the `lxsoftware` stack as parameters. Writes are limited to
 
 **Mirror**: a nightly Scheduler job (`board_receivables_mirror`) writes
 issued invoices as receivable rows and matched payments as income rows into
-the Siu Tin Dei finance sheet (`finance_store.py`), tagged
-`source=receivables` so re-runs are idempotent.
+the Siu Tin Dei finance sheet (`finance_store.py`). Idempotence is by line
+id: invoice lines are `recv-inv-<invoiceId>`, payment lines
+`recv-pay-<paymentId>`, every line carries `source: "receivables"`; each run
+computes the full desired set, upserts by id and removes `recv-*` lines that
+are no longer desired (a paid invoice keeps only its payment line). Manual
+lines are never touched.
 
 ### 5.5 CFO / COO finance tools
 
@@ -399,7 +406,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | Area | Change |
 |------|--------|
 | `backend/lambda/admin/` | New `board_tools.py` (registry, loop, level enforcement, audit), `board_mail.py`, `board_meta.py`, `board_receivables.py`, `board_product.py`, `board_stores.py`, `board_aws.py`, `board_research.py`; `board_github.py` gains write and search calls; `openrouter_client.py` gains tool-call support; `board_meeting.py` and `board_chat.py` call the loop |
-| Routes | `GET/POST /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `GET …/board/receivables/*`, `POST /webhooks/meta` (no JWT, HMAC-verified), `GET /webhooks/meta` (verify) |
+| Routes | `GET /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/tools/calls` (audit log), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `POST …/board/mail/{threadId}/read`, `GET …/board/receivables` (aging for the owner), `POST /webhooks/meta` (no JWT, HMAC-verified, throttled), `GET /webhooks/meta` (verify). Proposals are created only by the tool loop, never by a `POST …/approvals` route. |
 | DynamoDB | `BOARD#TOOLCALL#`, `BOARD#APPROVAL#`, `BOARD#MAIL#`, `BOARD#META#`, `BOARD#CACHE#`, `BOARD#USAGE#` prefixes; all covered by the existing `BOARD#` scan filter |
 | Contracts | `contracts/board-tools.json`: tool ids, default matrix, `maxToolRoundsPerTurn`, `toolResultMaxChars`, cap names; synced to Python, TS and CDK |
 | Secrets / params | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `GoogleAnalyticsServiceAccount` (dedicated, not Play), `Ga4PropertyIds`, `GtmContainers`, `SearchApiKey`, `BankApiKey` (if an API-first account is chosen), plus `SiutindeiClusterArn` and `SiutindeiDbSecretArn` parameters for the Data API — each behind a `has…` condition like the GitHub secret today |
@@ -459,3 +466,27 @@ blocking, and the board itself can work on them now that T1–T4 have shipped:
 
 Next sign-off: **T8b** (Google Ads) when scheduled. T8c is GTM publish
 (always Approvals). T4b waits on the HK account.
+
+## 12. Known gaps
+
+Shipped behaviour that is narrower than the connector table in §4; each tool
+description says so to the model.
+
+- **Stores metrics**: App Store Connect downloads come from the daily
+  `salesReports` summary and Google Play crash rate from
+  `crashRateMetricSet`; installs are not available from either API and are
+  returned as `null`. Ratings, reviews and review replies are complete.
+- **Mail attachments**: PDF attachment text is not extracted into threads
+  (no local PDF text extractor in the Lambda bundle); PDFs are listed by name
+  and size, and the statement-parser path handles bank statements separately.
+- **Bank alerts**: the "hook bank alerts to receivables" flow waits on T4b
+  (which HK account is chosen); until then payments are matched from FPS
+  references in imported statements and manual records.
+- **`listing_events_daily`** has no writer in the siutindei product yet, so
+  `product_funnel` returns empty rows until that lands (tracked in
+  `scripts/siutindei/receivables.sql`).
+- **GitHub discussions**: not readable (GraphQL only); releases are.
+- **Research quota**: search calls are counted per day in
+  `BOARD#USAGE#external`; the OpenRouter `:online` fallback is billed to the
+  daily budget. There is no hard cap on search calls yet, only visibility on
+  the Settings card.

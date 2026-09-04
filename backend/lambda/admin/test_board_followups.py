@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
 
 import board_budget
+import board_data_api
 import board_deadline
 import board_invoice_pdf
 import board_mail
@@ -733,6 +735,92 @@ class TestLoopRuntimeLimits(ToolsTestCase):
         self.assertEqual(len(tool_msgs), 2)
         self.assertIn("Time budget", tool_msgs[1]["content"])
         self.assertEqual(len(job["message"]["toolCalls"]), 1)
+
+
+# ---------------------------------------------------------------------------
+# WP8: backend odds and ends
+# ---------------------------------------------------------------------------
+
+class TestUpdateActionReprioritise(ToolsTestCase):
+    def test_priority_and_due_date_can_change(self) -> None:
+        self.call("/siu-tin-dei/board/tools", "PUT", {"globalMode": "act"})
+        self.use_script([[("board_add_action", {"title": "Draft pricing tiers", "detail": "d", "priority": "later", "reason": "r"})]], "ok")
+        self.chat("cfo")
+        action_id = self.call("/siu-tin-dei/board/actions")[1]["actions"][0]["actionId"]
+        settings = board_store.load_settings(self.table)
+        ctx = ToolContext(table=self.table, settings=settings, persona_id="cfo", display_name="CFO")
+        op = REGISTRY["board_update_action"]
+        out = execute_call(ctx, op, {"actionId": action_id, "priority": "now", "dueInDays": 3, "reason": "r"})
+        self.assertEqual(out.status, "ok", out.result)
+        action = board_store.get_action(self.table, action_id)
+        self.assertEqual(action["priority"], "now")
+        self.assertTrue(action["dueAt"])
+        self.assertIn("priority → now", out.summary)
+        out = execute_call(ctx, op, {"actionId": action_id, "dueInDays": 0, "reason": "r"})
+        self.assertEqual(out.status, "ok")
+        self.assertIsNone(board_store.get_action(self.table, action_id)["dueAt"])
+        out = execute_call(ctx, op, {"actionId": action_id, "priority": "urgent", "reason": "r"})
+        self.assertEqual(out.status, "error")
+        self.assertIn("must be one of", out.result["error"])
+
+
+class TestExternalUsage(ToolsTestCase):
+    def test_search_calls_are_counted_and_shown_in_overview(self) -> None:
+        from test_board_t2 import FakeBrave
+
+        import board_research
+
+        brave = FakeBrave()
+        os.environ["SEARCH_API_KEY"] = "brave-local"
+        board_research.reset_key_cache_for_tests()
+        self.addCleanup(lambda: os.environ.pop("SEARCH_API_KEY", None))
+        self.addCleanup(board_research.reset_key_cache_for_tests)
+        ctx = ToolContext(table=self.table, settings=board_store.load_settings(self.table), persona_id="cfo")
+        with patch("board_research.urlrequest.urlopen", brave):
+            board_research.op_search(ctx, {"query": "Tuen Mun swimming"})
+            board_research.op_search(ctx, {"query": "Tuen Mun swimming"})  # cache hit: no quota
+            board_research.op_search(ctx, {"query": "Sha Tin piano"})
+        self.assertEqual(board_store.load_external_usage_day(self.table), {"searchCalls": 2})
+        _, overview = self.call("/siu-tin-dei/board")
+        self.assertEqual(overview["usageToday"]["external"], {"searchCalls": 2, "metaAdsMonthUsd": 0.0})
+
+    def test_online_fallback_is_billed_to_the_daily_budget(self) -> None:
+        import board_research
+
+        os.environ.pop("SEARCH_API_KEY", None)
+        board_research.reset_key_cache_for_tests()
+        ctx = ToolContext(table=self.table, settings=board_store.load_settings(self.table), persona_id="cfo")
+        completion = MagicMock(text='[{"title": "T", "url": "https://x.example", "snippet": "s"}]')
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "k"}), patch.object(
+            board_budget, "board_completion", return_value=completion
+        ) as bc:
+            out = board_research.op_search(ctx, {"query": "Tuen Mun swimming"})
+        self.assertEqual(out["source"], "openrouter_online")
+        self.assertEqual(bc.call_args.kwargs["table"], self.table)
+        self.assertEqual(bc.call_args.kwargs["model"], "openrouter/auto:online")
+        self.assertEqual(board_store.load_external_usage_day(self.table)["searchCalls"], 1)
+
+
+class TestProductViewCache(unittest.TestCase):
+    def test_unfiltered_reads_are_cached_and_filtered_ones_are_not(self) -> None:
+        import board_product
+        from test_board import FakeTable
+        from test_board_t4 import FakeAurora
+
+        db = FakeAurora()
+        board_data_api.set_executor_for_tests(db)
+        self.addCleanup(lambda: board_data_api.set_executor_for_tests(None))
+        table = FakeTable()
+        ctx = ToolContext(table=table, settings=board_store.default_settings(), persona_id="cpo")
+        first = board_product.op_catalog_health(ctx, {})
+        second = board_product.op_catalog_health(ctx, {})
+        self.assertFalse(first["cached"])
+        self.assertTrue(second["cached"])
+        self.assertEqual(len([s for s in db.sqls if "v_catalog_health" in s]), 1)
+        board_product.op_catalog_health(ctx, {"district": "Tuen Mun"})
+        self.assertEqual(len([s for s in db.sqls if "v_catalog_health" in s]), 2)
+        notes = board_product.refresh_caches(table)
+        self.assertEqual(set(notes.values()), {"ok"})
 
 
 if __name__ == "__main__":
