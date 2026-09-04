@@ -19,13 +19,22 @@ def _install_stubs() -> None:
         botocore = types.ModuleType("botocore")
         exceptions = types.ModuleType("botocore.exceptions")
 
-        class ClientError(Exception):
+        class BotoCoreError(Exception):
             pass
 
+        class ClientError(BotoCoreError):
+            pass
+
+        exceptions.BotoCoreError = BotoCoreError
         exceptions.ClientError = ClientError
         botocore.exceptions = exceptions
         sys.modules["botocore"] = botocore
         sys.modules["botocore.exceptions"] = exceptions
+    elif not hasattr(sys.modules["botocore.exceptions"], "BotoCoreError"):
+        class BotoCoreError(Exception):
+            pass
+
+        sys.modules["botocore.exceptions"].BotoCoreError = BotoCoreError
 
 
 _install_stubs()

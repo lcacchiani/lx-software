@@ -3,7 +3,7 @@
 Design (see docs/architecture/executive-board-tools-plan.md):
 
 - A **registry** of operations, each belonging to a tool (``github``,
-  ``board``) and being either a *read* or a *write*.
+  ``board``, ``mail``, ``research``, ``aws``, ``security``) and being either a *read* or a *write*.
 - A per-tool, per-member **level** (``off`` < ``read`` < ``propose`` <
   ``act``), capped by a global mode. Read operations are offered at
   ``read`` and above; write operations at ``propose`` and above. At
@@ -23,10 +23,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import board_actions
+import board_aws
 import board_budget
 import board_github
 import board_mail
 import board_personas
+import board_research
+import board_security
 import board_store
 from contract_constants import (
     BOARD_ACTION_EFFORTS,
@@ -34,6 +37,7 @@ from contract_constants import (
     BOARD_ACTION_STATUSES,
     BOARD_MAIL_BODY_MAX_CHARS,
     BOARD_MAIL_SUBJECT_MAX_LEN,
+    BOARD_RESEARCH_QUERY_MAX_LEN,
     BOARD_MAX_PENDING_APPROVALS,
     BOARD_MAX_TOOL_CALLS_PER_TURN,
     BOARD_MAX_TOOL_ROUNDS_PER_TURN,
@@ -774,6 +778,155 @@ def build_registry() -> dict[str, ToolOp]:
             act_guard=lambda ctx, args: board_mail.act_guard(ctx, args, op="mail_forward"),
             preview=lambda ctx, args: board_mail.owner_preview(ctx, args, op="mail_forward"),
         ),
+        ToolOp(
+            name="research_search",
+            tool_id="research",
+            kind="read",
+            description="Search the public web (cached 24h). Use for competitor pages, market facts, or anything not in GitHub or company mail.",
+            parameters=_obj(
+                {
+                    "query": _str_param("Search query.", max_len=BOARD_RESEARCH_QUERY_MAX_LEN),
+                    "limit": _int_param("Max results (1-8).", maximum=8),
+                },
+                ["query"],
+            ),
+            run=board_research.op_search,
+            summarize=_summ("Searched the web for '{query}'"),
+        ),
+        ToolOp(
+            name="research_hk_news",
+            tool_id="research",
+            kind="read",
+            description="Hong Kong market / education news (gov.hk, SCMP, The Standard), cached 24h.",
+            parameters=_obj(
+                {
+                    "query": _str_param("Topic, e.g. 'after-school activities regulation'.", max_len=BOARD_RESEARCH_QUERY_MAX_LEN),
+                    "limit": _int_param("Max results (1-8).", maximum=8),
+                }
+            ),
+            run=board_research.op_hk_news,
+            summarize=_summ("Looked up HK news on '{query}'"),
+        ),
+        ToolOp(
+            name="research_edb_holidays",
+            tool_id="research",
+            kind="read",
+            description="Education Bureau school-holiday calendar for Hong Kong (cached 24h).",
+            parameters=_obj({"year": _str_param("Calendar year, e.g. 2026.", max_len=12)}),
+            run=board_research.op_edb_holidays,
+            summarize=_summ("Looked up EDB holidays"),
+        ),
+        ToolOp(
+            name="research_venues",
+            tool_id="research",
+            kind="read",
+            description="Public listings of children's activity venues in a Hong Kong district (cached 24h).",
+            parameters=_obj(
+                {
+                    "district": _str_param("Hong Kong district, e.g. 'tuen mun' or 'kwun tong'.", max_len=40),
+                    "kind": _str_param("Venue type, e.g. 'swimming' or 'coding class'.", max_len=80),
+                    "limit": _int_param("Max results (1-8).", maximum=8),
+                }
+            ),
+            run=board_research.op_venues,
+            summarize=_summ("Looked up venues in {district}"),
+        ),
+        ToolOp(
+            name="aws_monthly_cost",
+            tool_id="aws",
+            kind="read",
+            description="Last full month of AWS UnblendedCost by service for stacks tagged siutindei (cached hourly).",
+            parameters=_obj({}),
+            run=board_aws.op_monthly_cost,
+            summarize=_summ("Read AWS monthly cost"),
+        ),
+        ToolOp(
+            name="aws_list_alarms",
+            tool_id="aws",
+            kind="read",
+            description="CloudWatch alarms currently in ALARM, filtered to siutindei stacks (cached hourly).",
+            parameters=_obj({}),
+            run=board_aws.op_alarms,
+            summarize=_summ("Listed CloudWatch alarms"),
+        ),
+        ToolOp(
+            name="aws_lambda_health",
+            tool_id="aws",
+            kind="read",
+            description="24-hour error count and average duration for the admin Lambdas (cached hourly).",
+            parameters=_obj({}),
+            run=board_aws.op_lambda_health,
+            summarize=_summ("Read Lambda health"),
+        ),
+        ToolOp(
+            name="aws_health_events",
+            tool_id="aws",
+            kind="read",
+            description="Open or upcoming AWS Health events (needs Business support; cached hourly).",
+            parameters=_obj({}),
+            run=board_aws.op_health_events,
+            summarize=_summ("Listed AWS Health events"),
+        ),
+        ToolOp(
+            name="aws_propose_budget_alert",
+            tool_id="aws",
+            kind="write",
+            description="Propose that the founder create an AWS Budget alert. Does not change AWS; approval adds an action item.",
+            parameters=_obj(
+                {
+                    "monthlyUsd": {"type": "number", "description": "Monthly ceiling in USD."},
+                    "thresholdPercent": {"type": "number", "description": "Alert at this percent of the ceiling (default 80)."},
+                    "reason": REASON_PARAM,
+                },
+                ["monthlyUsd", "reason"],
+            ),
+            run=board_aws.op_propose_budget_alert,
+            summarize=_summ("Propose AWS budget alert at ${monthlyUsd}/mo"),
+        ),
+        ToolOp(
+            name="security_github_alerts",
+            tool_id="security",
+            kind="read",
+            description="Open Dependabot, code-scanning and secret-scanning alerts on the siutindei repo (cached hourly).",
+            parameters=_obj({"limit": _int_param("Max alerts per type (1-50).", maximum=50)}),
+            run=board_security.op_github_alerts,
+            summarize=_summ("Listed GitHub security alerts"),
+        ),
+        ToolOp(
+            name="security_aws_findings",
+            tool_id="security",
+            kind="read",
+            description="Active HIGH/CRITICAL Security Hub findings and IAM Access Analyzer findings (cached hourly).",
+            parameters=_obj({}),
+            run=board_security.op_hub_findings,
+            summarize=_summ("Listed AWS security findings"),
+        ),
+        ToolOp(
+            name="security_cognito",
+            tool_id="security",
+            kind="read",
+            description="Cognito user-pool MFA posture and password policy. Does not list users or emails.",
+            parameters=_obj({}),
+            run=board_security.op_cognito,
+            summarize=_summ("Read Cognito security posture"),
+        ),
+        ToolOp(
+            name="security_open_remediation",
+            tool_id="security",
+            kind="write",
+            description="Open a GitHub issue describing a finding and the fix. Always a proposal until the founder approves.",
+            parameters=_obj(
+                {
+                    "title": _str_param("Issue title.", max_len=200),
+                    "body": _str_param("Markdown: finding, impact, proposed fix.", max_len=4000),
+                    "labels": {"type": "array", "items": {"type": "string"}, "description": "Labels; 'security' is added if missing."},
+                    "reason": REASON_PARAM,
+                },
+                ["title", "body", "reason"],
+            ),
+            run=board_security.op_open_remediation,
+            summarize=_summ("Propose security issue: {title}"),
+        ),
     ]
     return {op.name: op for op in ops}
 
@@ -905,7 +1058,14 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             result = op.run(ctx, arguments)
             status = "error" if isinstance(result, dict) and result.get("error") and len(result) == 1 else "ok"
             outcome = ToolOutcome(status=status, result=result if isinstance(result, dict) else {"result": result}, summary=summary)
-        except (board_github.GitHubSnapshotError, board_mail.MailError, ValueError) as exc:
+        except (
+            board_github.GitHubSnapshotError,
+            board_mail.MailError,
+            board_research.ResearchError,
+            board_aws.AwsToolError,
+            board_security.SecurityToolError,
+            ValueError,
+        ) as exc:
             outcome = ToolOutcome(status="error", result={"error": str(exc)[:500]}, summary=summary)
         except Exception as exc:  # pragma: no cover - defensive: a tool bug must not kill the reply
             _log_event("error", tag="board_tool_crashed", op=op.name, error=str(exc)[:300])

@@ -145,6 +145,10 @@ def write_python(finance: dict, timeouts: dict, domains: dict) -> None:
         "BOARD_MAIL_MAX_RECIPIENTS = int(_BOARD_TOOL_LIMITS[\"mailMaxRecipients\"])",
         "BOARD_MAIL_LIST_MAX_THREADS = int(_BOARD_TOOL_LIMITS[\"mailListMaxThreads\"])",
         "BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES = int(_BOARD_TOOL_LIMITS[\"mailAllowListMaxEntries\"])",
+        "BOARD_RESEARCH_CACHE_TTL_HOURS = int(_BOARD_TOOL_LIMITS[\"researchCacheTtlHours\"])",
+        "BOARD_RESEARCH_QUERY_MAX_LEN = int(_BOARD_TOOL_LIMITS[\"researchQueryMaxLen\"])",
+        "BOARD_RESEARCH_MAX_RESULTS = int(_BOARD_TOOL_LIMITS[\"researchMaxResults\"])",
+        "BOARD_CACHE_REFRESH_TTL_HOURS = int(_BOARD_TOOL_LIMITS[\"cacheRefreshTtlHours\"])",
         "",
     ]
     PY_OUT.write_text("\n".join(lines), encoding="utf-8")
@@ -263,6 +267,10 @@ export const BOARD_MAIL_BODY_MAX_CHARS = {tool_limits["mailBodyMaxChars"]};
 export const BOARD_MAIL_SUBJECT_MAX_LEN = {tool_limits["mailSubjectMaxLen"]};
 export const BOARD_MAIL_MAX_RECIPIENTS = {tool_limits["mailMaxRecipients"]};
 export const BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES = {tool_limits["mailAllowListMaxEntries"]};
+export const BOARD_RESEARCH_CACHE_TTL_HOURS = {tool_limits["researchCacheTtlHours"]};
+export const BOARD_RESEARCH_QUERY_MAX_LEN = {tool_limits["researchQueryMaxLen"]};
+export const BOARD_RESEARCH_MAX_RESULTS = {tool_limits["researchMaxResults"]};
+export const BOARD_CACHE_REFRESH_TTL_HOURS = {tool_limits["cacheRefreshTtlHours"]};
 """
     TS_OUT.write_text(body, encoding="utf-8")
 
