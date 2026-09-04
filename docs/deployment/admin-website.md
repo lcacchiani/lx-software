@@ -379,14 +379,16 @@ Data API (no VPC). Design:
 1. Enable the Data API on the siutindei Aurora cluster if it is not already on.
 2. Apply `scripts/siutindei/receivables.sql` in that repo (tables
    `listing_plans`, `listing_subscriptions`, `invoices`, `payments`, plus
-   views `v_catalog_health`, `v_funnel_daily`, `v_provider_pipeline` — adjust
-   the view `FROM` clauses if product table names differ).
+   views `v_catalog_health`, `v_funnel_daily`, `v_provider_pipeline` aligned
+   to the live siutindei Alembic schema, plus `listing_events_daily` for
+   funnel rows the product does not yet write).
 3. Set `lxsoftware:SiutindeiClusterArn` and `lxsoftware:SiutindeiDbSecretArn`
    and redeploy. The stack attaches a conditional `rds-data:ExecuteStatement`
    / `BatchExecuteStatement` policy plus `secretsmanager:GetSecretValue` on
    the DB secret.
 4. Invoice numbers are `STD-{year}-0001`; each draft also gets a unique FPS
-   reference. `finance_send_invoice` / `finance_send_reminder` email from
+   reference. Drafts also write a PDF to `board/invoices/` on the assets
+   bucket (`pdf_key` on the invoice). `finance_send_invoice` / `finance_send_reminder` email from
    `billing@siutindei.com` and stay in **Approvals** unless the payer is on
    the mail allow-list. `finance_match_payment` acts only when amount and FPS
    reference agree.
@@ -413,9 +415,11 @@ Facebook Page and Instagram account. Design:
    is the first admin-API route **without** a Cognito JWT: GET checks
    `MetaVerifyToken`; POST checks `X-Hub-Signature-256`. The handler stores
    masked `BOARD#…#meta#` rows and returns 200 without calling OpenRouter.
-4. Set `MetaPageId`, `MetaIgUserId`, `MetaWaPhoneNumberId`, and
-   `MetaAdAccountId`. Until they are set the `meta` tools return a clear
-   "not configured" error.
+4. Set `MetaPageId`, `MetaIgUserId`, `MetaWaPhoneNumberId`,
+   `MetaAdAccountId`, and optionally `MetaWabaId` (used by
+   `meta_list_whatsapp_templates`; otherwise the phone-number id is asked
+   for its WhatsApp Business Account). Until they are set the `meta` tools
+   return a clear "not configured" error.
 5. WhatsApp `act` is only inside the 24-hour customer-service window and
    only to numbers on the allow-list (E.164 phones are first-class entries
    next to email / `@domain`); everyone else (and every reply outside the

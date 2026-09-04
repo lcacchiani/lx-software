@@ -121,8 +121,10 @@ denial from the existing client stays on. Message bodies are stored with a
   filtered by role and by the current permission matrix **before** the
   schemas are sent to the model, so a role never sees tools it cannot use.
 - **Execution**: tool executors run inside `AdminApiFn` with short
-  timeouts (10 s default, 25 s for GitHub search and Meta insights). Slow
-  or failing tools return a structured error the model can reason about.
+  timeouts (`toolCallTimeoutSeconds` 10 s default; `toolCallTimeoutSlowSeconds`
+  25 s for GitHub search / file / security alerts and Meta insights,
+  comments, ad spend and WhatsApp templates). Slow or failing tools return
+  a structured error the model can reason about.
 
 ## 4. Connector inventory
 
@@ -187,8 +189,9 @@ client changes.
    unchanged so the owner's client keeps the thread. All outbound is BCC'd
    back into the index.
 4. **Levels**: CEO/COO/CMO/CFO `propose` by default; `act` only to
-   allow-listed providers and vendors. CISO reads only, and gets a
-   `report_phishing` tool that flags a thread to the owner.
+   allow-listed providers and vendors. CISO reads only, and gets
+   `mail_report_phishing` (available at mail **read**) that always queues
+   to Approvals and, once approved, opens a now-priority action.
 
 ### 5.3 Meta — Facebook Page, Instagram, WhatsApp on the existing number
 
@@ -258,7 +261,7 @@ the Siu Tin Dei finance sheet (`finance_store.py`), tagged
 |------|-----------------|--------------|
 | `list_subscriptions`, `list_invoices`, `aging_report` | read | Standard receivables views incl. DSO, past-due by provider |
 | `unit_economics` | read | Revenue per provider/store, cost per acquisition from `aws` + `meta` spend, gross margin |
-| `draft_invoice` | propose | Creates a `draft` invoice with a unique FPS reference; PDF rendered by a small template Lambda into S3 |
+| `draft_invoice` | propose | Creates a `draft` invoice with a unique FPS reference; PDF is rendered in `AdminApiFn` and stored under `board/invoices/` on the assets bucket |
 | `send_invoice` | propose → act for allow-listed payers | Emails the invoice from `billing@siutindei.com` |
 | `send_reminder` | propose → act for allow-listed payers | Dunning at D+7 / D+21 / D+35, email or WhatsApp template |
 | `match_payment` | act | Attaches a `payments` row to an invoice when reference and amount agree; otherwise `propose` with candidates |
@@ -319,7 +322,12 @@ needs without giving the LLM raw table access:
   edit, subscription status.
 
 The `product` tools call these views only; parameters are limited to date
-ranges and district/category filters.
+ranges and district/category filters. The views are written against the
+live siutindei Alembic schema (`organizations`, `activities`,
+`locations` + `geographic_areas`, `activity_categories`, pricing and
+schedule). There is no `stores` table — venues are `locations`. Funnel
+rows live in `listing_events_daily` (created by the same SQL file) until
+the product writes daily events.
 
 ### 5.8 Web — GA4, GTM, later Ads
 
@@ -423,6 +431,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | T8 ✅ | `web`: GA4 reads + GTM live version, multi-id lists, hourly cache | T1, T2 |
 | T8b | `ads`: Google Ads spend / campaigns + propose campaign (USD 50 / month cap) | T7, T8 |
 | T8c | `gtm_propose_publish` always Approvals | T8 |
+| Follow-ups | Meeting action writes, Meta spend in unit economics, product views vs live schema, 25s timeouts, stable Meta PII, `mail_report_phishing`, invoice PDF, WhatsApp templates, owner-friendly approval edit | T1–T8 |
 
 Each milestone ships behind the global mode switch and adds its own
 Python unit tests (`test_board_tools.py`, fakes for every external API)
