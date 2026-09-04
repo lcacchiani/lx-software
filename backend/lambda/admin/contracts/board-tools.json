@@ -187,6 +187,7 @@
     "cacheRefreshTtlHours": 2,
     "invoiceNumberPrefix": "STD",
     "receivablesListMax": 100,
+    "metaAdsDailyCapUsd": 10,
     "metaAdsMonthlyCapUsd": 50,
     "metaListMax": 40,
     "storesListMax": 30,
