@@ -35,6 +35,14 @@ class FakeGraph:
                 payload: Any = {"data": [{"spend": "0.00", "impressions": "1", "clicks": "0"}]}
             else:
                 payload = {"data": [{"name": "page_impressions", "values": [{"value": 12}]}]}
+        elif "/message_templates" in url:
+            payload = {
+                "data": [
+                    {"name": "hello_world", "status": "APPROVED", "language": "en", "category": "UTILITY"}
+                ]
+            }
+        elif "fields=whatsapp_business_account" in url or "whatsapp_business_account" in url:
+            payload = {"whatsapp_business_account": {"id": "waba-1"}}
         elif "/feed" in url and method == "GET":
             payload = {
                 "data": [
@@ -163,8 +171,9 @@ class TestMetaTools(MetaTestCase):
         insights = board_meta.op_page_insights(ctx, {})
         self.assertEqual(insights["count"], 1)
         comments = board_meta.op_list_comments(ctx, {})
-        self.assertIn("contact#hidden", comments["posts"][0]["message"])
-        self.assertIn("phone#hidden", comments["posts"][0]["comments"][0]["message"])
+        self.assertNotIn("wendy.chan@gmail.com", json.dumps(comments))
+        self.assertIn("contact#", comments["posts"][0]["message"])
+        self.assertIn("phone#", comments["posts"][0]["comments"][0]["message"])
         spend = board_meta.op_ad_spend(ctx, {})
         self.assertEqual(spend["adAccountId"], "act_99")
         self.assertTrue(any("/page-1/insights" in url for _m, url, _b in self.graph.calls))

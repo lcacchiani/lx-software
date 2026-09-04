@@ -100,6 +100,11 @@ class FakeAurora:
                 }
             )
             return []
+        if low.startswith("update invoices set pdf_key"):
+            inv = next((i for i in self.invoices if i["id"] == p["id"]), None)
+            if inv:
+                inv["pdf_key"] = p.get("key")
+            return []
         if low.startswith("update invoices set status"):
             inv = next((i for i in self.invoices if i["id"] == p["id"]), None)
             if not inv:
@@ -352,9 +357,12 @@ class TestFinanceReadsAndDraft(ReceivablesTestCase):
                 "pdf_key": None,
             }
         )
+        board_store.record_ads_spend(self.table, daily_usd=4.0, monthly_usd=4.0)
         out = board_receivables.op_unit_economics(self._ctx(), {})
         self.assertEqual(out["paidInvoicesHkd"], 388.0)
         self.assertEqual(out["activeSubscriptions"], 1)
+        self.assertEqual(out["metaAdsRecordedMonthlyUsd"], 4.0)
+        self.assertIn("Meta ads", out["note"])
 
 
 class TestFinanceWritesAndGuards(ReceivablesTestCase):

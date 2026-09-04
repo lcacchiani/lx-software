@@ -179,7 +179,8 @@ class TestLevels(unittest.TestCase):
         self.assertIn("board_add_action", cto_chat)
         cto_meeting = {op.name for op, _ in board_tools.available_ops(settings, "cto", context="meeting")}
         self.assertIn("github_get_file", cto_meeting)
-        self.assertNotIn("board_add_action", cto_meeting, "board writes are chat-only")
+        self.assertIn("board_add_action", cto_meeting)
+        self.assertIn("board_update_action", cto_meeting)
         cfo_chat = {op.name for op, _ in board_tools.available_ops(settings, "cfo", context="chat")}
         self.assertFalse(any(n.startswith("github_") for n in cfo_chat))
         self.assertIn("board_list_actions", cfo_chat)
@@ -601,7 +602,7 @@ class TestMeetingTools(ToolsTestCase):
         # Members were offered only meeting-context operations.
         position_requests = [r for r in scripted.requests if "For EACH agenda item" in r["messages"][-1]["content"] and r.get("tools")]
         offered = {t["function"]["name"] for r in position_requests for t in r["tools"]}
-        self.assertNotIn("board_add_action", offered)
+        self.assertIn("board_add_action", offered)
         # The synthesis prompt does not include the tool-turn text.
         synthesis = next(r for r in scripted.requests if "Write the minutes" in r["messages"][-1]["content"])
         self.assertNotIn("Checked CI runs", synthesis["messages"][-1]["content"])
