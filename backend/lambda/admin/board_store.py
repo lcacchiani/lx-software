@@ -1067,6 +1067,23 @@ def put_meta_message(table: Any, doc: dict[str, Any]) -> None:
     )
 
 
+def put_meta_message_if_new(table: Any, doc: dict[str, Any]) -> bool:
+    """Like :func:`put_meta_message` but returns False when the row already exists (webhook redelivery)."""
+    item = {
+        "pk": board_pk(f"meta#thread#{doc['threadId']}"),
+        "sk": f"MSG#{doc['receivedAt']}#{doc['messageId']}",
+        "expiresAt": _meta_expires_at(),
+        **_to_ddb_nested(doc),
+    }
+    try:
+        table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
+
+
 def list_meta_messages(table: Any, thread_id: str) -> list[dict[str, Any]]:
     items = _query_all(
         table,

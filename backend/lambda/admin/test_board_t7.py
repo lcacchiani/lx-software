@@ -23,11 +23,13 @@ class TestT7AllowListAndCaps(MetaTestCase):
         self.assertIn("spendCaps", body["config"])
         self.assertIn("adsSpend", body)
         now = datetime.now(timezone.utc)
+        thread_id = board_meta.whatsapp_thread_id("+85291234567")
         board_store.put_meta_thread(
             self.table,
             {
-                "threadId": "th-open",
+                "threadId": thread_id,
                 "channel": "whatsapp",
+                "senderId": "85291234567",
                 "lastInboundAt": now.isoformat().replace("+00:00", "Z"),
                 "unread": True,
             },
@@ -37,14 +39,14 @@ class TestT7AllowListAndCaps(MetaTestCase):
         ok = execute_call(
             ctx,
             REGISTRY["meta_reply_whatsapp"],
-            {"to": "+85291234567", "threadId": "th-open", "message": "Hi", "reason": "In window."},
+            {"to": "+85291234567", "threadId": thread_id, "message": "Hi", "reason": "In window."},
         )
         self.assertEqual(ok.status, "ok")
         # Digit-only match: stored +852… vs a to= without plus.
         also = execute_call(
             ctx,
             REGISTRY["meta_reply_whatsapp"],
-            {"to": "85291234567", "threadId": "th-open", "message": "Hi again", "reason": "Same number."},
+            {"to": "85291234567", "threadId": thread_id, "message": "Hi again", "reason": "Same number."},
         )
         self.assertEqual(also.status, "ok")
 
