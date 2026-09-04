@@ -28,8 +28,6 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 from urllib.parse import parse_qs
 
-from botocore.exceptions import ClientError
-
 from admin_runtime import _get_secretsmanager_client
 import board_deadline
 import board_mail
@@ -40,7 +38,6 @@ from contract_constants import (
     BOARD_META_ADS_MONTHLY_CAP_USD,
     BOARD_META_LIST_MAX,
 )
-from ddb_convert import _to_ddb_nested
 from http_common import _log_event, _utc_iso_z
 from openrouter_client import read_secret_string
 

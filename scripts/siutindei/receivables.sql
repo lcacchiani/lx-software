@@ -1,8 +1,22 @@
 -- Apply in the siutindei Aurora database (its own migration).
 -- Executive Board T4: listing receivables (§5.4) and read-only views (§5.7).
 -- AdminApiFn reaches these only through the RDS Data API (parameterised
--- ExecuteStatement). Writes are limited to invoices, payments, and
--- listing_subscriptions.status.
+-- ExecuteStatement with typeHint UUID/DATE/DECIMAL). Writes are limited to
+-- invoices, payments, listing_plans, and listing_subscriptions.status.
+--
+-- Validated against siutindei Alembic head 0029_add_api_keys
+-- (backend/db/alembic/versions/0029_add_api_keys.py, repo commit 6ad5ce6b):
+--   activities(id, org_id, category_id)        activity_locations(activity_id, location_id)
+--   activity_pricing(activity_id)              activity_schedule(activity_id)
+--   locations(id, org_id, area_id, lat, lng)   geographic_areas(id, name)
+--   activity_categories(id, name)              organizations(id, name, media_urls text[],
+--                                                            created_at, updated_at)
+-- Re-check those columns when the product's Alembic head moves.
+--
+-- TODO (product repo): nothing writes listing_events_daily yet. The product
+-- needs a daily aggregation job (searches, listing views, CTA taps, leads,
+-- bookings per location) before v_funnel_daily returns rows. Track this in
+-- the siutindei repo; the board's product_funnel tool is read-only.
 
 BEGIN;
 
@@ -73,29 +87,58 @@ CREATE TABLE IF NOT EXISTS listing_events_daily (
     PRIMARY KEY (day, location_id)
 );
 
+-- Completeness is scored once per activity (photos, price, schedule, any
+-- geocoded venue) and then averaged per district × category. Scoring inside
+-- the grouped join would weight an activity once per venue row.
 CREATE OR REPLACE VIEW v_catalog_health AS
+WITH activity_completeness AS (
+    SELECT
+        a.id AS activity_id,
+        (
+            (CASE WHEN COALESCE(cardinality(o.media_urls), 0) > 0 THEN 1 ELSE 0 END)
+            + (CASE WHEN EXISTS (
+                SELECT 1 FROM activity_pricing p WHERE p.activity_id = a.id
+            ) THEN 1 ELSE 0 END)
+            + (CASE WHEN EXISTS (
+                SELECT 1 FROM activity_schedule s WHERE s.activity_id = a.id
+            ) THEN 1 ELSE 0 END)
+            + (CASE WHEN EXISTS (
+                SELECT 1
+                FROM activity_locations al
+                JOIN locations l ON l.id = al.location_id
+                WHERE al.activity_id = a.id AND l.lat IS NOT NULL AND l.lng IS NOT NULL
+            ) THEN 1 ELSE 0 END)
+        ) / 4.0 AS completeness
+    FROM activities a
+    JOIN organizations o ON o.id = a.org_id
+),
+placed AS (
+    SELECT
+        a.id AS activity_id,
+        a.org_id,
+        a.category_id,
+        l.id AS location_id,
+        COALESCE(ga.name, 'unknown') AS district,
+        ROW_NUMBER() OVER (PARTITION BY a.id, COALESCE(ga.name, 'unknown') ORDER BY l.id) AS venue_rank
+    FROM activities a
+    LEFT JOIN activity_locations al ON al.activity_id = a.id
+    LEFT JOIN locations l ON l.id = al.location_id
+    LEFT JOIN geographic_areas ga ON ga.id = l.area_id
+)
 SELECT
-    COALESCE(ga.name, 'unknown') AS district,
+    p.district,
     COALESCE(c.name, 'unknown') AS category,
-    COUNT(DISTINCT a.id)::int AS activities,
-    COUNT(DISTINCT a.org_id)::int AS providers,
-    COUNT(DISTINCT l.id)::int AS stores,
-    AVG(
-        (CASE WHEN COALESCE(cardinality(o.media_urls), 0) > 0 THEN 1 ELSE 0 END)
-        + (CASE WHEN EXISTS (
-            SELECT 1 FROM activity_pricing p WHERE p.activity_id = a.id
-        ) THEN 1 ELSE 0 END)
-        + (CASE WHEN EXISTS (
-            SELECT 1 FROM activity_schedule s WHERE s.activity_id = a.id
-        ) THEN 1 ELSE 0 END)
-        + (CASE WHEN l.lat IS NOT NULL AND l.lng IS NOT NULL THEN 1 ELSE 0 END)
-    ) / 4.0 AS completeness
-FROM activities a
-JOIN organizations o ON o.id = a.org_id
-LEFT JOIN activity_categories c ON c.id = a.category_id
-LEFT JOIN activity_locations al ON al.activity_id = a.id
-LEFT JOIN locations l ON l.id = al.location_id
-LEFT JOIN geographic_areas ga ON ga.id = l.area_id
+    COUNT(DISTINCT p.activity_id)::int AS activities,
+    COUNT(DISTINCT p.org_id)::int AS providers,
+    COUNT(DISTINCT p.location_id)::int AS stores,
+    ROUND(
+        SUM(ac.completeness) FILTER (WHERE p.venue_rank = 1)
+        / COUNT(DISTINCT p.activity_id),
+        2
+    ) AS completeness
+FROM placed p
+JOIN activity_completeness ac ON ac.activity_id = p.activity_id
+LEFT JOIN activity_categories c ON c.id = p.category_id
 GROUP BY 1, 2;
 
 CREATE OR REPLACE VIEW v_funnel_daily AS
@@ -128,5 +171,23 @@ FROM organizations o
 LEFT JOIN listing_subscriptions ls
     ON ls.organization_id = o.id
     AND ls.status IN ('trial', 'active', 'past_due');
+
+-- Least-privilege group role for the Data API user AdminApiFn connects as.
+-- Idempotent: CREATE ROLE has no IF NOT EXISTS, so check pg_roles first.
+-- After applying, attach it to the login the DB secret names:
+--     GRANT board_api TO <secret username>;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'board_api') THEN
+        CREATE ROLE board_api NOLOGIN;
+    END IF;
+END
+$$;
+
+GRANT USAGE ON SCHEMA public TO board_api;
+GRANT SELECT ON v_catalog_health, v_funnel_daily, v_provider_pipeline TO board_api;
+GRANT SELECT ON listing_plans, listing_subscriptions, invoices, payments TO board_api;
+GRANT INSERT, UPDATE ON invoices, payments, listing_plans TO board_api;
+GRANT UPDATE (status) ON listing_subscriptions TO board_api;
 
 COMMIT;

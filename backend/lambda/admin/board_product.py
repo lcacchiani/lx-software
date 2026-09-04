@@ -7,15 +7,25 @@ the founder (no catalog mutation from this stack).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import board_data_api
 import board_store
+from board_data_api import Date
 from http_common import _utc_iso_z
+
 
 class ProductError(RuntimeError):
     """User-facing product-analytics failure."""
+
+
+def _iso_date(raw: Any, label: str) -> str:
+    text = str(raw or "").strip()[:10]
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ProductError(f"{label} must be a date YYYY-MM-DD") from exc
 
 
 def _q(sql: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -55,10 +65,10 @@ def op_funnel(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if start:
         clauses.append("day >= :dfrom")
-        params["dfrom"] = start
+        params["dfrom"] = Date(_iso_date(start, "from"))
     if end:
         clauses.append("day <= :dto")
-        params["dto"] = end
+        params["dto"] = Date(_iso_date(end, "to"))
     if district:
         clauses.append("district = :district")
         params["district"] = district

@@ -1298,7 +1298,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_aging_report",
             tool_id="finance",
             kind="read",
-            description="Receivables aging: current / D+7 / D+21 / D+35 and DSO.",
+            description="Receivables aging: current / D+7 / D+21 / D+35, DSO (trailing 90-day paid revenue) and past-due by provider.",
             parameters=_obj({}),
             run=board_receivables.op_aging_report,
             summarize=_summ("Ran aging report"),
@@ -1307,7 +1307,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_unit_economics",
             tool_id="finance",
             kind="read",
-            description="Revenue per subscription versus AWS cost and Meta ads spend (Graph month-to-date).",
+            description="Revenue per subscription, month-to-date CPA (AWS + Meta USD per new subscription) and gross margin at a fixed 7.8 HKD/USD; Meta from Graph month-to-date.",
             parameters=_obj({}),
             run=board_receivables.op_unit_economics,
             summarize=_summ("Read unit economics"),
@@ -1356,6 +1356,7 @@ def build_registry() -> dict[str, ToolOp]:
             parameters=_obj(
                 {
                     "invoiceId": _str_param("invoices.id.", max_len=64),
+                    "stage": _str_param("Dunning stage; set by the nightly scheduler.", enum=["d7", "d21", "d35"]),
                     "reason": REASON_PARAM,
                 },
                 ["invoiceId", "reason"],
@@ -1369,7 +1370,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_match_payment",
             tool_id="finance",
             kind="write",
-            description="Attach a payment to an invoice. Act only when amount and FPS reference agree; otherwise propose candidates.",
+            description="Attach a payment to an invoice. Act only when amount and FPS reference agree and the invoice is open; otherwise propose with candidate invoices.",
             parameters=_obj(
                 {
                     "paymentId": _str_param("payments.id.", max_len=64),
