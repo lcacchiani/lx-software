@@ -203,12 +203,32 @@ export class LxsoftwareStack extends cdk.Stack {
           "ARN of the Secrets Manager secret holding a fine-grained GitHub token for the siutindei repository (Executive Board). The repository is public, so reads work without it; the token raises the rate limit and is required for the board's GitHub write tools (issues: write) and security alerts (security_events: read).",
       }
     );
+    const searchApiKeySecretArn = new cdk.CfnParameter(
+      this,
+      "SearchApiKeySecretArn",
+      {
+        type: "String",
+        default: "",
+        description:
+          "ARN of the Secrets Manager secret holding a Brave Search API key (Executive Board research tool). Leave blank to fall back to OpenRouter :online when that key is already set.",
+      }
+    );
+    const boardAwsStackPrefix = new cdk.CfnParameter(
+      this,
+      "BoardAwsStackPrefix",
+      {
+        type: "String",
+        default: "siutindei",
+        description:
+          "CloudFormation stack-name prefix used to filter Cost Explorer and CloudWatch results for the Executive Board aws tool.",
+      }
+    );
     const boardToolsEnabled = new cdk.CfnParameter(this, "BoardToolsEnabled", {
       type: "String",
       default: "true",
       allowedValues: ["true", "false"],
       description:
-        "Kill switch for Executive Board tool calls (GitHub, board records). Set to false to stop every tool call without touching the admin settings.",
+        "Kill switch for Executive Board tool calls (GitHub, board, mail, research, AWS, security). Set to false to stop every tool call without touching the admin settings.",
     });
     const boardGitHubRepo = new cdk.CfnParameter(this, "BoardGitHubRepo", {
       type: "String",
@@ -580,6 +600,9 @@ export class LxsoftwareStack extends cdk.Stack {
         BOARD_MEETING_MODEL: boardMeetingModel.valueAsString,
         BOARD_DEEP_DIVE_MODEL: boardDeepDiveModel.valueAsString,
         BOARD_TOOLS_ENABLED: boardToolsEnabled.valueAsString,
+        SEARCH_API_KEY_SECRET_ARN: searchApiKeySecretArn.valueAsString,
+        BOARD_AWS_STACK_PREFIX: boardAwsStackPrefix.valueAsString,
+        USER_POOL_ID: this.auth.userPool.userPoolId,
         // BOARD_MAIL_DOMAIN / _RAW_SEGMENT / _INBOUND_ADDRESS are added with the
         // inbound-mail resources below (they depend on InboundMailDomain).
         BOARD_MAIL_SENDING_ENABLED: boardMailSendingEnabled.valueAsString,
@@ -626,6 +649,21 @@ export class LxsoftwareStack extends cdk.Stack {
       });
     boardMeetingSchedule("BoardMorningMeetingSchedule", "morning", "6");
     boardMeetingSchedule("BoardEveningMeetingSchedule", "evening", "18");
+
+    // Cheap AWS / security reads for the board. Role-based invoke (no extra
+    // Lambda resource-policy statement). The handler is a no-op when tools
+    // are killed or the AWS APIs return AccessDenied.
+    new scheduler.Schedule(this, "BoardCacheRefreshSchedule", {
+      description:
+        "Hourly refresh of Executive Board AWS cost/alarms and security findings cache (HKT).",
+      schedule: scheduler.ScheduleExpression.rate(cdk.Duration.hours(1)),
+      target: new schedulerTargets.LambdaInvoke(adminFn, {
+        input: scheduler.ScheduleTargetInput.fromObject({
+          internal: "board_cache_refresh",
+        }),
+        retryAttempts: 1,
+      }),
+    });
 
     // Daily unattended balance refresh (05:30 HKT). The handler no-ops when
     // ENABLE_BANKING_APP_ID is blank, so the rule is safe to keep enabled.
@@ -728,6 +766,45 @@ export class LxsoftwareStack extends cdk.Stack {
     gitHubSecretPolicy.attachToRole(adminFn.role!);
     const cfnGitHubSecretPolicy = gitHubSecretPolicy.node.defaultChild as iam.CfnPolicy;
     cfnGitHubSecretPolicy.cfnOptions.condition = hasGitHubSecret;
+
+    const searchSecretArnValue = searchApiKeySecretArn.valueAsString;
+    const hasSearchSecret = new cdk.CfnCondition(this, "HasSearchApiKeySecret", {
+      expression: cdk.Fn.conditionNot(
+        cdk.Fn.conditionEquals(searchSecretArnValue, "")
+      ),
+    });
+    const searchSecretPolicy = new iam.Policy(this, "AdminSearchApiKeySecretPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["secretsmanager:GetSecretValue"],
+          resources: [searchSecretArnValue],
+        }),
+      ],
+    });
+    searchSecretPolicy.attachToRole(adminFn.role!);
+    const cfnSearchSecretPolicy = searchSecretPolicy.node.defaultChild as iam.CfnPolicy;
+    cfnSearchSecretPolicy.cfnOptions.condition = hasSearchSecret;
+
+    // Executive Board aws + security read tools (plan §8). Cost Explorer and
+    // Health are account-scoped APIs; CloudWatch / Security Hub / Analyzer /
+    // Cognito are filtered in code to the siutindei stacks and this user pool.
+    new iam.Policy(this, "AdminBoardAwsReadPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: [
+            "ce:GetCostAndUsage",
+            "health:DescribeEvents",
+            "cloudwatch:DescribeAlarms",
+            "cloudwatch:GetMetricData",
+            "securityhub:GetFindings",
+            "access-analyzer:ListAnalyzers",
+            "access-analyzer:ListFindings",
+            "cognito-idp:DescribeUserPool",
+          ],
+          resources: ["*"],
+        }),
+      ],
+    }).attachToRole(adminFn.role!);
 
     // ------------------------------------------------------------------
     // Inbound mail: SES → S3 (raw) → Lambda extracts PDF → same parser as UI
