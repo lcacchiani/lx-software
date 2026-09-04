@@ -244,6 +244,10 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:BoardAwsStackPrefix` | CloudFormation stack-name prefix used to filter Cost Explorer / CloudWatch results (default `siutindei`). |
 | `lxsoftware:SiutindeiClusterArn` | Aurora cluster ARN for the siutindei database (RDS Data API). Required for Executive Board `finance` and `product` tools. Leave blank to keep those tools returning a clear "not configured" error. |
 | `lxsoftware:SiutindeiDbSecretArn` | Secrets Manager ARN of the siutindei DB credentials the Data API uses. |
+| `lxsoftware:MetaBoardTokenSecretArn` | System User long-lived token for the Page / Instagram / WhatsApp Cloud API. |
+| `lxsoftware:MetaAppSecretSecretArn` | App secret used to verify `X-Hub-Signature-256` on `POST /webhooks/meta`. |
+| `lxsoftware:MetaVerifyToken` | Token Meta sends on the GET verify handshake (`hub.verify_token`). |
+| `lxsoftware:MetaPageId` / `MetaIgUserId` / `MetaWaPhoneNumberId` / `MetaAdAccountId` | Graph ids the `meta` tools call. |
 | `lxsoftware:BoardMailDomain` | Domain the board indexes (default `siutindei.com`). Every mailbox at this domain is copied to the board's SES inbound address by the Cloudflare Email Worker. |
 | `lxsoftware:BoardMailSendingEnabled` | `false` (default) / `true`. Flip to `true` only after the DKIM CNAMEs, SPF `include:amazonses.com`, and DMARC are in the `BoardMailDomain` zone. Creates the SES sending identity and the IAM send policy; until then mail tools stay read-only. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
@@ -305,7 +309,9 @@ function calling. Design:
   alarms, Lambda health, Health events; budget-alert proposal), and
   `security` (GitHub alerts, Security Hub, Access Analyzer, Cognito MFA;
   remediation issue proposal), `product` (catalog / funnel / provider-pipeline
-  SQL views), and `finance` (listing subscriptions, invoices, aging, draft/send
+  SQL views), `meta` (Page / Instagram insights, comments, DMs, WhatsApp
+  threads, ad spend; propose a post, story, reply, ad set, or lead relay),
+  and `finance` (listing subscriptions, invoices, aging, draft/send
   invoice, dunning, match or record a payment, price-change proposal). The
   board never initiates a bank payment.
 - **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
@@ -334,7 +340,8 @@ function calling. Design:
   `GET /siu-tin-dei/board/mail`, `GET /siu-tin-dei/board/mail/{threadId}`,
   `POST /siu-tin-dei/board/mail/{threadId}/read`,
   `GET /siu-tin-dei/board/receivables`.
-  Admin-group JWT only.
+  Admin-group JWT only. `GET/POST /webhooks/meta` is the **first
+  unauthenticated** admin-API route (HMAC / verify-token only).
 - **Emergency stop:** set `lxsoftware:BoardToolsEnabled=false` and redeploy,
   or flip **Tools enabled** off in the app. Both leave the matrix intact.
 
@@ -379,6 +386,35 @@ Data API (no VPC). Design:
 5. Bank ingest (alert mail or an API-first HK account) is **T4b** — the
    account has not been opened yet. Until then use
    `finance_record_manual_payment`.
+
+### Board Meta (Page, Instagram, WhatsApp)
+
+The board owns the existing WhatsApp number through the Cloud API, plus the
+Facebook Page and Instagram account. Design:
+[`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md) §5.3.
+
+1. Create a Business-type app under the Siu Tin Dei Business Manager and a
+   System User token (`pages_*`, `instagram_*`, `whatsapp_business_*`,
+   `ads_read` / `ads_management`). Store the token as
+   `lxsoftware:MetaBoardTokenSecretArn` and the app secret as
+   `lxsoftware:MetaAppSecretSecretArn`.
+2. **WhatsApp coexistence:** turn coexistence on for the number so the
+   owner's phone app keeps working while the board reads and replies through
+   the API. If coexistence is unavailable, the number moves fully to the
+   Cloud API and the owner replies from **Approvals**.
+3. Subscribe the app to `GET/POST https://<admin-api>/webhooks/meta`. This
+   is the first admin-API route **without** a Cognito JWT: GET checks
+   `MetaVerifyToken`; POST checks `X-Hub-Signature-256`. The handler stores
+   masked `BOARD#…#meta#` rows and returns 200 without calling OpenRouter.
+4. Set `MetaPageId`, `MetaIgUserId`, `MetaWaPhoneNumberId`, and
+   `MetaAdAccountId`. Until they are set the `meta` tools return a clear
+   "not configured" error.
+5. WhatsApp `act` is only inside the 24-hour customer-service window and
+   only to numbers on the allow-list; everyone else (and every reply
+   outside the window) stays in **Approvals**, optionally as a template.
+   `meta_relay_lead` emails the provider and the parent from `hello@`.
+   Ad-set proposals are capped by `metaAdsMonthlyCapUsd` (contract, default
+   50). `act` for ads stays off until T7.
 
 ### Board mail (Cloudflare + SES)
 
