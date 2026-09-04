@@ -56,7 +56,7 @@ class FakeStoresHttp:
                 body = raw
         self.calls.append((method, url, body))
         if "oauth2.googleapis.com/token" in url:
-            payload: Any = {"access_token": "ya29.test", "expires_in": 3600}
+            payload: Any = {"access_token": "play-oauth-test", "expires_in": 3600}
         elif "/v1/apps/app-1/customerReviews" in url:
             payload = {
                 "data": [
