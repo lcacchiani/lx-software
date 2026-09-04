@@ -28,7 +28,7 @@ function SessionIdentity({ user }: { readonly user: AuthUser | null }) {
   }
   return (
     <div
-      className="admin-mobile-session rounded bg-light p-2 mb-3"
+      className="admin-mobile-session rounded border bg-body-secondary p-2 mb-3"
       aria-label="Signed-in account"
     >
       {user.email ? (
