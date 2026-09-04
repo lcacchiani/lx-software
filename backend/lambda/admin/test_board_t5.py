@@ -31,7 +31,10 @@ class FakeGraph:
         body = json.loads(req.data.decode("utf-8")) if req.data else None
         self.calls.append((method, url, body))
         if "/insights" in url:
-            payload: Any = {"data": [{"name": "page_impressions", "values": [{"value": 12}]}]}
+            if "/act_" in url:
+                payload: Any = {"data": [{"spend": "0.00", "impressions": "1", "clicks": "0"}]}
+            else:
+                payload = {"data": [{"name": "page_impressions", "values": [{"value": 12}]}]}
         elif "/feed" in url and method == "GET":
             payload = {
                 "data": [

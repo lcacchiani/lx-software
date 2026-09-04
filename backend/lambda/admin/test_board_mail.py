@@ -346,6 +346,13 @@ class TestMailRoutes(MailTestCase):
         self.assertEqual(body["config"]["allowList"], ["coach@swimhk.example", "@vendor.example"])
         self.assertEqual(body["mailDomain"], "siutindei.com")
         self.assertTrue(body["mailSendEnabled"])
+        status, body = self.call(
+            "/siu-tin-dei/board/tools",
+            "PUT",
+            {"allowList": ["coach@swimhk.example", "@vendor.example", "+852 9123 4567"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["config"]["allowList"], ["coach@swimhk.example", "@vendor.example", "+85291234567"])
         status, body = self.call("/siu-tin-dei/board/tools", "PUT", {"allowList": ["not-an-address"]})
         self.assertEqual(status, 400)
         self.assertIn("not-an-address", body["message"])
@@ -353,7 +360,7 @@ class TestMailRoutes(MailTestCase):
         self.assertEqual(status, 400)
         # Untouched by a matrix-only update.
         status, body = self.call("/siu-tin-dei/board/tools", "PUT", {"matrix": {"mail": {"cpo": "propose"}}})
-        self.assertEqual(body["config"]["allowList"], ["coach@swimhk.example", "@vendor.example"])
+        self.assertEqual(body["config"]["allowList"], ["coach@swimhk.example", "@vendor.example", "+85291234567"])
         self.assertEqual(body["config"]["matrix"]["mail"]["cpo"], "propose")
 
     def test_context_pack_mentions_unread_counts_only(self) -> None:

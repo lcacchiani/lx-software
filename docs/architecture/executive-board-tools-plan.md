@@ -1,11 +1,12 @@
 # Executive Board — tools and connectors
 
-Status: **approved; T1–T6 shipped** (tool loop, `github` / `board` /
+Status: **approved; T1–T7 shipped** (tool loop, `github` / `board` /
 `mail` / `research` / `aws` / `security` / `product` / `meta` / `finance` /
 `stores` tools, permission matrix, approvals queue, email ingest, Mail view,
 receivables + Data API, Meta webhook, App Store Connect + Google Play,
-hourly cache refresh, nightly statement-book mirror, daily dunning — see
-§10). T4b and T7 remain proposals. This
+hourly cache refresh, nightly statement-book mirror, daily dunning, `act`
+allow-lists and ads caps — see
+§10). T4b remains a proposal. This
 document extends [`executive-board-plan.md`](./executive-board-plan.md) (the
 board itself, shipped) with the ability for each board member to **seek
 information and take action through tools** instead of relying only on the
@@ -25,7 +26,7 @@ Where T1 lives in the code:
 | SPA | `BoardToolsCard`, `BoardApprovalsList`, `BoardToolCallList`, `BoardMailView`, `BoardReceivablesView`; hooks `useBoardTools`, `useBoardApprovals`, `useBoardMail`, `useBoardReceivables` |
 | Mail ingest, SES send, PII aliases | `backend/lambda/admin/board_mail.py`, `board_pii.py`; S3 prefix `inbound-raw/siutindei/` |
 | Cloudflare fan-out | `scripts/cloudflare/siutindei-mail-fanout.js` |
-| Tests | `backend/lambda/admin/test_board_tools.py`, `test_board_mail.py`, `test_board_t2.py`, `test_board_t4.py` |
+| Tests | `backend/lambda/admin/test_board_tools.py`, `test_board_mail.py`, `test_board_t2.py`, `test_board_t4.py`, `test_board_t5.py`, `test_board_t6.py`, `test_board_t7.py` |
 | T2 reads | `board_research.py`, `board_aws.py`, `board_security.py`, `board_cache.py`; `BOARD#…#cache`; `BoardCacheRefreshSchedule` |
 | T4 receivables | `board_data_api.py`, `board_receivables.py`, `board_product.py`; `scripts/siutindei/receivables.sql`; `BoardReceivablesMirrorSchedule`, `BoardDunningSchedule` |
 | T5 Meta | `board_meta.py`; unauthenticated `GET/POST /webhooks/meta`; `BOARD#…#meta#` rows; `MetaBoardToken` / app secret |
@@ -216,9 +217,11 @@ client changes.
   both are `propose` until the owner promotes them. Replies to a parent are
   `act` only inside the 24-hour customer-service window; outside it the
   tool switches to `propose` with a pre-approved template.
-- **Spend**: `create_ad_set` and `boost_post` are `propose` for CMO with a
-  monthly ads ceiling (`metaAdsMonthlyCapUsd`, owner-set); `act` is
-  possible later but off by default.
+- **Spend**: `create_ad_set` and `boost_post` honour owner-set daily
+  (`metaAdsDailyUsd`, default 10) and monthly (`metaAdsMonthlyUsd`, default
+  50) caps on the Tools card. Hitting either (recorded board commitment plus
+  Graph month-to-date spend) downgrades the call to `propose`. `act` runs
+  when the global mode is `act` and the proposed budget still fits.
 
 ### 5.4 Receivables — paid listings, paid offline
 
@@ -394,7 +397,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | T4b | Bank ingest adapter (§5.6): API client for an API-first account, or alert-mail parser + statement reconciliation for a traditional bank | T4, T3, account opened |
 | T5 ✅ | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
 | T6 ✅ | `stores` (App Store Connect, Google Play) tools and review replies | T1 |
-| T7 | `act` level rollout: allow-lists, spend caps enforcement, ads tooling | T3–T6 |
+| T7 ✅ | `act` level rollout: phone allow-list, owner ads caps, spend tracking, `boost_post` | T3–T6 |
 
 Each milestone ships behind the global mode switch and adds its own
 Python unit tests (`test_board_tools.py`, fakes for every external API)
@@ -411,4 +414,4 @@ blocking, and the board itself can work on them now that T1–T4 have shipped:
 2. **Listing prices** — decides the first `listing_plans` rows; suggested
    first CFO/CPO stand-up action, approved through the queue.
 
-Next sign-off: **T7** (`act` rollout). T4b waits on the HK account.
+Next sign-off: **T8** (web analytics) when approved. T4b waits on the HK account.
