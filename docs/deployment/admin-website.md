@@ -312,9 +312,10 @@ function calling. Design:
   alarms, Lambda health, Health events; budget-alert proposal), and
   `security` (GitHub alerts, Security Hub, Access Analyzer, Cognito MFA;
   remediation issue proposal), `product` (catalog / funnel / provider-pipeline
-  SQL views), `meta` (Page / Instagram insights, comments, DMs, WhatsApp
-  threads, ad spend; propose a post, story, reply, ad set, or lead relay),
-  and `finance` (listing subscriptions, invoices, aging, draft/send
+  SQL views),   `meta` (Page / Instagram insights, comments, DMs, WhatsApp
+  threads, ad spend; post, story, reply, ad set, boost a post, or lead relay),
+  `stores` (App Store Connect + Play metrics, review reply, release-notes
+  draft), and `finance` (listing subscriptions, invoices, aging, draft/send
   invoice, dunning, match or record a payment, price-change proposal). The
   board never initiates a bank payment.
 - **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
@@ -329,7 +330,9 @@ function calling. Design:
   arguments, approve (the call runs as the owner and the result is logged)
   or reject with a note the member sees next time. Mail writes render an
   unmasked To / From / Subject / body preview; a guard on `act` downgrades
-  any send whose recipients are not on the allow-list to `propose`.
+  any send whose recipients are not on the allow-list (email, `@domain`, or
+  E.164 phone) to `propose`. Meta ads writes that would breach the owner-set
+  daily / monthly caps also drop to `propose`.
 - **Audit:** every call is a `BOARD#TOOLCALL#` row (persona, level, actor,
   arguments, result preview, duration) and is visible under **Settings →
   Tools & permissions → Show the tool call log**. Meeting transcripts record
@@ -413,11 +416,15 @@ Facebook Page and Instagram account. Design:
    `MetaAdAccountId`. Until they are set the `meta` tools return a clear
    "not configured" error.
 5. WhatsApp `act` is only inside the 24-hour customer-service window and
-   only to numbers on the allow-list; everyone else (and every reply
-   outside the window) stays in **Approvals**, optionally as a template.
+   only to numbers on the allow-list (E.164 phones are first-class entries
+   next to email / `@domain`); everyone else (and every reply outside the
+   window) stays in **Approvals**, optionally as a template.
    `meta_relay_lead` emails the provider and the parent from `hello@`.
-   Ad-set proposals are capped by `metaAdsMonthlyCapUsd` (contract, default
-   50). `act` for ads stays off until T7.
+6. Ads: set **Meta ads spend caps** on the Tools card (defaults daily USD
+   10 / monthly USD 50, clamped to 500 / 2 000). `meta_create_ad_set` and
+   `meta_boost_post` **act** only while recorded commitment plus Graph
+   month-to-date spend still fits; otherwise they go to Approvals. The
+   shipped global mode stays `propose` until you flip it.
 
 ### Board stores (App Store Connect + Google Play)
 
@@ -480,8 +487,9 @@ Worker copies every message to the board as well. Design:
    `v=spf1 include:_spf.mx.cloudflare.net include:amazonses.com ~all`.
 4. Add `_dmarc` TXT (`v=DMARC1; p=quarantine; rua=mailto:hello@siutindei.com`).
 5. In **Executive Board → Settings → Tools & permissions**, set the
-   **Email allow-list** (`@siutindei.com` and known vendor addresses). Sends
-   to anyone else stay in **Approvals** even when the member is at `act`.
+   **Recipient allow-list** (`@siutindei.com`, known vendor addresses, and
+   WhatsApp numbers). Sends to anyone else stay in **Approvals** even when
+   the member is at `act`.
 
 Replies go out from the mailbox the thread was addressed to. Every outbound
 message is indexed as `direction=out` so it appears in **Mail**. Bodies and
