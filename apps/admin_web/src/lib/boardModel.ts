@@ -109,6 +109,7 @@ export type BoardToolsPayload = {
   readonly dataApiConfigured?: boolean;
   readonly metaConfigured?: boolean;
   readonly storesConfigured?: boolean;
+  readonly webConfigured?: boolean;
   readonly adsSpend?: BoardAdsSpend;
 };
 

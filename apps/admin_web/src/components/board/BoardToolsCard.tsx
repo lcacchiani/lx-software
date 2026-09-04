@@ -63,6 +63,7 @@ export function BoardToolsCard({
     dataApiConfigured,
     metaConfigured,
     storesConfigured,
+    webConfigured,
     adsSpend,
   } = payload;
   const [draft, setDraft] = useState<BoardToolsConfig>(() => ({
@@ -280,6 +281,20 @@ export function BoardToolsCard({
                           Set <code>AppStoreConnectKeySecretArn</code> and{" "}
                           <code>GooglePlayServiceAccountSecretArn</code> (keys already exist). JWT
                           for App Store Connect is signed in the Lambda.
+                        </div>
+                      )
+                    ) : null}
+                    {tool.id === "web" ? (
+                      webConfigured ? (
+                        <div className="small text-muted mt-1">
+                          GA4 and GTM reads refresh hourly. Several properties and containers are
+                          supported. Publish and Google Ads are later milestones.
+                        </div>
+                      ) : (
+                        <div className="small text-warning mt-1">
+                          Set <code>GoogleAnalyticsServiceAccountSecretArn</code> (dedicated SA, not
+                          the Play key), <code>Ga4PropertyIds</code>, and{" "}
+                          <code>GtmContainers</code> (<code>account:container</code> pairs).
                         </div>
                       )
                     ) : null}
