@@ -19,6 +19,7 @@ import board_receivables
 import board_security
 import board_store
 import board_stores
+import board_web
 
 MAX_BRIEF_CHARS = 12000
 MAX_UPDATES = 10
@@ -86,6 +87,7 @@ def build_context_pack(
     receivables = board_receivables.digest_for_context()
     meta = board_meta.digest_for_context(table)
     stores = board_stores.digest_for_context(table)
+    web = board_web.digest_for_context(table)
 
     pack = {
         "brief": _cap(str(brief.get("markdown") or ""), MAX_BRIEF_CHARS),
@@ -106,6 +108,7 @@ def build_context_pack(
         "receivables": receivables,
         "meta": meta,
         "stores": stores,
+        "web": web,
         "finance": finance,
         "repoText": _cap(str((repo or {}).get("text") or ""), MAX_REPO_CHARS) if repo else "",
         "repoFetchedAt": (repo or {}).get("fetchedAt") if repo else None,
@@ -285,6 +288,14 @@ def render_context_pack(pack: dict[str, Any]) -> str:
         )
         parts.append(
             f"--- App stores: {apple}, {play} — members with stores access use stores_metrics / stores_list_reviews ---"
+        )
+
+    web = pack.get("web") or {}
+    if web.get("sessions") is not None or web.get("fetchedAt"):
+        parts.append("")
+        parts.append(
+            f"--- Web: {web.get('sessions') or 0} GA4 sessions, {web.get('users') or 0} users "
+            f"({web.get('properties') or 0} properties) — members with web access use web_sessions / web_conversions ---"
         )
 
     finance = pack.get("finance")

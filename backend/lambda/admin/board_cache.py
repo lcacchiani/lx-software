@@ -3,7 +3,7 @@
 EventBridge Scheduler invokes AdminApiFn with ``{internal: "board_cache_refresh"}``.
 Research queries are cached on first use (24 h) and are not pre-warmed — they
 depend on the question. AWS cost/alarms/health, security findings, and
-stores daily metrics are.
+stores daily metrics, and GA4 / GTM reads are.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import board_aws
 import board_security
 import board_store
 import board_stores
+import board_web
 from http_common import _log_event
 
 
@@ -21,7 +22,8 @@ def refresh_all(table: Any) -> dict[str, Any]:
     aws_notes = board_aws.refresh_caches(table)
     sec_notes = board_security.refresh_caches(table)
     store_notes = board_stores.refresh_caches(table)
-    return {"aws": aws_notes, "security": sec_notes, "stores": store_notes}
+    web_notes = board_web.refresh_caches(table)
+    return {"aws": aws_notes, "security": sec_notes, "stores": store_notes, "web": web_notes}
 
 
 def handle_schedule_trigger(_event: dict[str, Any]) -> dict[str, Any]:
@@ -37,5 +39,6 @@ def handle_schedule_trigger(_event: dict[str, Any]) -> dict[str, Any]:
         aws=result.get("aws"),
         security=result.get("security"),
         stores=result.get("stores"),
+        web=result.get("web"),
     )
     return {"ok": True, **result}
