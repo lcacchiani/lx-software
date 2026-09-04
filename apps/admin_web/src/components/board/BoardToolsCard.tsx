@@ -44,7 +44,8 @@ export function BoardToolsCard({
   showCallLog,
   onToggleCallLog,
 }: BoardToolsCardProps) {
-  const { config, registry, defaults, envDisabled, repoWriteEnabled, mailSendEnabled, mailDomain } = payload;
+  const { config, registry, defaults, envDisabled, repoWriteEnabled, mailSendEnabled, mailDomain, searchConfigured } =
+    payload;
   const [draft, setDraft] = useState<BoardToolsConfig>(config);
   const [allowListText, setAllowListText] = useState(() => config.allowList.join("\n"));
   const draftAllowList = parseAllowListText(allowListText);
@@ -203,6 +204,16 @@ export function BoardToolsCard({
                           <i className="bi bi-send-slash me-1" aria-hidden="true" />
                           Sending is off (<code>BoardMailSendingEnabled=false</code>): writes are drafted for you but
                           cannot be sent until the domain is verified in SES.
+                        </div>
+                      )
+                    ) : null}
+                    {tool.id === "research" ? (
+                      searchConfigured ? (
+                        <div className="small text-muted mt-1">Results are cached for 24 hours.</div>
+                      ) : (
+                        <div className="small text-warning mt-1">
+                          No Brave Search key (`SearchApiKeySecretArn`). Queries fail until one is set (or OpenRouter
+                          `:online` is used as a fallback).
                         </div>
                       )
                     ) : null}
