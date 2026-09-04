@@ -4,7 +4,9 @@ import { BoardToolCallList } from "./BoardToolCallList";
 import {
   effectiveToolLevel,
   levelsUpTo,
+  MAIL_ALLOW_LIST_ENTRY_RE,
   memberLabel,
+  parseAllowListText,
   TOOL_GLOBAL_MODE_LABELS,
   TOOL_LEVEL_BADGE_CLASS,
   TOOL_LEVEL_HELP,
@@ -16,7 +18,7 @@ import {
   type BoardToolsConfig,
   type BoardToolsPayload,
 } from "../../lib/boardModel";
-import { BOARD_TOOL_GLOBAL_MODES } from "../../lib/contracts/generated";
+import { BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES, BOARD_TOOL_GLOBAL_MODES } from "../../lib/contracts/generated";
 import type { ToolsConfigPatch } from "../../hooks/useBoardTools";
 
 export type BoardToolsCardProps = {
@@ -42,9 +44,15 @@ export function BoardToolsCard({
   showCallLog,
   onToggleCallLog,
 }: BoardToolsCardProps) {
-  const { config, registry, defaults, envDisabled, repoWriteEnabled } = payload;
+  const { config, registry, defaults, envDisabled, repoWriteEnabled, mailSendEnabled, mailDomain } = payload;
   const [draft, setDraft] = useState<BoardToolsConfig>(config);
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(config);
+  const [allowListText, setAllowListText] = useState(() => config.allowList.join("\n"));
+  const draftAllowList = parseAllowListText(allowListText);
+  const isDirty =
+    JSON.stringify(draft) !== JSON.stringify(config) ||
+    JSON.stringify(draftAllowList) !== JSON.stringify([...config.allowList]);
+  const invalidAllowEntries = draftAllowList.filter((e) => !MAIL_ALLOW_LIST_ENTRY_RE.test(e));
+  const tooManyAllowEntries = draftAllowList.length > BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES;
 
   const setCell = (toolId: string, personaId: string, level: BoardToolLevel) =>
     setDraft((d) => ({ ...d, matrix: { ...d.matrix, [toolId]: { ...d.matrix[toolId], [personaId]: level } } }));
@@ -61,14 +69,22 @@ export function BoardToolsCard({
       description="What each board member may look up or change while chatting or in meetings. Every call is logged; writes at the Propose level wait for your approval."
       footer={
         <>
-          <button type="button" className="btn btn-primary" disabled={!isDirty || isSaving} onClick={() => onSave(draft)}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!isDirty || isSaving || invalidAllowEntries.length > 0 || tooManyAllowEntries}
+            onClick={() => onSave({ ...draft, allowList: draftAllowList })}
+          >
             {isSaving ? "Saving…" : "Save permissions"}
           </button>
           <button
             type="button"
             className="btn btn-outline-secondary"
-            disabled={isSaving || JSON.stringify(draft) === JSON.stringify(defaults)}
-            onClick={() => setDraft(defaults)}
+            disabled={isSaving || (JSON.stringify(draft) === JSON.stringify(defaults) && draftAllowList.length === 0)}
+            onClick={() => {
+              setDraft(defaults);
+              setAllowListText("");
+            }}
           >
             Reset to defaults
           </button>
@@ -175,6 +191,21 @@ export function BoardToolsCard({
                         Writes and security alerts need <code>GitHubReadTokenSecretArn</code>; reads work without it.
                       </div>
                     ) : null}
+                    {tool.id === "mail" ? (
+                      mailSendEnabled ? (
+                        <div className="small text-muted mt-1">
+                          <i className="bi bi-send-check me-1" aria-hidden="true" />
+                          Sends from <code>*@{mailDomain}</code>. <strong>Act</strong> only sends to the allow-list
+                          below; everyone else goes to Approvals.
+                        </div>
+                      ) : (
+                        <div className="small text-warning mt-1">
+                          <i className="bi bi-send-slash me-1" aria-hidden="true" />
+                          Sending is off (<code>BoardMailSendingEnabled=false</code>): writes are drafted for you but
+                          cannot be sent until the domain is verified in SES.
+                        </div>
+                      )
+                    ) : null}
                     <div className="small mt-1 d-flex gap-2 flex-wrap">
                       <span className="text-muted">Set all:</span>
                       {levels.map((lvl) => (
@@ -218,6 +249,35 @@ export function BoardToolsCard({
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="row g-3 mt-1">
+        <div className="col-12 col-lg-6">
+          <label className="form-label small fw-semibold mb-1" htmlFor="board-mail-allow-list">
+            Email allow-list <span className="text-muted fw-normal">({draftAllowList.length}/{BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES})</span>
+          </label>
+          <textarea
+            id="board-mail-allow-list"
+            className={`form-control form-control-sm font-monospace ${invalidAllowEntries.length > 0 || tooManyAllowEntries ? "is-invalid" : ""}`}
+            rows={4}
+            value={allowListText}
+            placeholder={"coach@swimhk.example\n@trusted-vendor.example"}
+            spellCheck={false}
+            onChange={(ev) => setAllowListText(ev.target.value)}
+          />
+          {invalidAllowEntries.length > 0 ? (
+            <div className="invalid-feedback d-block">
+              Not an address or @domain: {invalidAllowEntries.slice(0, 3).join(", ")}
+            </div>
+          ) : tooManyAllowEntries ? (
+            <div className="invalid-feedback d-block">At most {BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES} entries.</div>
+          ) : null}
+          <div className="form-text">
+            One per line: a full address or <code>@domain</code>. Members with <strong>Act</strong> on Email send
+            to these recipients directly (logged); anyone else — every parent, by design — always comes to you first.
+            Your own <code>@{mailDomain}</code> mailboxes are always allowed.
+          </div>
+        </div>
       </div>
 
       <div className="form-check form-switch small mt-3">
