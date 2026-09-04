@@ -146,6 +146,22 @@
         "ciso": "off",
         "cmo": "read"
       }
+    },
+    {
+      "id": "stores",
+      "label": "App stores",
+      "description": "App Store Connect and Google Play: downloads, installs, crashes, ratings and review text. Reply to a review or draft release notes. The CMO may act on a review reply; everything else is propose.",
+      "maxLevel": "act",
+      "defaults": {
+        "ceo": "read",
+        "cfo": "off",
+        "coo": "read",
+        "cpo": "propose",
+        "cto": "read",
+        "cio": "off",
+        "ciso": "off",
+        "cmo": "act"
+      }
     }
   ],
   "limits": {
@@ -172,6 +188,8 @@
     "invoiceNumberPrefix": "STD",
     "receivablesListMax": 100,
     "metaAdsMonthlyCapUsd": 50,
-    "metaListMax": 40
+    "metaListMax": 40,
+    "storesListMax": 30,
+    "storesCacheTtlHours": 20
   }
 }

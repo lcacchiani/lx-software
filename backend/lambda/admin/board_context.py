@@ -18,6 +18,7 @@ import board_meta
 import board_receivables
 import board_security
 import board_store
+import board_stores
 
 MAX_BRIEF_CHARS = 12000
 MAX_UPDATES = 10
@@ -84,6 +85,7 @@ def build_context_pack(
     security = board_security.digest_for_context(table)
     receivables = board_receivables.digest_for_context()
     meta = board_meta.digest_for_context(table)
+    stores = board_stores.digest_for_context(table)
 
     pack = {
         "brief": _cap(str(brief.get("markdown") or ""), MAX_BRIEF_CHARS),
@@ -103,6 +105,7 @@ def build_context_pack(
         "security": security,
         "receivables": receivables,
         "meta": meta,
+        "stores": stores,
         "finance": finance,
         "repoText": _cap(str((repo or {}).get("text") or ""), MAX_REPO_CHARS) if repo else "",
         "repoFetchedAt": (repo or {}).get("fetchedAt") if repo else None,
@@ -265,6 +268,23 @@ def render_context_pack(pack: dict[str, Any]) -> str:
             f"--- Meta: {meta.get('unread') or 0} unread threads "
             f"({meta.get('whatsappThreads') or 0} WhatsApp) — members with meta access "
             "use meta_list_whatsapp / meta_list_dms ---"
+        )
+
+    stores = pack.get("stores") or {}
+    if stores.get("appleRating") is not None or stores.get("playRating") is not None or stores.get("fetchedAt"):
+        parts.append("")
+        apple = (
+            f"App Store {stores.get('appleRating')} ({stores.get('appleReviews') or 0} reviews)"
+            if stores.get("appleRating") is not None
+            else "App Store n/a"
+        )
+        play = (
+            f"Play {stores.get('playRating')} ({stores.get('playReviews') or 0} reviews)"
+            if stores.get("playRating") is not None
+            else "Play n/a"
+        )
+        parts.append(
+            f"--- App stores: {apple}, {play} — members with stores access use stores_metrics / stores_list_reviews ---"
         )
 
     finance = pack.get("finance")

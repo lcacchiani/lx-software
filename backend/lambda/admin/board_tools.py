@@ -3,7 +3,8 @@
 Design (see docs/architecture/executive-board-tools-plan.md):
 
 - A **registry** of operations, each belonging to a tool (``github``,
-  ``board``, ``mail``, ``research``, ``aws``, ``security``) and being either a *read* or a *write*.
+  ``board``, ``mail``, ``research``, ``aws``, ``security``, ``product``,
+  ``meta``, ``finance``, ``stores``) and being either a *read* or a *write*.
 - A per-tool, per-member **level** (``off`` < ``read`` < ``propose`` <
   ``act``), capped by a global mode. Read operations are offered at
   ``read`` and above; write operations at ``propose`` and above. At
@@ -34,6 +35,7 @@ import board_receivables
 import board_research
 import board_security
 import board_store
+import board_stores
 from contract_constants import (
     BOARD_ACTION_EFFORTS,
     BOARD_ACTION_PRIORITIES,
@@ -48,6 +50,7 @@ from contract_constants import (
     BOARD_TOOL_LEVELS,
     BOARD_TOOL_RESULT_MAX_CHARS,
     BOARD_META_LIST_MAX,
+    BOARD_STORES_LIST_MAX,
 )
 from http_common import _log_event, _utc_iso_z
 from openrouter_client import ChatCompletion, ToolCall, add_usage
@@ -1305,6 +1308,85 @@ def build_registry() -> dict[str, ToolOp]:
             run=board_receivables.op_record_manual_payment,
             summarize=_summ("Record manual payment of ${amountHkd}"),
         ),
+        ToolOp(
+            name="stores_metrics",
+            tool_id="stores",
+            kind="read",
+            description="Cached App Store Connect and Google Play downloads, installs, ratings and latest version.",
+            parameters=_obj({}),
+            run=board_stores.op_metrics,
+            summarize=_summ("Read store metrics"),
+        ),
+        ToolOp(
+            name="stores_crashes",
+            tool_id="stores",
+            kind="read",
+            description="App Store performance metrics and Play crash-rate snapshot (cached).",
+            parameters=_obj({}),
+            run=board_stores.op_crashes,
+            summarize=_summ("Read store crashes"),
+        ),
+        ToolOp(
+            name="stores_ratings",
+            tool_id="stores",
+            kind="read",
+            description="Average ratings and review counts for App Store and Play (cached).",
+            parameters=_obj({}),
+            run=board_stores.op_ratings,
+            summarize=_summ("Read store ratings"),
+        ),
+        ToolOp(
+            name="stores_list_reviews",
+            tool_id="stores",
+            kind="read",
+            description="Recent customer reviews and reply status. Contacts in the text are masked.",
+            parameters=_obj(
+                {
+                    "store": _str_param("apple, play, or both.", enum=["apple", "play", "both"]),
+                    "limit": _int_param("How many reviews.", maximum=BOARD_STORES_LIST_MAX),
+                }
+            ),
+            run=board_stores.op_list_reviews,
+            summarize=_summ("Listed store reviews"),
+        ),
+        ToolOp(
+            name="stores_reply_review",
+            tool_id="stores",
+            kind="write",
+            description="Reply to an App Store or Play review. The CMO may act; everyone else proposes.",
+            parameters=_obj(
+                {
+                    "store": _str_param("Which store.", enum=["apple", "play"]),
+                    "reviewId": _str_param("Store review id.", max_len=80),
+                    "message": _str_param("Reply text.", max_len=1000),
+                    "reason": REASON_PARAM,
+                },
+                ["store", "reviewId", "message", "reason"],
+            ),
+            run=board_stores.op_reply_review,
+            summarize=_summ("Reply to {store} review {reviewId}"),
+            preview=lambda ctx, args: board_stores.owner_preview_message(ctx, args, op="stores_reply_review"),
+        ),
+        ToolOp(
+            name="stores_draft_release_notes",
+            tool_id="stores",
+            kind="write",
+            description="Draft What's New / release notes. Always goes to Approvals; never published automatically.",
+            parameters=_obj(
+                {
+                    "store": _str_param("apple, play, or both.", enum=["apple", "play", "both"]),
+                    "version": _str_param("Version string, if known.", max_len=20),
+                    "locale": _str_param("Locale code.", max_len=12),
+                    "notes": _str_param("Draft What's New text.", max_len=2000),
+                    "reason": REASON_PARAM,
+                },
+                ["notes", "reason"],
+            ),
+            run=board_stores.op_draft_release_notes,
+            summarize=_summ("Draft release notes"),
+            act_guard=board_stores.act_guard_release_notes,
+            preview=lambda ctx, args: board_stores.owner_preview_message(ctx, args, op="stores_draft_release_notes"),
+        ),
     ]
     return {op.name: op for op in ops}
 
@@ -1445,6 +1527,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             board_receivables.ReceivablesError,
             board_product.ProductError,
             board_meta.MetaError,
+            board_stores.StoresError,
             ValueError,
         ) as exc:
             outcome = ToolOutcome(status="error", result={"error": str(exc)[:500]}, summary=summary)

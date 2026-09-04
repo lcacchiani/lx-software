@@ -857,7 +857,7 @@ def get_cache(table: Any, name: str) -> dict[str, Any] | None:
 
 def cache_digest(table: Any) -> dict[str, Any]:
     """Tiny summary of cached AWS / security reads for the context pack."""
-    keys = ("aws:monthly_cost", "aws:alarms", "security:findings")
+    keys = ("aws:monthly_cost", "aws:alarms", "security:findings", "stores:metrics")
     out: dict[str, Any] = {}
     for name in keys:
         hit = get_cache(table, name)
