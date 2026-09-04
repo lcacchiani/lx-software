@@ -221,7 +221,7 @@ class TestLevels(unittest.TestCase):
         registry = board_tools.public_registry()
         self.assertEqual(
             [t["id"] for t in registry],
-            ["github", "board", "mail", "research", "aws", "security", "product", "finance"],
+            ["github", "board", "mail", "research", "aws", "security", "product", "meta", "finance"],
         )
         self.assertTrue(all(t["operations"] for t in registry))
 
@@ -341,6 +341,7 @@ class TestChatToolLoop(ToolsTestCase):
                     "research": {"cfo": "off"},
                     "aws": {"cfo": "off"},
                     "product": {"cfo": "off"},
+                    "meta": {"cfo": "off"},
                     "finance": {"cfo": "off"},
                 }
             },

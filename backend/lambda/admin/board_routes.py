@@ -11,6 +11,7 @@ import board_budget
 import board_chat
 import board_github
 import board_mail
+import board_meta
 import board_meeting
 import board_personas
 import board_receivables
@@ -206,6 +207,7 @@ def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "mailDomain": board_mail.mail_domain(),
         "searchConfigured": board_research.search_configured(),
         "dataApiConfigured": board_receivables.configured(),
+        "metaConfigured": board_meta.configured(),
     }
 
 

@@ -151,6 +151,8 @@ def write_python(finance: dict, timeouts: dict, domains: dict) -> None:
         "BOARD_CACHE_REFRESH_TTL_HOURS = int(_BOARD_TOOL_LIMITS[\"cacheRefreshTtlHours\"])",
         "BOARD_INVOICE_NUMBER_PREFIX = str(_BOARD_TOOL_LIMITS[\"invoiceNumberPrefix\"])",
         "BOARD_RECEIVABLES_LIST_MAX = int(_BOARD_TOOL_LIMITS[\"receivablesListMax\"])",
+        "BOARD_META_ADS_MONTHLY_CAP_USD = float(_BOARD_TOOL_LIMITS[\"metaAdsMonthlyCapUsd\"])",
+        "BOARD_META_LIST_MAX = int(_BOARD_TOOL_LIMITS[\"metaListMax\"])",
         "",
     ]
     PY_OUT.write_text("\n".join(lines), encoding="utf-8")
@@ -275,6 +277,8 @@ export const BOARD_RESEARCH_MAX_RESULTS = {tool_limits["researchMaxResults"]};
 export const BOARD_CACHE_REFRESH_TTL_HOURS = {tool_limits["cacheRefreshTtlHours"]};
 export const BOARD_INVOICE_NUMBER_PREFIX = {json.dumps(tool_limits["invoiceNumberPrefix"])};
 export const BOARD_RECEIVABLES_LIST_MAX = {tool_limits["receivablesListMax"]};
+export const BOARD_META_ADS_MONTHLY_CAP_USD = {tool_limits["metaAdsMonthlyCapUsd"]};
+export const BOARD_META_LIST_MAX = {tool_limits["metaListMax"]};
 """
     TS_OUT.write_text(body, encoding="utf-8")
 
