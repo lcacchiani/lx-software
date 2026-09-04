@@ -276,7 +276,7 @@ export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
   {
     "id": "mail",
     "label": "Email",
-    "description": "Every siutindei.com mailbox: threads, messages and attachment names, with contacts pseudonymised. Writes reply, forward or send from a siutindei.com address; recipients outside the allow-list always go to the founder for approval.",
+    "description": "Every siutindei.com mailbox: threads, messages and attachment names, with contacts pseudonymised. Writes reply, forward or send from a siutindei.com address; recipients outside the allow-list always go to the founder for approval. CISO can flag a thread as phishing at read.",
     "maxLevel": "act",
     "defaults": {
       "ceo": "propose",
