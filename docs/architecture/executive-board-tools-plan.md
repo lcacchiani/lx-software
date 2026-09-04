@@ -1,9 +1,25 @@
-# Executive Board — tools and connectors (proposal, not yet approved)
+# Executive Board — tools and connectors
 
-Status: **draft for review**. Nothing in this document is implemented. It
-extends [`executive-board-plan.md`](./executive-board-plan.md) (the board
-itself, shipped) with the ability for each board member to **seek information
-and take action through tools** instead of relying only on the context pack.
+Status: **approved; T1 shipped** (tool loop, `github` and `board` tools,
+permission matrix, approvals queue — see §10). T2–T7 remain proposals. This
+document extends [`executive-board-plan.md`](./executive-board-plan.md) (the
+board itself, shipped) with the ability for each board member to **seek
+information and take action through tools** instead of relying only on the
+context pack.
+
+Where T1 lives in the code:
+
+| Piece | Location |
+|-------|----------|
+| Contract (tool ids, levels, default matrix, loop limits) | `contracts/board-tools.json` → `contract_constants.py`, `src/lib/contracts/generated.ts` |
+| Function calling in the OpenRouter client | `backend/lambda/admin/openrouter_client.py` (`tools`, `tool_choice`, `ToolCall`, `extract_tool_calls`) |
+| Registry, levels, loop, audit rows, approvals | `backend/lambda/admin/board_tools.py` |
+| GitHub operations (7 read, 3 write) | `backend/lambda/admin/board_github.py` (`op_*`) |
+| Persistence (`BOARD#APPROVAL#`, `BOARD#TOOLCALL#`, `settings.tools`) | `backend/lambda/admin/board_store.py` |
+| Routes `/board/tools`, `/board/tools/calls`, `/board/approvals[/{id}/approve\|reject]` | `backend/lambda/admin/board_routes.py`, `lxsoftware-stack.ts` |
+| Kill switch | `BoardToolsEnabled` stack parameter → `BOARD_TOOLS_ENABLED` on `AdminApiFn` |
+| SPA | `BoardToolsCard`, `BoardApprovalsList`, `BoardToolCallList`; hooks `useBoardTools`, `useBoardApprovals` |
+| Tests | `backend/lambda/admin/test_board_tools.py` |
 
 ## 1. Decisions already taken by the owner
 
@@ -361,7 +377,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 
 | # | Scope | Depends on |
 |---|-------|------------|
-| T1 | Tool loop core: `openrouter_client` tools, `board_tools.py`, registry, level enforcement, audit rows, contracts, settings matrix API + card, `github` and `board` tools with read + propose, Approvals queue (backend + UI) | — |
+| T1 ✅ | Tool loop core: `openrouter_client` tools, `board_tools.py`, registry, level enforcement, audit rows, contracts, settings matrix API + card, `github` and `board` tools with read + propose, Approvals queue (backend + UI) | — |
 | T2 | `research`, `aws`, `security` read tools; cache refresh Scheduler | T1 |
 | T3 | Email ingest and index (§5.2) incl. sending identity, `mail` tools, Mail view | T1 |
 | T4 | Receivables: siutindei migration and views (§5.4, §5.7), Data API access, `finance` and `product` tools, statement-book mirror, `record_manual_payment`, Receivables view, dunning Scheduler | T1 |
@@ -377,7 +393,7 @@ plus Vitest coverage for new hooks.
 ## 11. Remaining decisions
 
 All six pre-start questions are answered (§1). Two items are deferred, not
-blocking, and the board itself can work on them once T1 ships:
+blocking, and the board itself can work on them now that T1 has shipped:
 
 1. **Which HK account to open** — API-first (Airwallex/Statrys/Aspire) or a
    traditional bank; decides which T4b adapter is built. Suggested first CFO
@@ -385,5 +401,6 @@ blocking, and the board itself can work on them once T1 ships:
 2. **Listing prices** — decides the first `listing_plans` rows; suggested
    first CFO/CPO stand-up action, approved through the queue.
 
-Sign-off needed only on: starting **T1** (tool loop, GitHub + board tools,
-approvals queue, permission matrix UI).
+Next sign-off: which of **T2–T6** to start first. T3 (email) and T4
+(receivables) unblock the most downstream work; T2 (research/AWS/security
+reads) is the smallest.

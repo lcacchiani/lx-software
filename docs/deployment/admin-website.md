@@ -237,16 +237,19 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | Parameter | Purpose |
 |-----------|---------|
 | `lxsoftware:OpenRouterApiKeySecretArn` | Already required for statement parsing; the board reuses the same key. |
-| `lxsoftware:GitHubReadTokenSecretArn` | Secrets Manager secret holding a **fine-grained, read-only** GitHub token scoped to the private `siutindei` repository. Blank disables the repository snapshot in the board's context pack. |
+| `lxsoftware:GitHubReadTokenSecretArn` | Secrets Manager secret holding a **fine-grained** GitHub token for the `siutindei` repository. The repository is public, so the snapshot and every GitHub *read* tool work without it; the token raises the API rate limit and is **required for the board's GitHub write tools** (issues, comments, labels) and for security alerts. |
 | `lxsoftware:BoardGitHubRepo` | `owner/name` of the repository to read (default `lx-software-ltd/siutindei`). |
+| `lxsoftware:BoardToolsEnabled` | `true` (default) / `false`. Deploy-time kill switch for every board tool call, independent of the in-app settings. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
 
-GitHub token setup (only if you want repository context):
+GitHub token setup (only needed for write tools, security alerts, or a higher
+rate limit):
 
-1. On GitHub create a fine-grained personal access token with **Contents:
-   read**, **Issues: read**, **Actions: read** and **Metadata: read** on the
-   `siutindei` repository only. Set an expiry and rotate it like any other
-   secret.
+1. On GitHub create a fine-grained personal access token scoped to the
+   `siutindei` repository only, with **Contents: read**, **Issues: read and
+   write**, **Actions: read**, **Metadata: read** and, if you want the CISO to
+   see Dependabot / code-scanning findings, **Security events: read**. Set an
+   expiry and rotate it like any other secret.
 2. Store it as a plain-string secret:
 
    ```bash
@@ -277,13 +280,51 @@ statement rather than adding new resource-policy statements.
 
 Cost controls: every OpenRouter call records usage under the board's daily
 usage row, and chats/meetings stop when the configured daily budget
-(default USD 5) is reached. OpenRouter requests are sent with data
+(default USD 15) is reached. OpenRouter requests are sent with data
 collection denied. The context pack shares only aggregated finance totals
 (never individual transactions) and no owner PII.
 
+### Board tools (function calling)
+
+Members can look things up and act while answering, through OpenRouter
+function calling. Design:
+[`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md).
+
+- **Tools shipped:** `github` (search/get issues and PRs, workflow runs,
+  commits, files, security alerts; create issue, comment, set labels) and
+  `board` (read actions/minutes/decisions; add an action, update the member's
+  own actions).
+- **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
+  for the owner), `act` (writes run directly). A **global mode**
+  (`readOnly` / `propose` / `act`) caps the whole matrix, and **Tools
+  enabled** in the same card is the in-app kill switch. Defaults live in
+  `contracts/board-tools.json` (e.g. CTO `act` on GitHub, CFO/COO/CMO `off`);
+  the shipped global mode is `propose`, so nothing writes to GitHub without
+  an approval until the owner raises it.
+- **Approvals** (`Executive Board → Approvals`): each proposed write shows
+  the member, the reason, and the exact arguments; the owner can edit the
+  arguments, approve (the call runs as the owner and the result is logged)
+  or reject with a note the member sees next time.
+- **Audit:** every call is a `BOARD#TOOLCALL#` row (persona, level, actor,
+  arguments, result preview, duration) and is visible under **Settings →
+  Tools & permissions → Show the tool call log**. Meeting transcripts record
+  a `tool` turn before the member's statement; chat replies list their calls.
+- **Limits** (contract): at most 4 tool rounds and 8 calls per reply, 10 s
+  per external call, tool loops capped at 120 s in chat and 60 s per meeting
+  statement, tool results truncated to 6 000 characters, 200 pending
+  approvals; approvals expire after 60 days and call-log rows after 90.
+- **Routes:** `GET/PUT /siu-tin-dei/board/tools`, `GET /siu-tin-dei/board/tools/calls`,
+  `GET /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`.
+  Admin-group JWT only.
+- **Emergency stop:** set `lxsoftware:BoardToolsEnabled=false` and redeploy,
+  or flip **Tools enabled** off in the app. Both leave the matrix intact.
+
 Smoke test after deploy: open the tab, save a company vision/mission, edit one
 member's mandate, send a chat message to the CEO (reply arrives within ~30 s),
-then **Run stand-up** and confirm minutes and action items appear.
+then **Run stand-up** and confirm minutes and action items appear. For tools:
+ask the CTO "what is open on GitHub about bookings?" and check the reply lists
+a `Searched GitHub issues` row; ask the CPO to open an issue and confirm it
+lands in **Approvals** rather than on GitHub.
 
 ## Scripts
 

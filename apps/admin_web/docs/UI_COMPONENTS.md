@@ -37,10 +37,13 @@ The Siu Tin Dei **Executive Board** tab (`ExecutiveBoardTab`) is the reference f
 | `BoardOffcanvas` | Right-hand slide-over (React state + CSS, no Bootstrap JS). Use for chat threads and per-item editors that should not navigate away from the list. |
 | `BoardMarkdown` | Renders LLM output with `react-markdown` + `remark-gfm` inside `.board-markdown`. Never `dangerouslySetInnerHTML`. |
 | `BoardMemberEditor`, `BoardCharterEditor`, `BoardBriefEditor` | Editors keyed on the record they edit (`key={…}`) so local state re-initialises on data change instead of syncing props in effects. Show character counters against the contract limits and a **Use default** link for overridable fields. |
-| `BoardChatOffcanvas` | Optimistic user bubble + "thinking…" placeholder while the async job runs; polling lives in `useBoardChat`. |
-| `BoardMeetingPanel`, `BoardTranscript`, `BoardMinutesView` | Progress bar driven by `meetingPhaseProgress`, minutes/transcript toggle, refetch-while-running in `useBoardMeeting`. |
+| `BoardChatOffcanvas` | Optimistic user bubble + "thinking…" placeholder while the async job runs; polling lives in `useBoardChat`, which also copies the job's in-flight `toolCalls` onto the pending bubble so lookups show live. |
+| `BoardMeetingPanel`, `BoardTranscript`, `BoardMinutesView` | Progress bar driven by `meetingPhaseProgress`, minutes/transcript toggle, refetch-while-running in `useBoardMeeting`. `BoardTranscript` renders `kind: "tool"` turns as a `BoardToolCallList`, not markdown. |
+| `BoardToolCallList` | One compact row per tool call (status icon, tool badge, summary, optional error, **review** link for `pending_approval`). Reused by chat bubbles, transcript tool turns and the audit log. |
+| `BoardToolsCard` | Tools & permissions: kill switch, global mode, the tool × member level matrix (cells show `→ effective` when the global mode caps them), per-tool operation list, and the collapsible call log. Keyed on the saved config like the other editors. |
+| `BoardApprovalsList` | Pending / decided queue. Arguments render as a key/value table; **Edit…** switches to a JSON textarea whose parsed object is sent as `arguments` on approve. A `focusApprovalId` (from a review link) scrolls to the row and forces the decided list open. |
 
-Async work (chat replies, meetings) always goes through a job row + polling hook, never a long HTTP request; keep poll deadlines aligned with `contracts/board-timeouts.json`.
+Async work (chat replies, meetings) always goes through a job row + polling hook, never a long HTTP request; keep poll deadlines aligned with `contracts/board-timeouts.json`. Tool ids, levels and defaults come from `contracts/board-tools.json`; `effectiveToolLevel()` in `boardModel.ts` mirrors the Lambda's capping rule so the matrix can preview the effect of the global mode before saving.
 
 ## Dependencies
 
