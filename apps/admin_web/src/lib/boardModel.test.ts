@@ -3,10 +3,12 @@ import { BOARD_PERSONA_DEFAULTS } from "./contracts/generated";
 import {
   formatUsageCost,
   groupActionsByPriority,
+  MAIL_ALLOW_LIST_ENTRY_RE,
   meetingPhaseProgress,
   memberInitials,
   memberLabel,
   mergeMemberProfile,
+  parseAllowListText,
   type BoardAction,
 } from "./boardModel";
 
@@ -90,6 +92,20 @@ describe("meetingPhaseProgress", () => {
     const progress = meetingPhaseProgress({ status: "succeeded", phase: "done", phases: ["a", "b"] });
     expect(progress.percent).toBe(100);
     expect(progress.label).toBe("Done");
+  });
+});
+
+describe("allow-list parsing", () => {
+  it("accepts emails, domains, and E.164 phones", () => {
+    expect(MAIL_ALLOW_LIST_ENTRY_RE.test("coach@swimhk.example")).toBe(true);
+    expect(MAIL_ALLOW_LIST_ENTRY_RE.test("@vendor.example")).toBe(true);
+    expect(MAIL_ALLOW_LIST_ENTRY_RE.test("+85291234567")).toBe(true);
+    expect(MAIL_ALLOW_LIST_ENTRY_RE.test("85291234567")).toBe(true);
+    expect(MAIL_ALLOW_LIST_ENTRY_RE.test("not-an-address")).toBe(false);
+    expect(parseAllowListText("Coach@SwimHK.example\n+852 9123 4567")).toEqual([
+      "coach@swimhk.example",
+      "+85291234567",
+    ]);
   });
 });
 

@@ -44,12 +44,28 @@ export type BoardMemberOverride = {
 /** `{ toolId: { personaId: level } }` */
 export type BoardToolMatrix = Readonly<Record<string, Readonly<Record<string, BoardToolLevel>>>>;
 
+export type BoardSpendCaps = {
+  readonly metaAdsDailyUsd: number;
+  readonly metaAdsMonthlyUsd: number;
+};
+
+export type BoardAdsSpend = {
+  readonly recordedDailyUsd: number;
+  readonly recordedMonthlyUsd: number;
+  readonly graphMonthlyUsd: number;
+  readonly dailyUsd: number;
+  readonly monthlyUsd: number;
+  readonly dailyCapUsd: number;
+  readonly monthlyCapUsd: number;
+};
+
 export type BoardToolsConfig = {
   readonly enabled: boolean;
   readonly globalMode: BoardToolGlobalMode;
   readonly matrix: BoardToolMatrix;
-  /** Addresses (`name@host.tld`) or domains (`@host.tld`) the board may email at `act` level. */
+  /** Addresses (`name@host.tld`), domains (`@host.tld`), or E.164 phones the board may message at `act`. */
   readonly allowList: readonly string[];
+  readonly spendCaps: BoardSpendCaps;
 };
 
 export type BoardSettings = {
@@ -93,6 +109,7 @@ export type BoardToolsPayload = {
   readonly dataApiConfigured?: boolean;
   readonly metaConfigured?: boolean;
   readonly storesConfigured?: boolean;
+  readonly adsSpend?: BoardAdsSpend;
 };
 
 export type BoardToolCallStatus = "ok" | "error" | "pending_approval";
@@ -707,8 +724,9 @@ export function formatMailBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Full address or `@domain` wildcard, mirroring the Lambda's allow-list check. */
-export const MAIL_ALLOW_LIST_ENTRY_RE = /^(?:[a-z0-9._%+-]+)?@[a-z0-9.-]+\.[a-z]{2,}$/;
+/** Full address, `@domain` wildcard, or E.164 / 8–15 digit phone. */
+export const MAIL_ALLOW_LIST_ENTRY_RE =
+  /^(?:(?:[a-z0-9._%+-]+)?@[a-z0-9.-]+\.[a-z]{2,}|\+?\d{8,15})$/i;
 
 /** One entry per line or comma; lower-cased, de-duplicated, blanks dropped. */
 export function parseAllowListText(text: string): string[] {

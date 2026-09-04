@@ -12,7 +12,7 @@ import { BOARD_QUERY_KEY } from "./useBoard";
 export const BOARD_TOOLS_KEY = [...BOARD_QUERY_KEY, "tools"] as const;
 export const BOARD_TOOL_CALLS_KEY = [...BOARD_QUERY_KEY, "toolCalls"] as const;
 
-export type ToolsConfigPatch = Partial<Pick<BoardToolsConfig, "enabled" | "globalMode">> & {
+export type ToolsConfigPatch = Partial<Pick<BoardToolsConfig, "enabled" | "globalMode" | "spendCaps">> & {
   readonly matrix?: BoardToolMatrix;
   readonly allowList?: readonly string[];
 };

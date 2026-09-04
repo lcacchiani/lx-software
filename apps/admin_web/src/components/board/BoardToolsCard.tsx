@@ -3,6 +3,7 @@ import { AdminEditorSection, DateTimeDisplay } from "../ui";
 import { BoardToolCallList } from "./BoardToolCallList";
 import {
   effectiveToolLevel,
+  formatUsageCost,
   levelsUpTo,
   MAIL_ALLOW_LIST_ENTRY_RE,
   memberLabel,
@@ -12,13 +13,19 @@ import {
   TOOL_LEVEL_HELP,
   TOOL_LEVEL_LABELS,
   type BoardMember,
+  type BoardSpendCaps,
   type BoardToolCallLogEntry,
   type BoardToolGlobalMode,
   type BoardToolLevel,
   type BoardToolsConfig,
   type BoardToolsPayload,
 } from "../../lib/boardModel";
-import { BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES, BOARD_TOOL_GLOBAL_MODES } from "../../lib/contracts/generated";
+import {
+  BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES,
+  BOARD_META_ADS_DAILY_CAP_USD,
+  BOARD_META_ADS_MONTHLY_CAP_USD,
+  BOARD_TOOL_GLOBAL_MODES,
+} from "../../lib/contracts/generated";
 import type { ToolsConfigPatch } from "../../hooks/useBoardTools";
 
 export type BoardToolsCardProps = {
@@ -56,8 +63,16 @@ export function BoardToolsCard({
     dataApiConfigured,
     metaConfigured,
     storesConfigured,
+    adsSpend,
   } = payload;
-  const [draft, setDraft] = useState<BoardToolsConfig>(config);
+  const [draft, setDraft] = useState<BoardToolsConfig>(() => ({
+    ...config,
+    spendCaps: {
+      metaAdsDailyUsd: config.spendCaps?.metaAdsDailyUsd ?? defaults.spendCaps?.metaAdsDailyUsd ?? BOARD_META_ADS_DAILY_CAP_USD,
+      metaAdsMonthlyUsd:
+        config.spendCaps?.metaAdsMonthlyUsd ?? defaults.spendCaps?.metaAdsMonthlyUsd ?? BOARD_META_ADS_MONTHLY_CAP_USD,
+    },
+  }));
   const [allowListText, setAllowListText] = useState(() => config.allowList.join("\n"));
   const draftAllowList = parseAllowListText(allowListText);
   const isDirty =
@@ -74,6 +89,16 @@ export function BoardToolsCard({
       ...d,
       matrix: { ...d.matrix, [toolId]: Object.fromEntries(members.map((m) => [m.id, level])) },
     }));
+
+  const setCap = (key: keyof BoardSpendCaps, raw: string) => {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    const ceiling = key === "metaAdsDailyUsd" ? 500 : 2000;
+    setDraft((d) => ({
+      ...d,
+      spendCaps: { ...d.spendCaps, [key]: Math.min(Math.max(0, parsed), ceiling) },
+    }));
+  };
 
   return (
     <AdminEditorSection
@@ -233,6 +258,9 @@ export function BoardToolsCard({
                         <div className="small text-muted mt-1">
                           Webhook at <code>/webhooks/meta</code>. WhatsApp{" "}
                           <strong>act</strong> only inside the 24-hour window, to the allow-list.
+                          Ads <strong>act</strong> only while daily and monthly caps have room;
+                          otherwise <code>create_ad_set</code> / <code>boost_post</code> go to
+                          Approvals.
                         </div>
                       ) : (
                         <div className="small text-warning mt-1">
@@ -316,29 +344,78 @@ export function BoardToolsCard({
       <div className="row g-3 mt-1">
         <div className="col-12 col-lg-6">
           <label className="form-label small fw-semibold mb-1" htmlFor="board-mail-allow-list">
-            Email allow-list <span className="text-muted fw-normal">({draftAllowList.length}/{BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES})</span>
+            Recipient allow-list <span className="text-muted fw-normal">({draftAllowList.length}/{BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES})</span>
           </label>
           <textarea
             id="board-mail-allow-list"
             className={`form-control form-control-sm font-monospace ${invalidAllowEntries.length > 0 || tooManyAllowEntries ? "is-invalid" : ""}`}
             rows={4}
             value={allowListText}
-            placeholder={"coach@swimhk.example\n@trusted-vendor.example"}
+            placeholder={"coach@swimhk.example\n@trusted-vendor.example\n+85291234567"}
             spellCheck={false}
             onChange={(ev) => setAllowListText(ev.target.value)}
           />
           {invalidAllowEntries.length > 0 ? (
             <div className="invalid-feedback d-block">
-              Not an address or @domain: {invalidAllowEntries.slice(0, 3).join(", ")}
+              Not an address, @domain, or phone: {invalidAllowEntries.slice(0, 3).join(", ")}
             </div>
           ) : tooManyAllowEntries ? (
             <div className="invalid-feedback d-block">At most {BOARD_MAIL_ALLOW_LIST_MAX_ENTRIES} entries.</div>
           ) : null}
           <div className="form-text">
-            One per line: a full address or <code>@domain</code>. Members with <strong>Act</strong> on Email send
-            to these recipients directly (logged); anyone else — every parent, by design — always comes to you first.
+            One per line: a full address, <code>@domain</code>, or an E.164 / 8–15 digit phone.
+            Members with <strong>Act</strong> on Email or WhatsApp send to these recipients directly
+            (logged); anyone else — every parent, by design — always comes to you first.
             Your own <code>@{mailDomain}</code> mailboxes are always allowed.
           </div>
+        </div>
+        <div className="col-12 col-lg-6">
+          <div className="small fw-semibold mb-1">Meta ads spend caps</div>
+          <div className="row g-2">
+            <div className="col-6">
+              <label className="form-label small mb-1" htmlFor="board-ads-daily-cap">
+                Daily (USD)
+              </label>
+              <input
+                id="board-ads-daily-cap"
+                type="number"
+                className="form-control form-control-sm"
+                min={0}
+                max={500}
+                step={1}
+                value={draft.spendCaps.metaAdsDailyUsd}
+                onChange={(ev) => setCap("metaAdsDailyUsd", ev.target.value)}
+              />
+            </div>
+            <div className="col-6">
+              <label className="form-label small mb-1" htmlFor="board-ads-monthly-cap">
+                Monthly (USD)
+              </label>
+              <input
+                id="board-ads-monthly-cap"
+                type="number"
+                className="form-control form-control-sm"
+                min={0}
+                max={2000}
+                step={1}
+                value={draft.spendCaps.metaAdsMonthlyUsd}
+                onChange={(ev) => setCap("metaAdsMonthlyUsd", ev.target.value)}
+              />
+            </div>
+          </div>
+          <div className="form-text">
+            Hitting either cap turns <code>create_ad_set</code> and <code>boost_post</code> into
+            Approvals. Clamped to USD 500 / day and USD 2,000 / month.
+          </div>
+          {adsSpend ? (
+            <div className="small mt-2">
+              Today {formatUsageCost(adsSpend.dailyUsd)} of {formatUsageCost(adsSpend.dailyCapUsd)}.
+              This month {formatUsageCost(adsSpend.monthlyUsd)} of {formatUsageCost(adsSpend.monthlyCapUsd)}
+              {adsSpend.graphMonthlyUsd > 0
+                ? ` (Meta reports ${formatUsageCost(adsSpend.graphMonthlyUsd)}).`
+                : "."}
+            </div>
+          ) : null}
         </div>
       </div>
 
