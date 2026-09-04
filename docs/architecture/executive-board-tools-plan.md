@@ -125,6 +125,15 @@ denial from the existing client stays on. Message bodies are stored with a
   25 s for GitHub search / file / security alerts and Meta insights,
   comments, ad spend and WhatsApp templates). Slow or failing tools return
   a structured error the model can reason about.
+- **Wall-clock budget**: a persona turn is bounded by `chatToolLoopMaxSeconds`
+  (120 s) or `meetingToolLoopMaxSeconds` (60 s). Every model call inside the
+  loop is capped at the smaller of the OpenRouter timeout and the seconds
+  left; ops late in the turn are clamped the same way; calls requested after
+  the deadline are answered with a structured "time budget exhausted" error;
+  the final answer call gets at least 45 s. A chat turn therefore ends within
+  ~165 s (below `chatPollDeadlineMs` 270 s and the 300 s Lambda) and a
+  meeting member within ~105 s. The daily budget is re-checked before every
+  tool round, not only before the turn.
 
 ## 4. Connector inventory
 

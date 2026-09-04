@@ -8,6 +8,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+import board_budget
 import board_deadline
 import board_invoice_pdf
 import board_mail
@@ -449,6 +450,289 @@ class TestDraftInvoiceStoresPdf(ToolsTestCase):
         self.assertTrue(str(out.get("pdfKey") or "").startswith("board/invoices/"))
         put.assert_called_once()
         self.assertEqual(db.invoices[0]["pdf_key"], out["pdfKey"])
+
+
+# ---------------------------------------------------------------------------
+# WP1: guardrail core
+# ---------------------------------------------------------------------------
+
+ALWAYS_PROPOSE_OPS = (
+    "github_create_issue",
+    "meta_propose_post",
+    "meta_propose_story",
+    "finance_draft_invoice",
+    "finance_propose_price_change",
+    "finance_record_manual_payment",
+    "mail_report_phishing",
+    "security_open_remediation",
+    "aws_propose_budget_alert",
+)
+
+
+class TestAlwaysPropose(ToolsTestCase):
+    def _act_settings(self, tool_id: str, persona: str) -> dict:
+        settings = board_store.default_settings()
+        settings["tools"]["globalMode"] = "act"
+        settings["tools"]["matrix"].setdefault(tool_id, {})[persona] = "act"
+        return settings
+
+    def test_plan_listed_writes_stay_in_approvals_at_act(self) -> None:
+        for name in ALWAYS_PROPOSE_OPS:
+            op = REGISTRY[name]
+            with self.subTest(op=name):
+                self.assertTrue(op.always_propose, f"{name} must be always_propose per plan §5")
+                settings = self._act_settings(op.tool_id, "ceo")
+                ctx = ToolContext(table=self.table, settings=settings, persona_id="ceo", display_name="CEO")
+                args = {k: _sample_value(v) for k, v in op.parameters["properties"].items()}
+                with patch.object(board_tools, "_invoke_op") as run:
+                    out = execute_call(ctx, op, args)
+                self.assertEqual(out.status, "pending_approval", out.result)
+                run.assert_not_called()
+
+    def test_act_guarded_writes_still_execute_at_act(self) -> None:
+        # github_comment_issue has no always_propose flag: it must run at act.
+        op = REGISTRY["github_comment_issue"]
+        self.assertFalse(op.always_propose)
+        ctx = ToolContext(table=self.table, settings=self._act_settings("github", "cto"), persona_id="cto", display_name="CTO")
+        with patch.object(board_tools, "_invoke_op", return_value={"ok": True}) as run:
+            out = execute_call(ctx, op, {"number": 1, "body": "hi", "reason": "r"})
+        self.assertEqual(out.status, "ok")
+        run.assert_called_once()
+
+
+def _sample_value(spec: dict) -> object:
+    kind = spec.get("type")
+    if kind == "string":
+        return spec["enum"][0] if spec.get("enum") else "x"
+    if kind == "integer":
+        return int(spec.get("minimum", 1))
+    if kind == "number":
+        return 10
+    if kind == "boolean":
+        return True
+    if kind == "array":
+        return []
+    return {}
+
+
+class TestArgumentValidation(ToolsTestCase):
+    def _ctx(self, level: str = "act") -> ToolContext:
+        settings = board_store.default_settings()
+        settings["tools"]["globalMode"] = level
+        settings["tools"]["matrix"]["github"]["cto"] = level
+        return ToolContext(table=self.table, settings=settings, persona_id="cto", display_name="CTO")
+
+    def test_unknown_keys_are_rejected_without_a_proposal(self) -> None:
+        ctx = self._ctx("propose")
+        out = execute_call(ctx, REGISTRY["github_create_issue"], {"title": "t", "body": "b", "reason": "r", "pageId": "123"})
+        self.assertEqual(out.status, "error")
+        self.assertIn("unknown argument 'pageId'", out.result["error"])
+        self.assertEqual([a for a in board_store.list_approvals(self.table)], [])
+        row = board_store.list_tool_calls(self.table, limit=1)[0]
+        self.assertEqual(row["status"], "error")
+
+    def test_type_enum_length_and_range_checks(self) -> None:
+        ctx = self._ctx("act")
+        op = REGISTRY["board_add_action"]
+        cases = [
+            ({"title": "t", "detail": "d", "priority": "urgent", "reason": "r"}, "must be one of"),
+            ({"title": "t" * 500, "detail": "d", "priority": "now", "reason": "r"}, "longer than"),
+            ({"title": "t", "detail": "d", "priority": "now", "dueInDays": 0, "reason": "r"}, "at least"),
+            ({"title": "t", "detail": "d", "priority": "now", "dueInDays": "soon", "reason": "r"}, "must be a number"),
+            ({"title": ["t"], "detail": "d", "priority": "now", "reason": "r"}, "must be a string"),
+            ({"detail": "d", "priority": "now", "reason": "r"}, "'title' is required"),
+        ]
+        for args, expected in cases:
+            with self.subTest(args=args):
+                out = execute_call(ctx, op, args)
+                self.assertEqual(out.status, "error", out.result)
+                self.assertIn(expected, out.result["error"])
+
+    def test_numeric_strings_and_decimals_are_coerced(self) -> None:
+        from decimal import Decimal
+
+        op = REGISTRY["board_add_action"]
+        cleaned = board_tools.validate_arguments(
+            op, {"title": "t", "detail": "d", "priority": "now", "dueInDays": "7", "reason": "r", "metric": None}
+        )
+        self.assertEqual(cleaned["dueInDays"], 7)
+        self.assertNotIn("metric", cleaned)
+        cleaned = board_tools.validate_arguments(op, {"title": "t", "detail": "d", "priority": "now", "dueInDays": Decimal("7"), "reason": "r"})
+        self.assertEqual(cleaned["dueInDays"], 7)
+
+    def test_oversized_arguments_are_an_error_outcome(self) -> None:
+        ctx = self._ctx("act")
+        out = execute_call(ctx, REGISTRY["github_create_issue"], {"title": "t", "body": "b" * 9000, "reason": "r"})
+        self.assertEqual(out.status, "error")
+        self.assertIn("too large", out.result["error"])
+        self.assertEqual(board_store.list_approvals(self.table), [])
+
+    def test_owner_override_is_validated_and_stays_pending(self) -> None:
+        approval = self.propose_issue()
+        approval_id = approval["approvalId"]
+        status, body = self.call(
+            f"/siu-tin-dei/board/approvals/{approval_id}/approve", "POST", {"arguments": {"title": "", "labels": "billing"}}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("required", body["message"])
+        _, listing = self.call("/siu-tin-dei/board/approvals", query="status=pending")
+        self.assertEqual([a["approvalId"] for a in listing["approvals"]], [approval_id])
+        status, body = self.call(f"/siu-tin-dei/board/approvals/{approval_id}/approve", "POST", {"arguments": {"pageId": "1"}})
+        self.assertEqual(status, 400)
+        self.assertIn("unknown argument", body["message"])
+
+
+class TestDecideApprovalGates(ToolsTestCase):
+    def test_disabled_or_read_only_refuses_and_keeps_pending(self) -> None:
+        approval = self.propose_issue()
+        approval_id = approval["approvalId"]
+        self.call("/siu-tin-dei/board/tools", "PUT", {"enabled": False})
+        status, body = self.call(f"/siu-tin-dei/board/approvals/{approval_id}/approve", "POST", {})
+        self.assertEqual(status, 409)
+        self.assertIn("switched off", body["message"])
+        self.call("/siu-tin-dei/board/tools", "PUT", {"enabled": True, "globalMode": "readOnly"})
+        status, body = self.call(f"/siu-tin-dei/board/approvals/{approval_id}/approve", "POST", {})
+        self.assertEqual(status, 409)
+        self.assertIn("read-only", body["message"])
+        self.assertEqual(board_store.get_approval(self.table, approval_id)["status"], "pending")
+        # Rejecting is always allowed: nothing executes.
+        status, body = self.call(f"/siu-tin-dei/board/approvals/{approval_id}/reject", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["approval"]["status"], "rejected")
+
+    def test_crash_during_execution_marks_failed_not_approved(self) -> None:
+        approval = self.propose_issue()
+        with patch.object(board_tools, "execute_call", side_effect=RuntimeError("boom")):
+            status, body = self.call(f"/siu-tin-dei/board/approvals/{approval['approvalId']}/approve", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["approval"]["status"], "failed")
+        self.assertIn("boom", body["approval"]["errorMessage"])
+
+
+class TestAuditMasking(ToolsTestCase):
+    def test_tool_call_rows_never_store_raw_contacts(self) -> None:
+        settings = board_store.default_settings()
+        settings["tools"]["globalMode"] = "act"
+        settings["tools"]["matrix"]["mail"]["ceo"] = "act"
+        ctx = ToolContext(table=self.table, settings=settings, persona_id="ceo", display_name="CEO")
+        args = {
+            "fromMailbox": "hello",
+            "to": ["parent@example.com"],
+            "subject": "Hi",
+            "body": "Call me on +852 9123 4567 or parent@example.com",
+            "reason": "r",
+        }
+        with patch.object(board_tools, "_invoke_op", return_value={"ok": True}):
+            out = execute_call(ctx, REGISTRY["mail_send"], args)
+        # Not allow-listed → downgraded to a proposal; the audit row is written either way.
+        self.assertEqual(out.status, "pending_approval")
+        row = board_store.list_tool_calls(self.table, limit=1)[0]
+        text = json.dumps(row)
+        self.assertNotIn("parent@example.com", text)
+        self.assertNotIn("9123", text)
+        self.assertRegex(row["arguments"]["to"][0], r"^contact#\d+$")
+        # The owner can still resolve the alias from the shared pseudonymizer map.
+        pseud = board_mail.pseudonymizer(self.table)
+        self.assertEqual(pseud.resolve(row["arguments"]["to"][0]), "parent@example.com")
+
+
+# ---------------------------------------------------------------------------
+# WP4: runtime limits
+# ---------------------------------------------------------------------------
+
+class TestLoopRuntimeLimits(ToolsTestCase):
+    def test_budget_is_rechecked_between_rounds(self) -> None:
+        # Two tool rounds scripted; the cap trips after the first paid call.
+        scripted = self.use_script(
+            [
+                [("github_search_issues", {"query": "a"})],
+                [("github_search_issues", {"query": "b"})],
+            ],
+            "Answering with what I have.",
+        )
+        calls = {"n": 0}
+        original = board_budget.check_budget
+
+        def tripping(table, settings):
+            calls["n"] += 1
+            if calls["n"] >= 3:  # 1st: enqueue route; 2nd: before the turn (board_chat); 3rd: before round 2
+                raise board_budget.BudgetExceeded("Daily board budget of USD 1.00 is exhausted.")
+            return original(table, settings)
+
+        with patch.object(board_budget, "check_budget", tripping):
+            job = self.chat("cto")
+        self.assertEqual(job["status"], "succeeded")
+        self.assertEqual(job["message"]["text"], "Answering with what I have.")
+        self.assertEqual(len(job["message"]["toolCalls"]), 1)
+        # Round 1 (tool), then the final answer with tool_choice=none — no round 2.
+        self.assertEqual([r.get("tool_choice") for r in scripted.requests], ["auto", "none"])
+        self.assertIn("No more tool calls are possible", scripted.requests[-1]["messages"][-1]["content"])
+
+    def test_model_call_timeouts_shrink_with_the_loop_budget(self) -> None:
+        seen: list[float] = []
+        inner = self.use_script([[("github_search_issues", {"query": "a"})]], "ok")
+
+        def spy(req, timeout=None):
+            seen.append(timeout)
+            return inner(req, timeout)
+
+        self.router.openrouter = spy
+        clock = {"t": 1000.0}
+
+        def fake_monotonic():
+            clock["t"] += 50.0  # every look at the clock costs 50 s
+            return clock["t"]
+
+        with patch("board_tools.time.monotonic", fake_monotonic):
+            job = self.chat("cto")
+        self.assertEqual(job["status"], "succeeded")
+        self.assertEqual(len(seen), 2)
+        self.assertLess(seen[0], 90, "round call must be clamped to the remaining loop budget")
+        self.assertGreaterEqual(seen[0], board_tools.MODEL_CALL_TIMEOUT_FLOOR_SECONDS)
+        self.assertEqual(seen[1], board_tools.FINAL_CALL_TIMEOUT_FLOOR_SECONDS)
+
+    def test_op_timeout_is_clamped_to_the_turn_deadline(self) -> None:
+        seen: list[int] = []
+        op = _slow_op(lambda _c, _a: {"ok": True}, timeout_seconds=25)
+        ctx = ToolContext(table=self.table, settings=board_store.default_settings(), persona_id="ceo", display_name="CEO")
+        ctx.deadline = time.monotonic() + 3
+
+        real_pool = board_tools.ThreadPoolExecutor
+
+        class SpyPool(real_pool):
+            def submit(self, fn, *args, **kwargs):
+                future = super().submit(fn, *args, **kwargs)
+                original = future.result
+
+                def result(timeout=None):
+                    seen.append(timeout)
+                    return original(timeout=timeout)
+
+                future.result = result
+                return future
+
+        with patch.object(board_tools, "ThreadPoolExecutor", SpyPool):
+            out = execute_call(ctx, op, {})
+        self.assertEqual(out.status, "ok")
+        self.assertEqual(seen, [3])
+
+    def test_calls_after_the_deadline_are_refused_within_a_round(self) -> None:
+        scripted = self.use_script(
+            [[("github_search_issues", {"query": "a"}), ("github_search_issues", {"query": "b"})]], "ok"
+        )
+        clock = {"t": 1000.0}
+
+        def fake_monotonic():
+            clock["t"] += 40.0  # the second call of the round lands past the 120 s deadline
+            return clock["t"]
+
+        with patch("board_tools.time.monotonic", fake_monotonic):
+            job = self.chat("cto")
+        self.assertEqual(job["status"], "succeeded")
+        tool_msgs = [m for m in scripted.requests[-1]["messages"] if m["role"] == "tool"]
+        self.assertEqual(len(tool_msgs), 2)
+        self.assertIn("Time budget", tool_msgs[1]["content"])
+        self.assertEqual(len(job["message"]["toolCalls"]), 1)
 
 
 if __name__ == "__main__":

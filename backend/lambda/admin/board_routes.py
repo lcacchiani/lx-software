@@ -335,6 +335,8 @@ def _approval_decide(event: dict[str, Any], approval_id: str, *, approve: bool, 
         )
     except LookupError as exc:
         return _json_response(404, {"message": str(exc)})
+    except board_tools.InvalidArgumentsError as exc:
+        return _json_response(400, {"message": str(exc)})
     except ValueError as exc:
         return _json_response(409, {"message": str(exc)})
     _audit(user_sub, "BOARD_APPROVAL_APPROVE" if approve else "BOARD_APPROVAL_REJECT", approval_id, event)

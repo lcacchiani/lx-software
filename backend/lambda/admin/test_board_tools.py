@@ -143,6 +143,28 @@ class ToolsTestCase(BoardTestCase):
         self.assertEqual(status, 200)
         return job
 
+    def propose_issue(self) -> dict[str, Any]:
+        self.use_script(
+            [[("github_create_issue", {"title": "Add FPS reference to invoices", "body": "Details", "labels": ["billing"], "reason": "Needed for receivables."})]],
+            "I have proposed a new issue; it awaits your approval.",
+        )
+        job = self.chat("cto", "Please open an issue for FPS references")
+        call = job["message"]["toolCalls"][0]
+        self.assertEqual(call["status"], "pending_approval")
+        self.assertTrue(call["approvalId"])
+        self.assertEqual([r[0] for r in self.github.requests], [], "nothing must reach GitHub at propose level")
+        status, body = self.call("/siu-tin-dei/board/approvals", query="status=pending")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["approvals"]), 1)
+        approval = body["approvals"][0]
+        self.assertEqual(approval["op"], "github_create_issue")
+        self.assertEqual(approval["personaId"], "cto")
+        self.assertEqual(approval["reason"], "Needed for receivables.")
+        self.assertEqual(approval["arguments"]["labels"], ["billing"])
+        _, overview = self.call("/siu-tin-dei/board")
+        self.assertEqual(overview["pendingApprovalCount"], 1)
+        return approval
+
 
 # ---------------------------------------------------------------------------
 # Levels and registry
@@ -385,28 +407,6 @@ class TestChatToolLoop(ToolsTestCase):
         tool_msgs = [m for m in scripted.requests[1]["messages"] if m["role"] == "tool"]
         self.assertEqual(len(tool_msgs), 11)
         self.assertIn("budget", tool_msgs[-1]["content"].lower())
-
-    def propose_issue(self) -> dict[str, Any]:
-        self.use_script(
-            [[("github_create_issue", {"title": "Add FPS reference to invoices", "body": "Details", "labels": ["billing"], "reason": "Needed for receivables."})]],
-            "I have proposed a new issue; it awaits your approval.",
-        )
-        job = self.chat("cto", "Please open an issue for FPS references")
-        call = job["message"]["toolCalls"][0]
-        self.assertEqual(call["status"], "pending_approval")
-        self.assertTrue(call["approvalId"])
-        self.assertEqual([r[0] for r in self.github.requests], [], "nothing must reach GitHub at propose level")
-        status, body = self.call("/siu-tin-dei/board/approvals", query="status=pending")
-        self.assertEqual(status, 200)
-        self.assertEqual(len(body["approvals"]), 1)
-        approval = body["approvals"][0]
-        self.assertEqual(approval["op"], "github_create_issue")
-        self.assertEqual(approval["personaId"], "cto")
-        self.assertEqual(approval["reason"], "Needed for receivables.")
-        self.assertEqual(approval["arguments"]["labels"], ["billing"])
-        _, overview = self.call("/siu-tin-dei/board")
-        self.assertEqual(overview["pendingApprovalCount"], 1)
-        return approval
 
     def test_write_at_propose_level_creates_approval(self) -> None:
         self.propose_issue()

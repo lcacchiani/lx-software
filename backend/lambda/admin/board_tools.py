@@ -17,12 +17,14 @@ Design (see docs/architecture/executive-board-tools-plan.md):
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Callable
 
 import board_actions
@@ -67,10 +69,25 @@ GLOBAL_MODE_CAP: dict[str, str] = {"readOnly": "read", "propose": "propose", "ac
 TOOL_LABELS: dict[str, str] = {str(t["id"]): str(t["label"]) for t in BOARD_TOOL_DEFINITIONS}
 MAX_ARGUMENT_CHARS = 8000
 MAX_RESULT_PREVIEW = 400
+# Wall-clock budget of one persona turn (chat: chatToolLoopMaxSeconds, meeting:
+# meetingToolLoopMaxSeconds) is shared by the model calls and the tool ops:
+#   round N model call  ≤ min(openrouter timeout, seconds left)
+#   each op             ≤ min(op timeout, seconds left), never below the floor
+#   final answer call   ≤ min(openrouter timeout, seconds left), at least the final floor
+# so a turn ends within about max(max_seconds + final floor, openrouter timeout):
+# chat 120 + 45 = 165 s (< chatPollDeadlineMs 270 s, < the 300 s Lambda),
+# meeting 60 + 45 = 105 s per member (members run in parallel per phase).
+MODEL_CALL_TIMEOUT_FLOOR_SECONDS = 15
+FINAL_CALL_TIMEOUT_FLOOR_SECONDS = 45
+OP_TIMEOUT_FLOOR_SECONDS = 2
 
 
 class ToolPermissionError(RuntimeError):
     """The member is not allowed to run this operation at this level."""
+
+
+class InvalidArgumentsError(ValueError):
+    """Arguments (from the model or an owner override) do not match the op schema."""
 
 
 @dataclass
@@ -87,6 +104,14 @@ class ToolContext:
     job_id: str = ""
     actor: str = "persona"
     owner_sub: str = ""
+    # ``time.monotonic()`` value after which no new op should start and running
+    # ops are cut short; 0 means "no loop deadline" (owner approvals, jobs).
+    deadline: float = 0.0
+
+    def seconds_left(self) -> float | None:
+        if not self.deadline:
+            return None
+        return max(0.0, self.deadline - time.monotonic())
 
     def public(self) -> dict[str, Any]:
         out: dict[str, Any] = {"kind": self.kind}
@@ -572,6 +597,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="github_create_issue",
             tool_id="github",
             kind="write",
+            always_propose=True,
             description="Open a new GitHub issue. Search first; never duplicate an open issue.",
             parameters=_obj(
                 {
@@ -916,6 +942,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="aws_propose_budget_alert",
             tool_id="aws",
             kind="write",
+            always_propose=True,
             description="Propose that the founder create an AWS Budget alert. Does not change AWS; approval adds an action item.",
             parameters=_obj(
                 {
@@ -959,6 +986,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="security_open_remediation",
             tool_id="security",
             kind="write",
+            always_propose=True,
             description="Open a GitHub issue describing a finding and the fix. Always a proposal until the founder approves.",
             parameters=_obj(
                 {
@@ -1097,6 +1125,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="meta_propose_post",
             tool_id="meta",
             kind="write",
+            always_propose=True,
             description="Draft a Facebook Page post. Publishes only after the founder approves.",
             parameters=_obj(
                 {
@@ -1113,6 +1142,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="meta_propose_story",
             tool_id="meta",
             kind="write",
+            always_propose=True,
             description="Draft an Instagram story from an image URL.",
             parameters=_obj(
                 {
@@ -1280,6 +1310,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_draft_invoice",
             tool_id="finance",
             kind="write",
+            always_propose=True,
             description="Create a draft invoice with a unique FPS reference for a subscription.",
             parameters=_obj(
                 {
@@ -1348,6 +1379,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_propose_price_change",
             tool_id="finance",
             kind="write",
+            always_propose=True,
             description="Create a listing_plans row (pricing proposal). First approved plan seeds the price list.",
             parameters=_obj(
                 {
@@ -1365,6 +1397,7 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_record_manual_payment",
             tool_id="finance",
             kind="write",
+            always_propose=True,
             description="Record cash or cheque handed over in person (source=manual).",
             parameters=_obj(
                 {
@@ -1585,12 +1618,159 @@ def _clean_arguments(args: Any) -> dict[str, Any]:
         return {}
     text = json.dumps(args, default=str)
     if len(text) > MAX_ARGUMENT_CHARS:
-        return {"error": "arguments too large"}
+        raise InvalidArgumentsError(f"arguments too large (over {MAX_ARGUMENT_CHARS} characters)")
     return args
+
+
+def _check_value(key: str, value: Any, spec: dict[str, Any]) -> tuple[Any, str]:
+    """Return ``(normalised_value, problem)`` for one schema property."""
+    kind = spec.get("type")
+    if kind == "string":
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+            value = str(value)
+        if not isinstance(value, str):
+            return None, f"'{key}' must be a string"
+        max_len = spec.get("maxLength")
+        if max_len and len(value) > int(max_len):
+            return None, f"'{key}' is longer than {max_len} characters"
+        enum = spec.get("enum")
+        if enum and value not in enum:
+            return None, f"'{key}' must be one of: {', '.join(str(e) for e in enum)}"
+        return value, ""
+    if kind in ("integer", "number"):
+        if isinstance(value, bool):
+            return None, f"'{key}' must be a number"
+        if isinstance(value, str):
+            try:
+                value = int(value.strip()) if kind == "integer" else float(value.strip())
+            except ValueError:
+                return None, f"'{key}' must be a number"
+        if isinstance(value, Decimal):
+            value = int(value) if value == value.to_integral_value() else float(value)
+        if not isinstance(value, (int, float)):
+            return None, f"'{key}' must be a number"
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None, f"'{key}' must be a finite number"
+        if kind == "integer" and isinstance(value, float):
+            if not value.is_integer():
+                return None, f"'{key}' must be a whole number"
+            value = int(value)
+        minimum = spec.get("minimum")
+        if minimum is not None and value < minimum:
+            return None, f"'{key}' must be at least {minimum}"
+        maximum = spec.get("maximum")
+        if maximum is not None and value > maximum:
+            return None, f"'{key}' must be at most {maximum}"
+        return value, ""
+    if kind == "boolean":
+        if isinstance(value, bool):
+            return value, ""
+        if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+            return value.strip().lower() == "true", ""
+        return None, f"'{key}' must be true or false"
+    if kind == "array":
+        if not isinstance(value, list):
+            return None, f"'{key}' must be a list"
+        max_items = spec.get("maxItems")
+        if max_items and len(value) > int(max_items):
+            return None, f"'{key}' has more than {max_items} items"
+        item_spec = spec.get("items") if isinstance(spec.get("items"), dict) else {}
+        cleaned: list[Any] = []
+        for index, item in enumerate(value):
+            if item_spec.get("type"):
+                item, problem = _check_value(f"{key}[{index}]", item, item_spec)
+                if problem:
+                    return None, problem
+            cleaned.append(item)
+        return cleaned, ""
+    if kind == "object":
+        if not isinstance(value, dict):
+            return None, f"'{key}' must be an object"
+        nested, problems = _validate_against(value, spec, prefix=f"{key}.")
+        return nested, problems[0] if problems else ""
+    return value, ""
+
+
+def _validate_against(args: dict[str, Any], schema: dict[str, Any], *, prefix: str = "") -> tuple[dict[str, Any], list[str]]:
+    props: dict[str, Any] = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    problems: list[str] = []
+    out: dict[str, Any] = {}
+    for key in schema.get("required") or []:
+        if args.get(key) in (None, "", [], {}):
+            problems.append(f"'{prefix}{key}' is required")
+    for key, value in args.items():
+        spec = props.get(key)
+        if spec is None:
+            if schema.get("additionalProperties") is False:
+                problems.append(f"unknown argument '{prefix}{key}'")
+            else:
+                out[key] = value
+            continue
+        if value is None:
+            continue
+        cleaned, problem = _check_value(f"{prefix}{key}", value, spec)
+        if problem:
+            problems.append(problem)
+        else:
+            out[key] = cleaned
+    return out, problems
+
+
+def validate_arguments(op: ToolOp, args: dict[str, Any]) -> dict[str, Any]:
+    """Check ``args`` against the schema the model was shown and return a normalised copy.
+
+    Numeric strings are coerced, ``null`` values dropped; unknown keys, wrong
+    types, enum / length / range violations raise :class:`InvalidArgumentsError`
+    so neither a persona nor an owner override can smuggle an undeclared or
+    oversized value into an op.
+    """
+    cleaned, problems = _validate_against(args, op.parameters or {})
+    if problems:
+        raise InvalidArgumentsError("Invalid arguments: " + "; ".join(problems[:6]))
+    return cleaned
+
+
+_SENSITIVE_ARG_KEYS = frozenset({"to", "cc", "recipientId", "contact", "providerEmail", "providerPhone", "parentContact"})
+
+
+def mask_arguments(ctx: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Alias e-mail addresses and phone numbers inside ``arguments`` for the audit log.
+
+    Tool-call rows are browsable in the SPA activity feed and are kept far longer
+    than the approval they came from, so they never store raw contact details.
+    Approvals keep the real arguments because they are executed from them and
+    already carry the un-masked owner preview by design.
+    """
+    try:
+        pseud = board_mail.pseudonymizer(ctx.table)
+    except Exception:  # pragma: no cover - masking is best effort, never blocks a call
+        return arguments
+
+    def _walk(value: Any, key: str = "") -> Any:
+        if isinstance(value, str):
+            if key in _SENSITIVE_ARG_KEYS and "@" in value:
+                return pseud.alias_for_address(value)
+            return pseud.mask_text(value)
+        if isinstance(value, list):
+            return [_walk(v, key) for v in value]
+        if isinstance(value, dict):
+            return {k: _walk(v, str(k)) for k, v in value.items()}
+        return value
+
+    masked = _walk(arguments)
+    try:
+        pseud.save()
+    except Exception as exc:  # pragma: no cover - alias map save is retried elsewhere
+        _log_event("warning", tag="board_tool_mask_save_failed", error=str(exc)[:200])
+    return masked
 
 
 def _invoke_op(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> dict[str, Any]:
     timeout = op.timeout_seconds if op.timeout_seconds is not None else BOARD_TOOL_CALL_TIMEOUT_SECONDS
+    left = ctx.seconds_left()
+    if left is not None and timeout > 0:
+        # A slow op late in the turn may not overrun the loop's wall-clock budget.
+        timeout = max(OP_TIMEOUT_FLOOR_SECONDS, min(timeout, int(math.ceil(left))))
     if timeout <= 0:
         result = op.run(ctx, arguments)
     else:
@@ -1614,12 +1794,19 @@ def _invoke_op(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> dict[
 def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> ToolOutcome:
     """Run (or record for approval) one operation and write the audit row."""
     started = time.monotonic()
-    arguments = _clean_arguments(arguments)
+    raw = arguments if isinstance(arguments, dict) else {}
+    invalid = ""
+    try:
+        arguments = validate_arguments(op, _clean_arguments(raw))
+    except InvalidArgumentsError as exc:
+        invalid = str(exc)
+        # Keep the (bounded) raw arguments so the audit row shows what was asked.
+        arguments = raw if len(json.dumps(raw, default=str)) <= MAX_ARGUMENT_CHARS else {}
     level = effective_level(ctx.settings, op.tool_id, ctx.persona_id) if ctx.actor == "persona" else "act"
     summary = op.summarize(arguments)
     approval_id = ""
     guard_reason = ""
-    if op.is_write and level == "act" and ctx.actor == "persona" and op.act_guard is not None:
+    if op.is_write and not invalid and level == "act" and ctx.actor == "persona" and op.act_guard is not None:
         try:
             guard_reason = str(op.act_guard(ctx, arguments) or "")
         except Exception as exc:  # pragma: no cover - a guard bug must fail closed
@@ -1631,6 +1818,10 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             result={"error": f"{op.name} is not available to you at level '{level}'."},
             summary=summary,
         )
+    elif invalid:
+        # Never queue a malformed proposal: the model gets the schema problem back
+        # and can retry with corrected arguments.
+        outcome = ToolOutcome(status="error", result={"error": invalid[:500]}, summary=summary)
     elif op.is_write and (level != "act" or guard_reason or (op.always_propose and ctx.actor == "persona")):
         approval = create_approval(ctx, op, arguments, summary=summary, downgrade_reason=guard_reason)
         approval_id = str(approval["approvalId"])
@@ -1671,6 +1862,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             outcome = ToolOutcome(status="error", result={"error": f"Tool failed: {str(exc)[:200]}"}, summary=summary)
     outcome.duration_ms = int((time.monotonic() - started) * 1000)
     outcome.approval_id = approval_id or outcome.approval_id
+    audit = mask_arguments(ctx, {"arguments": arguments, "summary": summary})
     record = board_store.add_tool_call(
         ctx.table,
         {
@@ -1682,9 +1874,9 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             "op": op.name,
             "kind": op.kind,
             "level": level,
-            "arguments": arguments,
+            "arguments": audit["arguments"],
             "status": outcome.status,
-            "summary": summary,
+            "summary": audit["summary"],
             "resultPreview": _truncate_json(outcome.result, MAX_RESULT_PREVIEW),
             "approvalId": approval_id,
             "downgradeReason": guard_reason,
@@ -1803,19 +1995,30 @@ def run_tool_loop(
     usage = add_usage(None, None)
     calls: list[dict[str, Any]] = []
     started = time.monotonic()
+    ctx.deadline = started + max_seconds
     rounds = 0
     final: ChatCompletion | None = None
+    stop_reason = ""
     while rounds < BOARD_MAX_TOOL_ROUNDS_PER_TURN:
-        elapsed = time.monotonic() - started
+        left = max_seconds - (time.monotonic() - started)
         calls_left = BOARD_MAX_TOOL_CALLS_PER_TURN - len(calls)
-        if elapsed >= max_seconds or calls_left <= 0:
+        if left <= 0 or calls_left <= 0:
             break
+        if rounds:
+            # The caller checked the daily cap before the turn; every further
+            # round is another paid call, so re-check between rounds.
+            try:
+                board_budget.check_budget(ctx.table, ctx.settings)
+            except board_budget.BudgetExceeded as exc:
+                stop_reason = str(exc)
+                _log_event("warning", tag="board_tool_loop_budget_stop", persona=ctx.persona_id, rounds=rounds)
+                break
         rounds += 1
         completion = board_budget.board_completion(
             table=ctx.table,
             messages=convo,
             model=model,
-            timeout=timeout,
+            timeout=max(MODEL_CALL_TIMEOUT_FLOOR_SECONDS, min(timeout, int(left))),
             json_mode=False,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -1828,10 +2031,13 @@ def run_tool_loop(
             final = completion
             break
         convo.append(completion.assistant_message())
-        for tc in completion.tool_calls[:calls_left]:
-            convo.append(_run_one(ctx, by_name, tc, calls))
-        for tc in completion.tool_calls[calls_left:]:
-            convo.append(_tool_message(tc, {"error": "Call budget for this reply is exhausted; answer with what you have."}))
+        for index, tc in enumerate(completion.tool_calls):
+            if index >= calls_left:
+                convo.append(_tool_message(tc, {"error": "Call budget for this reply is exhausted; answer with what you have."}))
+            elif time.monotonic() >= ctx.deadline:
+                convo.append(_tool_message(tc, {"error": "Time budget for this reply is exhausted; answer with what you have."}))
+            else:
+                convo.append(_run_one(ctx, by_name, tc, calls))
         if on_progress:
             try:
                 on_progress(list(calls))
@@ -1839,12 +2045,17 @@ def run_tool_loop(
                 pass
 
     if final is None:
+        if stop_reason:
+            convo.append({"role": "system", "content": f"No more tool calls are possible: {stop_reason} Answer with what you have."})
         rounds += 1
+        # The answer call may run past the loop budget, but only up to the
+        # OpenRouter timeout; the sums in the module header rely on that.
+        left = max_seconds - (time.monotonic() - started)
         final = board_budget.board_completion(
             table=ctx.table,
             messages=convo,
             model=model,
-            timeout=timeout,
+            timeout=max(FINAL_CALL_TIMEOUT_FLOOR_SECONDS, min(timeout, int(left))),
             json_mode=json_mode,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -1902,6 +2113,19 @@ def decide_approval(
         raise LookupError("Approval not found")
     if doc.get("status") != "pending":
         raise ValueError(f"Approval is already {doc.get('status')}")
+    op = REGISTRY.get(str(doc.get("op") or ""))
+    arguments = dict(doc.get("arguments") or {})
+    if approve:
+        # Everything that can be checked up front happens before the claim so a
+        # refused decision leaves the approval pending instead of half-decided.
+        if not tools_enabled(settings):
+            raise ValueError("Board tools are switched off; enable them before approving proposals.")
+        if global_cap(settings) == "read":
+            raise ValueError("The board is in read-only mode; switch it to propose or act before approving proposals.")
+        if isinstance(arguments_override, dict):
+            arguments.update(arguments_override)
+        if op is not None:
+            arguments = validate_arguments(op, _clean_arguments(arguments))
     next_status = "approved" if approve else "rejected"
     if not board_store.claim_approval_decision(table, approval_id, status=next_status):
         raise ValueError("Approval was decided by someone else a moment ago")
@@ -1918,14 +2142,10 @@ def decide_approval(
         board_store.put_approval(table, decided)
         return decided
 
-    op = REGISTRY.get(str(doc.get("op") or ""))
     if op is None:
         decided.update({"status": "failed", "errorMessage": "This operation no longer exists."})
         board_store.put_approval(table, decided)
         return decided
-    arguments = dict(doc.get("arguments") or {})
-    if isinstance(arguments_override, dict):
-        arguments.update(arguments_override)
     profile = board_personas.persona_default(str(doc.get("personaId") or "")) or {}
     ctx = ToolContext(
         table=table,
@@ -1941,8 +2161,14 @@ def decide_approval(
         refreshed = render_preview(ctx, op, arguments)
         if refreshed is not None:
             decided["preview"] = refreshed
-    outcome = execute_call(ctx, op, arguments)
     decided["arguments"] = arguments
+    try:
+        outcome = execute_call(ctx, op, arguments)
+    except Exception as exc:  # pragma: no cover - the claim is taken; never leave it "approved" forever
+        _log_event("error", tag="board_approval_execute_crashed", op=op.name, error=str(exc)[:300])
+        decided.update({"status": "failed", "errorMessage": f"Execution failed: {str(exc)[:400]}"})
+        board_store.put_approval(table, decided)
+        return decided
     decided["executedCallId"] = outcome.call_id
     if outcome.status == "ok":
         decided.update({"status": "executed", "result": outcome.result})
