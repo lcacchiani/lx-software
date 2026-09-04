@@ -240,6 +240,8 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:GitHubReadTokenSecretArn` | Secrets Manager secret holding a **fine-grained** GitHub token for the `siutindei` repository. The repository is public, so the snapshot and every GitHub *read* tool work without it; the token raises the API rate limit and is **required for the board's GitHub write tools** (issues, comments, labels) and for security alerts. |
 | `lxsoftware:BoardGitHubRepo` | `owner/name` of the repository to read (default `lx-software-ltd/siutindei`). |
 | `lxsoftware:BoardToolsEnabled` | `true` (default) / `false`. Deploy-time kill switch for every board tool call, independent of the in-app settings. |
+| `lxsoftware:BoardMailDomain` | Domain the board indexes (default `siutindei.com`). Every mailbox at this domain is copied to the board's SES inbound address by the Cloudflare Email Worker. |
+| `lxsoftware:BoardMailSendingEnabled` | `false` (default) / `true`. Flip to `true` only after the DKIM CNAMEs, SPF `include:amazonses.com`, and DMARC are in the `BoardMailDomain` zone. Creates the SES sending identity and the IAM send policy; until then mail tools stay read-only. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
 
 GitHub token setup (only needed for write tools, security alerts, or a higher
@@ -291,9 +293,10 @@ function calling. Design:
 [`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md).
 
 - **Tools shipped:** `github` (search/get issues and PRs, workflow runs,
-  commits, files, security alerts; create issue, comment, set labels) and
+  commits, files, security alerts; create issue, comment, set labels),
   `board` (read actions/minutes/decisions; add an action, update the member's
-  own actions).
+  own actions), and `mail` (list mailboxes and threads, read a thread,
+  contact history; reply, send, or forward).
 - **Levels** per tool per member: `off`, `read`, `propose` (writes are queued
   for the owner), `act` (writes run directly). A **global mode**
   (`readOnly` / `propose` / `act`) caps the whole matrix, and **Tools
@@ -304,7 +307,9 @@ function calling. Design:
 - **Approvals** (`Executive Board → Approvals`): each proposed write shows
   the member, the reason, and the exact arguments; the owner can edit the
   arguments, approve (the call runs as the owner and the result is logged)
-  or reject with a note the member sees next time.
+  or reject with a note the member sees next time. Mail writes render an
+  unmasked To / From / Subject / body preview; a guard on `act` downgrades
+  any send whose recipients are not on the allow-list to `propose`.
 - **Audit:** every call is a `BOARD#TOOLCALL#` row (persona, level, actor,
   arguments, result preview, duration) and is visible under **Settings →
   Tools & permissions → Show the tool call log**. Meeting transcripts record
@@ -314,7 +319,9 @@ function calling. Design:
   statement, tool results truncated to 6 000 characters, 200 pending
   approvals; approvals expire after 60 days and call-log rows after 90.
 - **Routes:** `GET/PUT /siu-tin-dei/board/tools`, `GET /siu-tin-dei/board/tools/calls`,
-  `GET /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`.
+  `GET /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`,
+  `GET /siu-tin-dei/board/mail`, `GET /siu-tin-dei/board/mail/{threadId}`,
+  `POST /siu-tin-dei/board/mail/{threadId}/read`.
   Admin-group JWT only.
 - **Emergency stop:** set `lxsoftware:BoardToolsEnabled=false` and redeploy,
   or flip **Tools enabled** off in the app. Both leave the matrix intact.
@@ -324,7 +331,55 @@ member's mandate, send a chat message to the CEO (reply arrives within ~30 s),
 then **Run stand-up** and confirm minutes and action items appear. For tools:
 ask the CTO "what is open on GitHub about bookings?" and check the reply lists
 a `Searched GitHub issues` row; ask the CPO to open an issue and confirm it
-lands in **Approvals** rather than on GitHub.
+lands in **Approvals** rather than on GitHub. For mail: open **Mail**, confirm
+mailbox chips and threads, toggle **Board's view** (addresses become
+`contact#N`), then ask the CMO "what's unread?" and confirm a `Listed threads`
+row.
+
+### Board mail (Cloudflare + SES)
+
+The owner's existing `siutindei.com` inbox is unchanged. A Cloudflare Email
+Worker copies every message to the board as well. Design:
+[`docs/architecture/executive-board-tools-plan.md`](../architecture/executive-board-tools-plan.md) §5.2.
+
+**Read path (no DNS change on `siutindei.com`):**
+
+1. Deploy the `lxsoftware` stack. Copy the `BoardMailInboundAddress` output
+   (`siutindei-board@<InboundMailDomain>`). The receipt rule stores raw MIME
+   under `inbound-raw/siutindei/` and `inbound_email_handler` hands those
+   objects to `board_mail.ingest_raw_object`.
+2. In the `siutindei.com` Cloudflare zone: **Email → Email Routing →
+   Destination addresses**, add that inbound address. Cloudflare sends a
+   verification mail; it lands in the inbound S3 bucket. Open the object
+   once and click the link.
+3. **Workers & Pages → Create**, paste
+   `scripts/cloudflare/siutindei-mail-fanout.js`. Set two plain-text
+   variables: `OWNER_DESTINATION` (the owner's already-verified inbox) and
+   `BOARD_DESTINATION` (the address from step 1). Optional `SKIP_SENDERS`
+   is a comma-separated list of addresses or `@domain` wildcards never
+   copied to the board.
+4. **Email Routing → Routing rules → Catch-all**: action **Send to a
+   Worker**, pick that Worker. Existing per-address rules still win; either
+   delete them or point them at the Worker too, or those mailboxes never
+   reach the board.
+
+**Send path (optional, after DKIM/SPF/DMARC):**
+
+1. Set `lxsoftware:BoardMailSendingEnabled=true` and redeploy. The stack
+   creates an SES email identity for `BoardMailDomain` and attaches
+   `ses:SendEmail` on that domain to `AdminApiFn`.
+2. Add the three `BoardMailDkimCnameN` outputs as CNAMEs on the
+   `siutindei.com` zone (Cloudflare proxy **off**).
+3. Extend SPF to
+   `v=spf1 include:_spf.mx.cloudflare.net include:amazonses.com ~all`.
+4. Add `_dmarc` TXT (`v=DMARC1; p=quarantine; rua=mailto:hello@siutindei.com`).
+5. In **Executive Board → Settings → Tools & permissions**, set the
+   **Email allow-list** (`@siutindei.com` and known vendor addresses). Sends
+   to anyone else stay in **Approvals** even when the member is at `act`.
+
+Replies go out from the mailbox the thread was addressed to. Every outbound
+message is indexed as `direction=out` so it appears in **Mail**. Bodies and
+threads expire after 90 days (`BOARD_MAIL_MESSAGE_TTL_DAYS`).
 
 ## Scripts
 

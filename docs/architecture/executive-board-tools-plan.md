@@ -1,7 +1,8 @@
 # Executive Board — tools and connectors
 
-Status: **approved; T1 shipped** (tool loop, `github` and `board` tools,
-permission matrix, approvals queue — see §10). T2–T7 remain proposals. This
+Status: **approved; T1 and T3 shipped** (tool loop, `github` / `board` /
+`mail` tools, permission matrix, approvals queue, email ingest and Mail
+view — see §10). T2, T4–T7 remain proposals. This
 document extends [`executive-board-plan.md`](./executive-board-plan.md) (the
 board itself, shipped) with the ability for each board member to **seek
 information and take action through tools** instead of relying only on the
@@ -18,8 +19,10 @@ Where T1 lives in the code:
 | Persistence (`BOARD#APPROVAL#`, `BOARD#TOOLCALL#`, `settings.tools`) | `backend/lambda/admin/board_store.py` |
 | Routes `/board/tools`, `/board/tools/calls`, `/board/approvals[/{id}/approve\|reject]` | `backend/lambda/admin/board_routes.py`, `lxsoftware-stack.ts` |
 | Kill switch | `BoardToolsEnabled` stack parameter → `BOARD_TOOLS_ENABLED` on `AdminApiFn` |
-| SPA | `BoardToolsCard`, `BoardApprovalsList`, `BoardToolCallList`; hooks `useBoardTools`, `useBoardApprovals` |
-| Tests | `backend/lambda/admin/test_board_tools.py` |
+| SPA | `BoardToolsCard`, `BoardApprovalsList`, `BoardToolCallList`, `BoardMailView`; hooks `useBoardTools`, `useBoardApprovals`, `useBoardMail` |
+| Mail ingest, SES send, PII aliases | `backend/lambda/admin/board_mail.py`, `board_pii.py`; S3 prefix `inbound-raw/siutindei/` |
+| Cloudflare fan-out | `scripts/cloudflare/siutindei-mail-fanout.js` |
+| Tests | `backend/lambda/admin/test_board_tools.py`, `test_board_mail.py` |
 
 ## 1. Decisions already taken by the owner
 
@@ -379,7 +382,7 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 |---|-------|------------|
 | T1 ✅ | Tool loop core: `openrouter_client` tools, `board_tools.py`, registry, level enforcement, audit rows, contracts, settings matrix API + card, `github` and `board` tools with read + propose, Approvals queue (backend + UI) | — |
 | T2 | `research`, `aws`, `security` read tools; cache refresh Scheduler | T1 |
-| T3 | Email ingest and index (§5.2) incl. sending identity, `mail` tools, Mail view | T1 |
+| T3 ✅ | Email ingest and index (§5.2) incl. sending identity, `mail` tools, Mail view | T1 |
 | T4 | Receivables: siutindei migration and views (§5.4, §5.7), Data API access, `finance` and `product` tools, statement-book mirror, `record_manual_payment`, Receivables view, dunning Scheduler | T1 |
 | T4b | Bank ingest adapter (§5.6): API client for an API-first account, or alert-mail parser + statement reconciliation for a traditional bank | T4, T3, account opened |
 | T5 | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
@@ -393,7 +396,7 @@ plus Vitest coverage for new hooks.
 ## 11. Remaining decisions
 
 All six pre-start questions are answered (§1). Two items are deferred, not
-blocking, and the board itself can work on them now that T1 has shipped:
+blocking, and the board itself can work on them now that T1 and T3 have shipped:
 
 1. **Which HK account to open** — API-first (Airwallex/Statrys/Aspire) or a
    traditional bank; decides which T4b adapter is built. Suggested first CFO
@@ -401,6 +404,6 @@ blocking, and the board itself can work on them now that T1 has shipped:
 2. **Listing prices** — decides the first `listing_plans` rows; suggested
    first CFO/CPO stand-up action, approved through the queue.
 
-Next sign-off: which of **T2–T6** to start first. T3 (email) and T4
-(receivables) unblock the most downstream work; T2 (research/AWS/security
+Next sign-off: which of **T2, T4–T6** to start first. T4 (receivables)
+unblocks the most remaining downstream work; T2 (research/AWS/security
 reads) is the smallest.
