@@ -194,7 +194,7 @@ def op_draft_invoice(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         amount=hkd,
         fps=fps,
     )
-    pdf_key = _store_invoice_pdf(
+    pdf_key, pdf_notes = _store_invoice_pdf(
         invoice_id=inv_id,
         number=number,
         amount_hkd=hkd,
@@ -205,7 +205,7 @@ def op_draft_invoice(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     )
     if pdf_key:
         _q("UPDATE invoices SET pdf_key = :key WHERE id = :id", key=pdf_key, id=inv_id)
-    return {
+    out = {
         "ok": True,
         "invoiceId": inv_id,
         "number": number,
@@ -216,6 +216,9 @@ def op_draft_invoice(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         "payerContact": sub.get("payer_contact"),
         "pdfKey": pdf_key,
     }
+    if pdf_notes:
+        out["pdfWarning"] = " ".join(pdf_notes)
+    return out
 
 
 def _store_invoice_pdf(
@@ -227,11 +230,16 @@ def _store_invoice_pdf(
     issued_on: str,
     due_on: str,
     payer_contact: str,
-) -> str:
+) -> tuple[str, tuple[str, ...]]:
+    """Render and upload the invoice PDF. Returns ``(s3 key or "", notes)``.
+
+    A failed upload never fails the draft: the ledger row is the source of
+    truth and the owner is told through ``pdfWarning`` instead.
+    """
     bucket = (os.environ.get("ASSETS_BUCKET_NAME") or "").strip()
     if not bucket:
-        return ""
-    pdf = board_invoice_pdf.render_invoice_pdf(
+        return "", ("PDF not stored: no assets bucket is configured.",)
+    rendered = board_invoice_pdf.render_invoice(
         number=number,
         amount_hkd=amount_hkd,
         fps_reference=fps_reference,
@@ -244,13 +252,13 @@ def _store_invoice_pdf(
         runtime._s3.put_object(
             Bucket=bucket,
             Key=key,
-            Body=pdf,
+            Body=rendered.data,
             ContentType="application/pdf",
         )
     except Exception as exc:
-        _log_event("warning", tag="board_invoice_pdf_failed", error=str(exc)[:200])
-        return ""
-    return key
+        _log_event("warning", tag="board_invoice_pdf_failed", invoiceId=invoice_id, error=str(exc)[:200])
+        return "", (*rendered.notes, "PDF could not be stored; send the invoice without an attachment or re-draft.")
+    return key, rendered.notes
 
 
 def _load_invoice_pdf(inv: dict[str, Any]) -> bytes | None:
@@ -262,9 +270,26 @@ def _load_invoice_pdf(inv: dict[str, Any]) -> bytes | None:
         obj = runtime._s3.get_object(Bucket=bucket, Key=key)
         body = obj.get("Body")
         data = body.read() if hasattr(body, "read") else body
-    except Exception:
+    except Exception as exc:
+        _log_event("warning", tag="board_invoice_pdf_load_failed", key=key, error=str(exc)[:200])
         return None
-    return data if isinstance(data, (bytes, bytearray)) else None
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    _log_event("warning", tag="board_invoice_pdf_load_failed", key=key, error="object body was not bytes")
+    return None
+
+
+def _invoice_pdf_available(inv: dict[str, Any]) -> bool:
+    key = str(inv.get("pdf_key") or "").strip()
+    bucket = (os.environ.get("ASSETS_BUCKET_NAME") or "").strip()
+    if not key or not bucket:
+        return False
+    try:
+        runtime._s3.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        _log_event("warning", tag="board_invoice_pdf_missing", key=key, error=str(exc)[:200])
+        return False
+    return True
 
 
 def _invoice(invoice_id: str) -> dict[str, Any]:
@@ -304,7 +329,8 @@ def owner_preview_send(_ctx: Any, args: dict[str, Any], *, op: str) -> dict[str,
     )
     if note:
         body = f"{body}\n\n{note}"
-    return {
+    has_pdf = _invoice_pdf_available(inv)
+    preview = {
         "kind": "email",
         "from": "billing@siutindei.com",
         "to": [email] if email else [],
@@ -318,8 +344,11 @@ def owner_preview_send(_ctx: Any, args: dict[str, Any], *, op: str) -> dict[str,
         "fpsReference": inv.get("fps_reference"),
         "amountHkd": inv.get("amount_hkd"),
         "pdfKey": inv.get("pdf_key") or "",
-        "attachments": [{"name": f"{inv.get('number')}.pdf"}] if inv.get("pdf_key") else [],
+        "attachments": [{"name": f"{inv.get('number')}.pdf"}] if has_pdf else [],
     }
+    if inv.get("pdf_key") and not has_pdf:
+        preview["pdfWarning"] = "The invoice PDF is missing from storage; the email will go without an attachment."
+    return preview
 
 
 def _send_mail(ctx: Any, inv: dict[str, Any], *, subject: str, body: str) -> dict[str, Any]:
@@ -344,7 +373,21 @@ def _send_mail(ctx: Any, inv: dict[str, Any], *, subject: str, body: str) -> dic
         plan["attachments"] = [
             {"filename": f"{inv.get('number') or 'invoice'}.pdf", "contentType": "application/pdf", "content": pdf}
         ]
-    return board_mail.send_plan(ctx.table, plan, sent_by=getattr(ctx, "persona_id", "cfo"))
+    result = board_mail.send_plan(ctx.table, plan, sent_by=getattr(ctx, "persona_id", "cfo"))
+    if inv.get("pdf_key") and not pdf:
+        result = {
+            **result,
+            "attachmentMissing": True,
+            "warning": "The invoice PDF could not be loaded, so the email went without an attachment.",
+        }
+    return result
+
+
+def _send_extras(result: dict[str, Any]) -> dict[str, Any]:
+    """Carry send failures and attachment warnings into the tool result."""
+    if not result.get("ok"):
+        return dict(result)
+    return {k: v for k, v in result.items() if k in ("attachmentMissing", "warning", "sent", "note")}
 
 
 def op_send_invoice(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:

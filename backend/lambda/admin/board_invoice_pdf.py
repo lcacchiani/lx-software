@@ -1,11 +1,44 @@
-"""Minimal PDF renderer for listing invoices (no third-party PDF library)."""
+"""Minimal PDF renderer for listing invoices (no third-party PDF library).
+
+The page uses the base-14 Helvetica font with WinAnsiEncoding, so only
+cp1252 text can be drawn. Anything else (Chinese names, emoji) is dropped
+after NFKD folding and the caller is told via :attr:`InvoicePdf.notes` so
+the tool result can say so instead of shipping ``???``.
+"""
 
 from __future__ import annotations
 
+import unicodedata
+from dataclasses import dataclass
 from datetime import date
 
+PDF_ENCODING = "cp1252"
+NON_LATIN_NOTE = "Some characters could not be printed in the PDF (Latin text only)."
 
-def render_invoice_pdf(
+
+@dataclass(frozen=True)
+class InvoicePdf:
+    data: bytes
+    notes: tuple[str, ...] = ()
+
+
+def winansi(text: str) -> tuple[str, bool]:
+    """Fold ``text`` to cp1252; returns ``(printable, lossy)``."""
+    out: list[str] = []
+    lossy = False
+    for ch in unicodedata.normalize("NFKD", str(text or "")):
+        if unicodedata.combining(ch):
+            continue
+        try:
+            ch.encode(PDF_ENCODING)
+        except UnicodeEncodeError:
+            lossy = True
+            continue
+        out.append(ch)
+    return "".join(out), lossy
+
+
+def render_invoice(
     *,
     number: str,
     amount_hkd: float,
@@ -13,10 +46,10 @@ def render_invoice_pdf(
     issued_on: str,
     due_on: str,
     payer_contact: str = "",
-) -> bytes:
-    """Return a one-page PDF the payer can print or forward to their bank."""
+) -> InvoicePdf:
+    """One-page PDF the payer can print or forward to their bank."""
     lines = [
-        "Siu Tin Dei — listing invoice",
+        "Siu Tin Dei - listing invoice",
         f"Invoice {number}",
         f"Issued {issued_on}   Due {due_on}",
         f"Amount  HK$ {amount_hkd:.2f}",
@@ -25,7 +58,17 @@ def render_invoice_pdf(
     if payer_contact:
         lines.append(f"Billed to {payer_contact}")
     lines.extend(["", "The siutindei team"])
-    return _simple_pdf(lines)
+    printable: list[str] = []
+    lossy = False
+    for line in lines:
+        text, dropped = winansi(line)
+        lossy = lossy or dropped
+        printable.append(text)
+    return InvoicePdf(data=_simple_pdf(printable), notes=(NON_LATIN_NOTE,) if lossy else ())
+
+
+def render_invoice_pdf(**kwargs: object) -> bytes:
+    return render_invoice(**kwargs).data  # type: ignore[arg-type]
 
 
 def _escape(text: str) -> str:
@@ -39,13 +82,13 @@ def _simple_pdf(lines: list[str]) -> bytes:
             content_lines.append("0 -18 Td")
         content_lines.append(f"({_escape(line[:110])}) Tj")
     content_lines.append("ET")
-    stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+    stream = "\n".join(content_lines).encode(PDF_ENCODING)
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
         b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     ]
     out = bytearray(b"%PDF-1.4\n")
     offsets = [0]
