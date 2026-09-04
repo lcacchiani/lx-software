@@ -124,30 +124,43 @@ def ads_caps(settings: dict[str, Any] | None = None) -> tuple[float, float]:
     return daily, monthly
 
 
-def graph_month_spend() -> float:
+def graph_month_spend_detail() -> dict[str, Any]:
+    """Month-to-date ad account spend from Graph: ``{"spend", "currency", "available"}``.
+
+    Graph reports spend in the ad account's own currency; callers must not
+    label it USD unless ``currency`` says so. Any Graph failure yields
+    ``available=False`` rather than an exception.
+    """
     aid = ad_account_id()
     if not aid or not board_token():
-        return 0.0
+        return {"spend": 0.0, "currency": "", "available": False}
     try:
         data = graph(
             "GET",
             f"{aid}/insights",
-            params={"fields": "spend", "date_preset": "this_month", "level": "account"},
+            params={"fields": "spend,account_currency", "date_preset": "this_month", "level": "account"},
         )
-    except MetaError:
-        return 0.0
+    except MetaError as exc:
+        _log_event("warning", tag="board_meta_spend_unavailable", error=str(exc)[:200])
+        return {"spend": 0.0, "currency": "", "available": False}
     rows = data.get("data") or []
-    if not rows:
-        return 0.0
+    if not rows or not isinstance(rows[0], dict):
+        return {"spend": 0.0, "currency": "", "available": True}
     try:
-        return float(rows[0].get("spend") or 0)
+        spend = float(rows[0].get("spend") or 0)
     except (TypeError, ValueError):
-        return 0.0
+        spend = 0.0
+    return {"spend": spend, "currency": str(rows[0].get("account_currency") or ""), "available": True}
 
 
-def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> dict[str, float]:
+def graph_month_spend(detail: dict[str, Any] | None = None) -> float:
+    return float((detail or graph_month_spend_detail())["spend"])
+
+
+def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     recorded = board_store.load_ads_spend(table) if table is not None else {"dailyUsd": 0.0, "monthlyUsd": 0.0}
-    graph_month = graph_month_spend()
+    detail = graph_month_spend_detail()
+    graph_month = graph_month_spend(detail)
     daily_cap, monthly_cap = ads_caps(settings)
     recorded_daily = float(recorded.get("dailyUsd") or 0.0)
     recorded_month = float(recorded.get("monthlyUsd") or 0.0)
@@ -155,7 +168,11 @@ def ads_spend_snapshot(table: Any, settings: dict[str, Any] | None = None) -> di
         "recordedDailyUsd": recorded_daily,
         "recordedMonthlyUsd": recorded_month,
         "graphMonthlyUsd": graph_month,
+        "graphCurrency": detail["currency"],
+        "graphAvailable": bool(detail["available"]),
         "dailyUsd": recorded_daily,
+        # Cap check stays conservative: commitments the board made this month
+        # plus what Graph has already billed.
         "monthlyUsd": recorded_month + graph_month,
         "dailyCapUsd": daily_cap,
         "monthlyCapUsd": monthly_cap,
@@ -248,6 +265,8 @@ def graph(
         raise MetaError(f"Meta Graph {exc.code}: {detail or exc.reason}") from exc
     except urlerror.URLError as exc:
         raise MetaError(f"Meta Graph unreachable: {exc.reason}") from exc
+    except OSError as exc:  # socket.timeout while reading the body is not a URLError
+        raise MetaError(f"Meta Graph unreachable: {exc}") from exc
     if not raw:
         return {}
     try:

@@ -1270,10 +1270,11 @@ def build_registry() -> dict[str, ToolOp]:
             name="finance_unit_economics",
             tool_id="finance",
             kind="read",
-            description="Revenue per subscription versus AWS cost (Meta ads added in T5).",
+            description="Revenue per subscription versus AWS cost and Meta ads spend (Graph month-to-date).",
             parameters=_obj({}),
             run=board_receivables.op_unit_economics,
             summarize=_summ("Read unit economics"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="finance_draft_invoice",

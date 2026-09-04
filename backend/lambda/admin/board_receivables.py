@@ -128,24 +128,39 @@ def op_unit_economics(_ctx: Any, _args: dict[str, Any]) -> dict[str, Any]:
             cost = float(aws["payload"].get("totalUsd") or 0)
         except (TypeError, ValueError):
             cost = 0.0
-    snapshot = (
+    snapshot: dict[str, Any] = (
         board_meta.ads_spend_snapshot(getattr(_ctx, "table", None), getattr(_ctx, "settings", None))
         if _ctx is not None
-        else {"monthlyUsd": 0.0, "graphMonthlyUsd": 0.0, "recordedMonthlyUsd": 0.0}
+        else {"graphMonthlyUsd": 0.0, "recordedMonthlyUsd": 0.0, "graphCurrency": "", "graphAvailable": False}
     )
-    meta_monthly = float(snapshot.get("monthlyUsd") or 0)
+    recorded = float(snapshot.get("recordedMonthlyUsd") or 0)
+    graph_spend = float(snapshot.get("graphMonthlyUsd") or 0)
+    currency = str(snapshot.get("graphCurrency") or "USD").upper()
+    # Graph is what Meta actually billed; recorded commitments are the board's
+    # own approvals this month. They overlap once an ad delivers, so take the
+    # larger rather than the sum.
+    meta_cost = max(graph_spend, recorded)
+    meta_source = "graph" if graph_spend >= recorded and snapshot.get("graphAvailable") else "recorded"
     revenue = float(paid.get("total") or 0)
     providers = int(active.get("n") or 0)
-    return {
+    out: dict[str, Any] = {
         "paidInvoicesHkd": revenue,
         "activeSubscriptions": providers,
         "revenuePerSubscriptionHkd": round(revenue / max(providers, 1), 2),
         "awsMonthlyUsd": cost,
-        "metaAdsMonthlyUsd": meta_monthly,
-        "metaAdsRecordedMonthlyUsd": float(snapshot.get("recordedMonthlyUsd") or 0),
-        "metaAdsGraphMonthlyUsd": float(snapshot.get("graphMonthlyUsd") or 0),
-        "note": "Gross margin uses AWS monthly cost plus Meta ads (recorded board commitment + Graph month-to-date).",
+        "metaAdsMonthly": meta_cost,
+        "metaAdsCurrency": currency if meta_source == "graph" else "USD",
+        "metaAdsSource": meta_source,
+        "metaAdsRecordedMonthlyUsd": recorded,
+        "metaAdsGraphMonthly": graph_spend,
+        "metaAdsGraphCurrency": currency,
+        "note": "Meta ads cost is the larger of Graph month-to-date and the board's recorded commitments (they overlap).",
     }
+    if meta_source == "recorded" or (meta_source == "graph" and currency == "USD"):
+        out["metaAdsMonthlyUsd"] = meta_cost
+    else:
+        out["note"] += f" Graph reports the ad account in {currency}; convert before comparing with USD figures."
+    return out
 
 
 def _next_number() -> str:
@@ -399,7 +414,7 @@ def op_send_invoice(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     )
     result = _send_mail(ctx, inv, subject=subject, body=body)
     _q("UPDATE invoices SET status = 'sent' WHERE id = :id AND status IN ('draft', 'sent')", id=str(inv["id"]))
-    return {"ok": True, "invoiceId": inv["id"], "number": inv["number"], **({} if result.get("ok") else result)}
+    return {"ok": True, "invoiceId": inv["id"], "number": inv["number"], **_send_extras(result)}
 
 
 def op_send_reminder(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -412,7 +427,7 @@ def op_send_reminder(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     result = _send_mail(ctx, inv, subject=subject, body=body)
     if str(inv.get("status")) == "sent":
         _q("UPDATE invoices SET status = 'overdue' WHERE id = :id", id=str(inv["id"]))
-    return {"ok": True, "invoiceId": inv["id"], "number": inv["number"], **({} if result.get("ok") else result)}
+    return {"ok": True, "invoiceId": inv["id"], "number": inv["number"], **_send_extras(result)}
 
 
 def op_match_payment(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
