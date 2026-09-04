@@ -162,6 +162,22 @@
         "ciso": "off",
         "cmo": "act"
       }
+    },
+    {
+      "id": "web",
+      "label": "Web analytics",
+      "description": "GA4 sessions, top pages, referrers and conversions across configured properties, plus GTM live-version status. Read-only; cached hourly. GTM publish and Google Ads are later milestones.",
+      "maxLevel": "read",
+      "defaults": {
+        "ceo": "read",
+        "cfo": "off",
+        "coo": "off",
+        "cpo": "read",
+        "cto": "read",
+        "cio": "read",
+        "ciso": "off",
+        "cmo": "read"
+      }
     }
   ],
   "limits": {
@@ -191,6 +207,8 @@
     "metaAdsMonthlyCapUsd": 50,
     "metaListMax": 40,
     "storesListMax": 30,
-    "storesCacheTtlHours": 20
+    "storesCacheTtlHours": 20,
+    "webListMax": 30,
+    "webCacheTtlHours": 20
   }
 }

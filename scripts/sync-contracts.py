@@ -156,6 +156,8 @@ def write_python(finance: dict, timeouts: dict, domains: dict) -> None:
         "BOARD_META_LIST_MAX = int(_BOARD_TOOL_LIMITS[\"metaListMax\"])",
         "BOARD_STORES_LIST_MAX = int(_BOARD_TOOL_LIMITS[\"storesListMax\"])",
         "BOARD_STORES_CACHE_TTL_HOURS = int(_BOARD_TOOL_LIMITS[\"storesCacheTtlHours\"])",
+        "BOARD_WEB_LIST_MAX = int(_BOARD_TOOL_LIMITS[\"webListMax\"])",
+        "BOARD_WEB_CACHE_TTL_HOURS = int(_BOARD_TOOL_LIMITS[\"webCacheTtlHours\"])",
         "",
     ]
     PY_OUT.write_text("\n".join(lines), encoding="utf-8")
@@ -285,6 +287,8 @@ export const BOARD_META_ADS_MONTHLY_CAP_USD = {tool_limits["metaAdsMonthlyCapUsd
 export const BOARD_META_LIST_MAX = {tool_limits["metaListMax"]};
 export const BOARD_STORES_LIST_MAX = {tool_limits["storesListMax"]};
 export const BOARD_STORES_CACHE_TTL_HOURS = {tool_limits["storesCacheTtlHours"]};
+export const BOARD_WEB_LIST_MAX = {tool_limits["webListMax"]};
+export const BOARD_WEB_CACHE_TTL_HOURS = {tool_limits["webCacheTtlHours"]};
 """
     TS_OUT.write_text(body, encoding="utf-8")
 
