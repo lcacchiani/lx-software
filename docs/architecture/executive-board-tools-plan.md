@@ -17,7 +17,12 @@ and take action through tools** instead of relying only on the context pack.
 | Email | **All `siutindei.com` mailboxes** are visible to the board. |
 | Meta / WhatsApp | The board **owns the existing WhatsApp number** through the WhatsApp Cloud API, plus the Facebook Page and Instagram account. |
 | Receivables | Live in the **siutindei Aurora database** (new tables) and are **mirrored into the Siu Tin Dei statement book** in this admin app. |
-| Bank feed | The business account is at a **Hong Kong bank** → see §5.6 for why Enable Banking does not apply and what replaces it. |
+| Bank feed | The business account will be at a **Hong Kong bank** (not opened yet; FPS receipts are expected) → see §5.6 for why Enable Banking does not apply and what replaces it. |
+| Mail hosting | `siutindei.com` MX records point at Cloudflare Email Routing (confirmed via DNS); no DMARC record exists yet. |
+| AWS account | siutindei runs in the **same AWS account** as the `lxsoftware` stack; no cross-account roles. |
+| Meta | A Business Manager grouping the Page, Instagram and the WhatsApp number will be set up by the owner. |
+| App stores | App Store Connect API key and Google Play service account **already exist**. |
+| Listing prices | Not decided yet; `listing_plans` starts empty and the CFO's first task is a pricing proposal (§5.5). |
 
 ## 2. Permission model and guardrails
 
@@ -124,23 +129,34 @@ CDK condition and policy pattern stay identical.
 Goal: the board reads every mailbox; nothing about the owner's own mail
 client changes.
 
-1. **Ingest**: at the current mail provider for `siutindei.com`, add a
-   forward/copy rule per mailbox (or a catch-all) to
-   `siutindei-<mailbox>@inbound.lx-software.com`. That domain already has
-   MX → SES in the stack region and the `lxsoftware-inbound-mail` receipt
-   rule set. A new receipt rule matches the whole `siutindei-` prefix and
-   stores raw MIME under `inbound-raw/siutindei/<mailbox>/`.
-   No DNS change on `siutindei.com` is needed for reading.
+1. **Ingest**: `siutindei.com` mail is handled by **Cloudflare Email
+   Routing** (MX `route1/2/3.mx.cloudflare.net`, SPF
+   `include:_spf.mx.cloudflare.net`). Plain routing rules deliver to one
+   destination each, so the copy is made by a small **Email Worker** bound
+   to the catch-all: it forwards every message to the owner's existing
+   destination inbox *and* to `siutindei-board@inbound.lx-software.com`,
+   preserving the original `To:` so the mailbox is known downstream.
+   Cloudflare requires destination addresses to be verified; the
+   verification mail lands in the SES S3 bucket, where the owner reads the
+   link once. `inbound.lx-software.com` already has MX → SES in the stack
+   region and the `lxsoftware-inbound-mail` receipt rule set; a new
+   receipt rule for `siutindei-board@…` stores raw MIME under
+   `inbound-raw/siutindei/`. No DNS change on `siutindei.com` is needed
+   for reading.
 2. **Index**: a new S3 event branch in `inbound_email_handler.py`
    (`board_mail.py`) parses headers, text body, and PDF attachments (via the
    existing statement-parser text extraction), masks PII (§2.3) and writes
    `BOARD#MAIL#<threadId>` / `MSG#<ts>` rows plus a per-mailbox unread
    counter. Bank alert emails (§5.6) are routed from here to the receivables
    matcher.
-3. **Send**: verify `siutindei.com` for **sending** in SES (DKIM CNAMEs +
-   DMARC alignment; this is the only DNS change). Replies go out from the
-   mailbox they were addressed to, with `Reply-To` unchanged so the owner's
-   client keeps the thread. All outbound is BCC'd back into the index.
+3. **Send**: verify `siutindei.com` for **sending** in SES: three DKIM
+   CNAMEs, SPF extended to
+   `v=spf1 include:_spf.mx.cloudflare.net include:amazonses.com ~all`, and a
+   new `_dmarc` TXT record (`p=quarantine`, reports to the board mailbox) —
+   the domain has no DMARC today, which the CISO would flag on day one.
+   Replies go out from the mailbox they were addressed to, with `Reply-To`
+   unchanged so the owner's client keeps the thread. All outbound is BCC'd
+   back into the index.
 4. **Levels**: CEO/COO/CMO/CFO `propose` by default; `act` only to
    allow-listed providers and vendors. CISO reads only, and gets a
    `report_phishing` tool that flags a thread to the owner.
@@ -194,9 +210,11 @@ New tables (siutindei repo, its own migration):
 | `payments` | `id`, `invoice_id` (nullable until matched), `received_on`, `amount_hkd`, `payer_name`, `bank_reference`, `source` (`alert_email`/`statement`/`manual`), `matched_by` |
 
 Access from `AdminApiFn` is through the **RDS Data API** with IAM
-authentication (no VPC attachment, no connection pooling), using a
-cross-account role if siutindei runs in a separate account. Writes are
-limited to `invoices`, `payments`, and `listing_subscriptions.status`.
+authentication (no VPC attachment, no connection pooling). siutindei runs
+in the same AWS account, so this is a direct `rds-data:*` policy on the
+cluster ARN plus `secretsmanager:GetSecretValue` on its DB secret, both
+imported into the `lxsoftware` stack as parameters. Writes are limited to
+`invoices`, `payments`, and `listing_subscriptions.status`.
 
 **Mirror**: a nightly Scheduler job (`board_receivables_mirror`) writes
 issued invoices as receivable rows and matched payments as income rows into
@@ -213,7 +231,7 @@ the Siu Tin Dei finance sheet (`finance_store.py`), tagged
 | `send_invoice` | propose → act for allow-listed payers | Emails the invoice from `billing@siutindei.com` |
 | `send_reminder` | propose → act for allow-listed payers | Dunning at D+7 / D+21 / D+35, email or WhatsApp template |
 | `match_payment` | act | Attaches a `payments` row to an invoice when reference and amount agree; otherwise `propose` with candidates |
-| `propose_price_change` | propose | Writes a `listing_plans` change for approval |
+| `propose_price_change` | propose | Writes a `listing_plans` change for approval. No prices exist yet, so the CFO's seeded first action is a pricing proposal (tiers, monthly vs annual, store add-on) built from `product` counts and `research` on HK competitors; approving it creates the first plan rows |
 | `record_manual_payment` | propose | For cash or cheque handed over in person |
 
 ### 5.6 Bank feed for a Hong Kong account
@@ -223,7 +241,17 @@ the Siu Tin Dei finance sheet (`finance_store.py`), tagged
 bank and has no third-party access regime, so no aggregator offers account
 information for HSBC HK, Hang Seng, BOC HK, Standard Chartered HK or the
 virtual banks. The existing Enable Banking sync stays for the UK accounts.
-For the HKD business account the feed comes from the bank's own outputs:
+
+The HKD business account **has not been opened yet**; FPS receipts are
+expected once it is. That makes the choice of bank part of this plan:
+
+| Option | Feed | Effect on the board |
+|--------|------|---------------------|
+| **API-first business account** (Airwallex, Statrys, Aspire — all HKD, FPS-enabled, HK-licensed as SVF/MSO rather than banks) | Transactions and balances via REST API with webhooks | `payments` rows appear within minutes with no parsing; `match_payment` is fully automatic. Recommended if the account is only used for listing income. |
+| **Traditional bank** (HSBC, Hang Seng, BOC HK, SCB, or a virtual bank such as ZA / Mox / livi) | Email alerts + monthly e-statement, see below | Works, but depends on the bank's alert template and needs a parser per bank. |
+
+If the traditional route is chosen, the feed comes from the bank's own
+outputs:
 
 1. **Payment alert emails** (primary, near real time). Enable "incoming
    FPS / transfer" email alerts at the bank and address them to
@@ -236,9 +264,13 @@ For the HKD business account the feed comes from the bank's own outputs:
    statement parser into a Siu Tin Dei book. A reconciliation step compares
    parsed credits with `payments` rows, adds missing ones with
    `source=statement`, and lists discrepancies for the CFO's next stand-up.
-3. **Later option**: if the business account moves to Airwallex, Statrys or
-   Aspire, they expose transaction APIs and this feed becomes automatic.
-   Not required to start.
+
+Either way the `payments` table and `match_payment` tool are the same; only
+the ingest adapter (`board_bank_api.py` vs the mail/statement path) differs,
+so milestone T4 can ship with `record_manual_payment` only and gain the
+adapter once the account exists. Choosing the account is itself a good
+first agenda item for the CFO (`research` tool: fees, FPS support, API
+availability, onboarding requirements for an HK-incorporated company).
 
 No payment initiation of any kind is built; the board never moves money
 out of the account.
@@ -302,11 +334,12 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | Routes | `GET/POST /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `GET …/board/receivables/*`, `POST /webhooks/meta` (no JWT, HMAC-verified), `GET /webhooks/meta` (verify) |
 | DynamoDB | `BOARD#TOOLCALL#`, `BOARD#APPROVAL#`, `BOARD#MAIL#`, `BOARD#META#`, `BOARD#CACHE#`, `BOARD#USAGE#` prefixes; all covered by the existing `BOARD#` scan filter |
 | Contracts | `contracts/board-tools.json`: tool ids, default matrix, `maxToolRoundsPerTurn`, `toolResultMaxChars`, cap names; synced to Python, TS and CDK |
-| Secrets | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `SearchApiKey`, `SiutindeiDataApiRole` ARN parameter — each behind a `has…` condition like the GitHub secret today |
-| SES | Receipt rule for `siutindei-*@inbound.lx-software.com` → S3 prefix `inbound-raw/siutindei/`; sending identity `siutindei.com` |
+| Secrets / params | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `SearchApiKey`, `BankApiKey` (if an API-first account is chosen), plus `SiutindeiClusterArn` and `SiutindeiDbSecretArn` parameters for the Data API — each behind a `has…` condition like the GitHub secret today |
+| SES | Receipt rule for `siutindei-board@inbound.lx-software.com` → S3 prefix `inbound-raw/siutindei/`; sending identity `siutindei.com` |
+| Cloudflare (siutindei zone) | Email Worker on the catch-all that fans out to the owner's inbox and the SES address; DKIM/SPF/DMARC records for SES sending |
 | Scheduler | `BoardCacheRefreshSchedule` (hourly), `BoardReceivablesMirrorSchedule` (nightly), `BoardDunningSchedule` (daily 09:00 HKT, produces `propose` items) — all role-based invokes, no Lambda resource-policy statements |
-| IAM | Read-only Cost Explorer/CloudWatch/Security Hub policy on `AdminApiFn`; `sts:AssumeRole` to the siutindei Data API role; `ses:SendEmail` restricted to `siutindei.com` identities |
-| siutindei repo | Migration for §5.4 tables, SQL views for §5.7, IAM role trusting the lxsoftware account for Data API reads/writes |
+| IAM | Read-only Cost Explorer/CloudWatch/Security Hub policy on `AdminApiFn`; `rds-data:ExecuteStatement`/`BatchExecuteStatement` on the siutindei cluster; `ses:SendEmail` restricted to `siutindei.com` identities |
+| siutindei repo | Migration for §5.4 tables, SQL views for §5.7, Data API enabled on the Aurora cluster if not already |
 
 ## 9. Frontend changes (`apps/admin_web`)
 
@@ -331,7 +364,8 @@ default global mode is `propose`, so nothing acts until the owner flips it.
 | T1 | Tool loop core: `openrouter_client` tools, `board_tools.py`, registry, level enforcement, audit rows, contracts, settings matrix API + card, `github` and `board` tools with read + propose, Approvals queue (backend + UI) | — |
 | T2 | `research`, `aws`, `security` read tools; cache refresh Scheduler | T1 |
 | T3 | Email ingest and index (§5.2) incl. sending identity, `mail` tools, Mail view | T1 |
-| T4 | Receivables: siutindei migration and views (§5.4, §5.7), Data API access, `finance` and `product` tools, statement-book mirror, bank alert parsing and statement reconciliation (§5.6), Receivables view, dunning Scheduler | T1, T3 |
+| T4 | Receivables: siutindei migration and views (§5.4, §5.7), Data API access, `finance` and `product` tools, statement-book mirror, `record_manual_payment`, Receivables view, dunning Scheduler | T1 |
+| T4b | Bank ingest adapter (§5.6): API client for an API-first account, or alert-mail parser + statement reconciliation for a traditional bank | T4, T3, account opened |
 | T5 | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
 | T6 | `stores` (App Store Connect, Google Play) tools and review replies | T1 |
 | T7 | `act` level rollout: allow-lists, spend caps enforcement, ads tooling | T3–T6 |
@@ -340,19 +374,16 @@ Each milestone ships behind the global mode switch and adds its own
 Python unit tests (`test_board_tools.py`, fakes for every external API)
 plus Vitest coverage for new hooks.
 
-## 11. Decisions still needed before starting
+## 11. Remaining decisions
 
-1. **Bank**: which Hong Kong bank holds the account, and does it offer
-   email alerts for incoming FPS/transfers (drives §5.6 step 1)?
-2. **Mail provider** for `siutindei.com` today (Google Workspace,
-   Cloudflare Email Routing, other) — determines whether forwarding is per
-   mailbox or catch-all.
-3. **siutindei AWS account**: same account as the `lxsoftware` stack or
-   separate (drives the Data API role shape)?
-4. **Meta**: is there a Business Manager with the Page, IG account and the
-   WhatsApp number already grouped, and is the number currently on the
-   WhatsApp Business app (coexistence needed) or unused by any app?
-5. **App stores**: are App Store Connect API keys and a Google Play service
-   account available, or do they need to be created?
-6. **Listing pricing**: an initial `listing_plans` row set (even a
-   placeholder) so invoices can be drafted from day one.
+All six pre-start questions are answered (§1). Two items are deferred, not
+blocking, and the board itself can work on them once T1 ships:
+
+1. **Which HK account to open** — API-first (Airwallex/Statrys/Aspire) or a
+   traditional bank; decides which T4b adapter is built. Suggested first CFO
+   deep-dive topic.
+2. **Listing prices** — decides the first `listing_plans` rows; suggested
+   first CFO/CPO stand-up action, approved through the queue.
+
+Sign-off needed only on: starting **T1** (tool loop, GitHub + board tools,
+approvals queue, permission matrix UI).
