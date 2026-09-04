@@ -7,6 +7,7 @@ import { BoardCharterEditor } from "./BoardCharterEditor";
 import { BoardChatOffcanvas } from "./BoardChatOffcanvas";
 import { BoardHeaderStrip } from "./BoardHeaderStrip";
 import { BoardMailView } from "./BoardMailView";
+import { BoardReceivablesView } from "./BoardReceivablesView";
 import { BoardMeetingHistory } from "./BoardMeetingHistory";
 import { BoardMeetingPanel } from "./BoardMeetingPanel";
 import { BoardMemberEditor } from "./BoardMemberEditor";
@@ -29,7 +30,7 @@ import {
 import { getAdminApiErrorMessage } from "../../lib/apiAdminClient";
 import { effectiveToolLevel, type BoardMeetingMode } from "../../lib/boardModel";
 
-type BoardSection = "actions" | "approvals" | "mail" | "meetings" | "members" | "brief" | "settings";
+type BoardSection = "actions" | "approvals" | "mail" | "receivables" | "meetings" | "members" | "brief" | "settings";
 
 const CLOSED_MEETING = "__closed__";
 
@@ -37,6 +38,7 @@ const SECTIONS: readonly { readonly id: BoardSection; readonly label: string; re
   { id: "actions", label: "Next actions", icon: "bi-list-check" },
   { id: "approvals", label: "Approvals", icon: "bi-shield-check" },
   { id: "mail", label: "Mail", icon: "bi-envelope" },
+  { id: "receivables", label: "Receivables", icon: "bi-receipt" },
   { id: "meetings", label: "Meetings", icon: "bi-people" },
   { id: "members", label: "Board members", icon: "bi-person-badge" },
   { id: "brief", label: "Charter & brief", icon: "bi-journal-richtext" },
@@ -170,6 +172,9 @@ export function ExecutiveBoardTab() {
                   {s.id === "mail" && overview.unreadMailCount > 0 ? (
                     <span className="badge rounded-pill text-bg-light border ms-2">{overview.unreadMailCount}</span>
                   ) : null}
+                  {s.id === "receivables" && (overview.overdueInvoiceCount ?? 0) > 0 ? (
+                    <span className="badge rounded-pill text-bg-warning ms-2">{overview.overdueInvoiceCount}</span>
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -206,6 +211,10 @@ export function ExecutiveBoardTab() {
               onFocusConsumed={() => setFocusThreadId(null)}
               errorText={errorText}
             />
+          ) : null}
+
+          {section === "receivables" ? (
+            <BoardReceivablesView overdueCount={overview.overdueInvoiceCount} errorText={errorText} />
           ) : null}
 
           {section === "meetings" ? (
