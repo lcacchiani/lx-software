@@ -1,11 +1,15 @@
 import {
   BOARD_PERSONA_DEFAULTS,
+  BOARD_TOOL_DEFINITIONS,
+  BOARD_TOOL_LEVELS,
   type BoardActionPriority,
   type BoardActionStatus,
   type BoardMeetingMode,
+  type BoardToolGlobalMode,
+  type BoardToolLevel,
 } from "./contracts/generated";
 
-export type { BoardActionPriority, BoardActionStatus, BoardMeetingMode };
+export type { BoardActionPriority, BoardActionStatus, BoardMeetingMode, BoardToolGlobalMode, BoardToolLevel };
 
 export type BoardCharterField = "vision" | "mission" | "mandate";
 export const BOARD_CHARTER_FIELDS: readonly BoardCharterField[] = [
@@ -37,6 +41,15 @@ export type BoardMemberOverride = {
   readonly displayName?: string;
 };
 
+/** `{ toolId: { personaId: level } }` */
+export type BoardToolMatrix = Readonly<Record<string, Readonly<Record<string, BoardToolLevel>>>>;
+
+export type BoardToolsConfig = {
+  readonly enabled: boolean;
+  readonly globalMode: BoardToolGlobalMode;
+  readonly matrix: BoardToolMatrix;
+};
+
 export type BoardSettings = {
   readonly schedule: { readonly morningEnabled: boolean; readonly eveningEnabled: boolean };
   readonly defaultMode: BoardMeetingMode;
@@ -45,7 +58,84 @@ export type BoardSettings = {
   readonly shareRepoSnapshot: boolean;
   readonly models: { readonly chat: string; readonly standup: string; readonly deepDive: string };
   readonly dailyBudgetUsd: number;
+  readonly tools: BoardToolsConfig;
   readonly updatedAt?: string | null;
+};
+
+export type BoardToolOperation = {
+  readonly name: string;
+  readonly kind: "read" | "write";
+  readonly description: string;
+  readonly contexts: readonly string[];
+};
+
+export type BoardToolRegistryEntry = {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly maxLevel: BoardToolLevel;
+  readonly operations: readonly BoardToolOperation[];
+};
+
+export type BoardToolsPayload = {
+  readonly config: BoardToolsConfig;
+  readonly effective: BoardToolMatrix;
+  readonly enabled: boolean;
+  readonly envDisabled: boolean;
+  readonly registry: readonly BoardToolRegistryEntry[];
+  readonly defaults: BoardToolsConfig;
+  readonly repoWriteEnabled: boolean;
+};
+
+export type BoardToolCallStatus = "ok" | "error" | "pending_approval";
+
+/** One tool call as shown on a chat reply or a meeting transcript entry. */
+export type BoardToolCallRef = {
+  readonly callId: string;
+  readonly op: string;
+  readonly toolId: string;
+  readonly toolLabel: string;
+  readonly kind: "read" | "write";
+  readonly status: BoardToolCallStatus;
+  readonly summary: string;
+  readonly durationMs: number;
+  readonly approvalId?: string;
+  readonly error?: string;
+};
+
+/** Audit-log row (`GET /board/tools/calls`). */
+export type BoardToolCallLogEntry = BoardToolCallRef & {
+  readonly personaId: string;
+  readonly displayName: string;
+  readonly actor: "persona" | "owner";
+  readonly level: BoardToolLevel;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly resultPreview: string;
+  readonly context: { readonly kind: string; readonly meetingId?: string; readonly phase?: string; readonly jobId?: string };
+  readonly createdAt: string;
+};
+
+export type BoardApprovalStatus = "pending" | "approved" | "executed" | "rejected" | "failed";
+
+export type BoardApproval = {
+  readonly approvalId: string;
+  readonly status: BoardApprovalStatus;
+  readonly personaId: string;
+  readonly displayName: string;
+  readonly toolId: string;
+  readonly toolLabel: string;
+  readonly op: string;
+  readonly kind: "write";
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly summary: string;
+  readonly reason: string;
+  readonly context: { readonly kind: string; readonly meetingId?: string; readonly phase?: string; readonly jobId?: string };
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly decidedAt?: string;
+  readonly note?: string;
+  readonly result?: Readonly<Record<string, unknown>>;
+  readonly errorMessage?: string;
 };
 
 export type BoardCharter = {
