@@ -68,9 +68,18 @@ class FakeTable:
         item = self.items.get(self._key(Key))
         return {"Item": dict(item)} if item else {}
 
-    def put_item(self, Item: dict[str, Any], ConditionExpression: str | None = None, **_: Any) -> dict:
+    def put_item(
+        self,
+        Item: dict[str, Any],
+        ConditionExpression: str | None = None,
+        ExpressionAttributeNames: dict[str, str] | None = None,
+        ExpressionAttributeValues: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> dict:
         key = self._key(Item)
-        if ConditionExpression and "attribute_not_exists" in ConditionExpression and key in self.items:
+        if ConditionExpression and not self._evaluate(
+            ConditionExpression, self.items.get(key) or {}, ExpressionAttributeNames or {}, ExpressionAttributeValues or {}
+        ):
             raise self._conditional_error()
         self.items[key] = dict(Item)
         return {}

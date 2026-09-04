@@ -104,6 +104,27 @@ def _put_state(table: Any, suffix: str, doc: dict[str, Any]) -> None:
     )
 
 
+def _put_state_if_version(table: Any, suffix: str, doc: dict[str, Any], *, attr: str, expected: Any) -> bool:
+    """Optimistic write: succeed only when the stored ``attr`` still equals ``expected``.
+
+    ``expected=None`` means "no item yet". Returns False on a version conflict.
+    """
+    kwargs: dict[str, Any] = {"ConditionExpression": "attribute_not_exists(pk)"}
+    if expected is not None:
+        kwargs = {
+            "ConditionExpression": "attribute_not_exists(pk) OR #v = :expected",
+            "ExpressionAttributeNames": {"#v": attr},
+            "ExpressionAttributeValues": {":expected": expected},
+        }
+    try:
+        table.put_item(Item={"pk": board_pk(suffix), "sk": "STATE", **_to_ddb_nested(doc)}, **kwargs)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
+
+
 def _query_all(table: Any, **kwargs: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     start_key: dict[str, Any] | None = None

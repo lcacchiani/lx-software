@@ -27,6 +27,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from admin_runtime import _get_secretsmanager_client
+import board_deadline
 import board_pii
 import board_store
 from contract_constants import BOARD_STORES_CACHE_TTL_HOURS, BOARD_STORES_LIST_MAX
@@ -283,7 +284,7 @@ def play_access_token() -> str:
 # ---------------------------------------------------------------------------
 
 def _urlopen(req: urlrequest.Request, timeout: float | None = None) -> Any:
-    return urlrequest.urlopen(req, timeout=timeout or HTTP_TIMEOUT_SECONDS)
+    return urlrequest.urlopen(req, timeout=board_deadline.remaining(timeout or HTTP_TIMEOUT_SECONDS))
 
 
 def http_json(

@@ -28,6 +28,7 @@ from typing import Any, Callable
 import board_actions
 import board_aws
 import board_budget
+import board_deadline
 import board_github
 import board_mail
 import board_meta
@@ -1589,12 +1590,20 @@ def _invoke_op(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> dict[
     if timeout <= 0:
         result = op.run(ctx, arguments)
     else:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(op.run, ctx, arguments)
+        token = board_deadline.set_deadline(timeout)
+        # Not a ``with`` block: the context manager joins the worker on exit,
+        # which would make the caller wait out the whole slow op anyway.
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"board-op-{op.name}")
+        try:
+            future = pool.submit(board_deadline.bind_context(op.run), ctx, arguments)
             try:
                 result = future.result(timeout=timeout)
             except FuturesTimeout as exc:
+                _log_event("warning", tag="board_tool_timeout", op=op.name, timeoutSeconds=timeout)
                 raise TimeoutError(f"{op.name} timed out after {timeout}s") from exc
+        finally:
+            board_deadline.reset(token)
+            pool.shutdown(wait=False, cancel_futures=True)
     return result if isinstance(result, dict) else {"result": result}
 
 

@@ -27,6 +27,7 @@ from contract_constants import (
 from http_common import _log_event
 from openrouter_client import OpenRouterError, chat_completion, read_secret_string
 
+import board_deadline
 import board_store
 
 BRAVE_ORIGIN = "https://api.search.brave.com"
@@ -141,7 +142,7 @@ def _brave_search(query: str, *, count: int) -> list[dict[str, Any]]:
         },
     )
     try:
-        with urlrequest.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310
+        with urlrequest.urlopen(req, timeout=board_deadline.remaining(HTTP_TIMEOUT_SECONDS)) as resp:  # noqa: S310
             body = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
     except urlerror.HTTPError as exc:
         raise ResearchError(f"Brave Search returned status {exc.code}") from exc

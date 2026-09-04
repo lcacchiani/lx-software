@@ -26,6 +26,7 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 
 from admin_runtime import _get_secretsmanager_client
+import board_deadline
 from http_common import _log_event, _utc_iso_z
 from openrouter_client import OpenRouterError, read_secret_string
 
@@ -125,7 +126,7 @@ def _request(
         headers["Content-Type"] = "application/json"
     req = urlrequest.Request(url, data=data, method=method, headers=headers)  # noqa: S310 - fixed API origin
     try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with urlrequest.urlopen(req, timeout=board_deadline.remaining(timeout)) as resp:  # noqa: S310
             text = resp.read().decode("utf-8", errors="replace")
     except urlerror.HTTPError as exc:
         if exc.code == 404 and method == "GET":
