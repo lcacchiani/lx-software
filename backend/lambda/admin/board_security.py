@@ -11,6 +11,7 @@ Plan: docs/architecture/executive-board-tools-plan.md §4 ``security``.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import boto3
@@ -152,6 +153,65 @@ def fetch_access_analyzer(limit: int = 25) -> dict[str, Any]:
     return {"analyzerArn": arn, "count": len(findings), "findings": findings}
 
 
+def _metric_sum(results: list[dict[str, Any]], metric_id: str) -> int | None:
+    for row in results:
+        if row.get("Id") != metric_id:
+            continue
+        values = row.get("Values") or []
+        if not values:
+            return 0
+        return int(round(sum(float(v or 0) for v in values)))
+    return None
+
+
+def fetch_cognito_sign_in_metrics(pool_id: str) -> dict[str, Any]:
+    """24h ``AWS/Cognito`` sign-in counters via a Metrics Insights query.
+
+    Cognito publishes ``SignInSuccesses`` and ``SignInThrottles`` per
+    (UserPool, UserPoolClient); the ``SELECT`` aggregates across clients so
+    the read does not need to know the app-client ids. There is no
+    CloudWatch metric for failed sign-ins, and the per-user
+    ``AdminListUserAuthEvents`` API is neither granted nor PII-free, so
+    ``failedSignIns`` is always ``null``.
+    """
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=24)
+    safe_pool = pool_id.replace("'", "")
+    schema = 'SCHEMA("AWS/Cognito", UserPool,UserPoolClient)'
+    queries = [
+        {
+            "Id": "signInThrottles",
+            "Expression": f"SELECT SUM(SignInThrottles) FROM {schema} WHERE UserPool = '{safe_pool}'",
+            "Period": 3600,
+        },
+        {
+            "Id": "signInSuccesses",
+            "Expression": f"SELECT SUM(SignInSuccesses) FROM {schema} WHERE UserPool = '{safe_pool}'",
+            "Period": 3600,
+        },
+    ]
+    out: dict[str, Any] = {
+        "failedSignIns": None,
+        "signInThrottles24h": None,
+        "signInSuccesses24h": None,
+        "note": (
+            "Cognito publishes no failed-sign-in metric; signInThrottles24h and signInSuccesses24h come from "
+            "CloudWatch AWS/Cognito. Per-user auth events are not read (PII)."
+        ),
+    }
+    try:
+        resp = _client("cloudwatch").get_metric_data(MetricDataQueries=queries, StartTime=start, EndTime=end)
+    except ClientError as exc:
+        message = str(exc.response.get("Error", {}).get("Message", exc))[:160]
+        out["note"] = f"CloudWatch AWS/Cognito metrics unavailable: {message}. Failed sign-ins are not measured."
+        _log_event("warning", tag="board_security_cognito_metrics_failed", error=message)
+        return out
+    results = resp.get("MetricDataResults") or []
+    out["signInThrottles24h"] = _metric_sum(results, "signInThrottles")
+    out["signInSuccesses24h"] = _metric_sum(results, "signInSuccesses")
+    return out
+
+
 def fetch_cognito() -> dict[str, Any]:
     pool_id = user_pool_id()
     if not pool_id:
@@ -162,19 +222,27 @@ def fetch_cognito() -> dict[str, Any]:
         raise SecurityToolError(f"Cognito: {exc.response.get('Error', {}).get('Message', exc)}") from exc
     schema = pool.get("SchemaAttributes") or []
     mfa = pool.get("MfaConfiguration") or "OFF"
+    # ``UserPoolTier`` is a plain string (LITE | ESSENTIALS | PLUS) on modern pools;
+    # ``UserPoolAddOns`` is an optional dict on pools with threat protection.
+    tier = pool.get("UserPoolTier")
+    add_ons = pool.get("UserPoolAddOns")
+    advanced_mode = add_ons.get("AdvancedSecurityMode") if isinstance(add_ons, dict) else None
+    sign_ins = fetch_cognito_sign_in_metrics(pool_id)
     return {
         "userPoolId": pool_id,
         "mfa": mfa,
-        "advancedSecurityMode": (pool.get("UserPoolTier") or pool.get("UserPoolAddOns") or {}).get("AdvancedSecurityMode")
-        if isinstance(pool.get("UserPoolAddOns"), dict)
-        else None,
+        "tier": tier if isinstance(tier, str) else None,
+        "advancedSecurityMode": advanced_mode if isinstance(advanced_mode, str) else None,
         "estimatedUsers": pool.get("EstimatedNumberOfUsers"),
         "passwordPolicy": {
             "minLength": (pool.get("Policies") or {}).get("PasswordPolicy", {}).get("MinimumLength"),
             "requireMfa": mfa in ("ON", "OPTIONAL"),
         },
         "customAttributes": len(schema),
-        "note": "Failed-sign-in counts are not exposed (no PII listing of users). Check CloudWatch Cognito metrics if needed.",
+        "failedSignIns": sign_ins["failedSignIns"],
+        "signInThrottles24h": sign_ins["signInThrottles24h"],
+        "signInSuccesses24h": sign_ins["signInSuccesses24h"],
+        "note": sign_ins["note"],
     }
 
 

@@ -87,7 +87,30 @@ class FakeStoresHttp:
                 ]
             }
         elif "/v1/apps/app-1/perfPowerMetrics" in url:
-            payload = {"data": [{"id": "hang-1"}]}
+            payload = {
+                "productData": [
+                    {
+                        "platform": "iOS",
+                        "metricCategories": [
+                            {
+                                "identifier": "HANG",
+                                "metrics": [
+                                    {
+                                        "identifier": "hangRate",
+                                        "unit": {"identifier": "hoursPerHour"},
+                                        "datasets": [
+                                            {
+                                                "filterCriteria": {"percentile": "percentile.fifty", "device": "all_iphones"},
+                                                "points": [{"version": "1.3.0", "value": 0.05}, {"version": "1.4.0", "value": 0.02}],
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
         elif "/v1/apps/app-1" in url and method == "GET":
             payload = {"data": {"attributes": {"name": "siutindei", "bundleId": "com.siutindei.app"}}}
         elif "/v1/salesReports" in url:
@@ -114,8 +137,35 @@ class FakeStoresHttp:
                     }
                 ]
             }
-        elif "crashRateMetricSet" in url or "errorCountMetricSet" in url:
-            payload = {"rows": [{"metrics": {"crashRate": 0.01}}]}
+        elif url.endswith("/crashRateMetricSet") and method == "GET":
+            payload = {
+                "freshnessInfo": {
+                    "freshnesses": [
+                        {"aggregationPeriod": "DAILY", "latestEndTime": {"year": 2026, "month": 9, "day": 3}}
+                    ]
+                }
+            }
+        elif "crashRateMetricSet:query" in url:
+            payload = {
+                "rows": [
+                    {
+                        "aggregationPeriod": "DAILY",
+                        "startTime": {"year": 2026, "month": 9, "day": 2},
+                        "metrics": [
+                            {"metric": "crashRate", "decimalValue": {"value": "0.01"}},
+                            {"metric": "distinctUsers", "decimalValue": {"value": "120"}},
+                        ],
+                    },
+                    {
+                        "aggregationPeriod": "DAILY",
+                        "startTime": {"year": 2026, "month": 9, "day": 1},
+                        "metrics": [
+                            {"metric": "crashRate", "decimalValue": {"value": "0.03"}},
+                            {"metric": "distinctUsers", "decimalValue": {"value": "110"}},
+                        ],
+                    },
+                ]
+            }
         else:
             payload = {"data": []}
 
@@ -189,6 +239,13 @@ class TestStoresReads(StoresTestCase):
         self.assertEqual(metrics["apple"]["name"], "siutindei")
         self.assertEqual(metrics["apple"]["averageRating"], 5)
         self.assertEqual(metrics["play"]["packageName"], "com.siutindei.app")
+        # No ASC_VENDOR_NUMBER in this fixture: downloads are unavailable, never a fake zero.
+        self.assertFalse(metrics["apple"]["downloads"]["available"])
+        self.assertIn("ASC_VENDOR_NUMBER", metrics["apple"]["downloads"]["reason"])
+        self.assertIsNone(metrics["apple"]["installs"])
+        self.assertIsNone(metrics["play"]["installs"])
+        self.assertEqual(metrics["play"]["installsNote"], "not available from these APIs")
+        self.assertFalse(any("errorCountMetricSet" in url for _m, url, _b in self.http.calls))
         self.assertFalse(metrics["cached"])
         again = board_stores.op_metrics(ctx, {})
         self.assertTrue(again["cached"])
@@ -201,8 +258,19 @@ class TestStoresReads(StoresTestCase):
     def test_crashes_and_ratings_hit_both_stores(self) -> None:
         ctx = self._ctx()
         crashes = board_stores.op_crashes(ctx, {})
-        self.assertEqual(crashes["apple"]["count"], 1)
-        self.assertTrue(crashes["play"]["rows"])
+        self.assertEqual(crashes["apple"]["kind"], "hangs")
+        self.assertEqual(crashes["apple"]["metrics"][0]["identifier"], "hangRate")
+        self.assertEqual(crashes["apple"]["metrics"][0]["value"], 0.02)
+        self.assertEqual(crashes["apple"]["metrics"][0]["version"], "1.4.0")
+        self.assertIn("not crash counts", crashes["apple"]["note"])
+        self.assertTrue(crashes["play"]["available"])
+        self.assertEqual(crashes["play"]["latestCrashRate"], 0.01)
+        self.assertEqual(crashes["play"]["latestDate"], "2026-09-02")
+        self.assertEqual(crashes["play"]["windowEnd"], "2026-09-03")
+        self.assertEqual([d["date"] for d in crashes["play"]["days"]], ["2026-09-01", "2026-09-02"])
+        query = next(b for m, url, b in self.http.calls if "crashRateMetricSet:query" in url)
+        self.assertEqual(query["metrics"], ["crashRate", "distinctUsers"])
+        self.assertEqual(query["timelineSpec"]["endTime"]["day"], 3)
         ratings = board_stores.op_ratings(ctx, {})
         self.assertEqual(ratings["apple"]["averageRating"], 5)
         self.assertEqual(ratings["play"]["reviewCount"], 1)

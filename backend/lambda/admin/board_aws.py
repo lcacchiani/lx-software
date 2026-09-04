@@ -2,7 +2,10 @@
 
 Reads are cached under ``BOARD#…#cache`` and refreshed hourly by
 ``board_cache``. Results are filtered to resources tagged for the siutindei
-stacks (``BOARD_AWS_STACK_PREFIX``, default ``siutindei``). The board never
+stacks (``BOARD_AWS_STACK_PREFIX``, default ``siutindei``); when the tag
+filter matches nothing the cost read falls back to the whole account and
+says so (``scope: "account"``). Lambda health queries only the function
+names listed in ``BOARD_AWS_LAMBDA_NAMES``. The board never
 creates IAM, DNS or Cognito changes; ``aws_propose_budget_alert`` only
 queues an action item for the founder.
 
@@ -26,6 +29,19 @@ COST_CACHE = "aws:monthly_cost"
 ALARMS_CACHE = "aws:alarms"
 LAMBDA_CACHE = "aws:lambda_health"
 HEALTH_CACHE = "aws:health"
+COST_SCOPE_STACK = "siutindei"
+COST_SCOPE_ACCOUNT = "account"
+COST_ACCOUNT_NOTE = (
+    "The aws:cloudformation:stack-name tag filter matched no cost, so this is the whole account's spend, "
+    "not just the siutindei stacks."
+)
+# The siutindei product stacks live in a separate repository, so their deployed
+# Lambda function names are not known here. Operators set them with
+# ``BOARD_AWS_LAMBDA_NAMES`` (comma-separated, real function names as shown in
+# the Lambda console, not CloudFormation logical ids). An empty list means the
+# health read reports "no functions configured" instead of guessing.
+DEFAULT_LAMBDA_NAMES: tuple[str, ...] = ()
+NO_FUNCTIONS_NOTE = "no functions configured; set BOARD_AWS_LAMBDA_NAMES to the deployed siutindei Lambda function names"
 
 
 class AwsToolError(RuntimeError):
@@ -34,6 +50,19 @@ class AwsToolError(RuntimeError):
 
 def stack_prefix() -> str:
     return (os.environ.get("BOARD_AWS_STACK_PREFIX") or STACK_PREFIX_DEFAULT).strip() or STACK_PREFIX_DEFAULT
+
+
+def lambda_function_names() -> list[str]:
+    """Real Lambda function names to query, from ``BOARD_AWS_LAMBDA_NAMES``."""
+    raw = os.environ.get("BOARD_AWS_LAMBDA_NAMES")
+    if raw is None:
+        return list(DEFAULT_LAMBDA_NAMES)
+    names: list[str] = []
+    for part in raw.split(","):
+        name = part.strip()
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _client(service: str, *, region: str | None = None) -> Any:
@@ -75,36 +104,26 @@ def _matches_prefix(name: str) -> bool:
     return prefix in name.lower()
 
 
-def fetch_monthly_cost() -> dict[str, Any]:
-    end = datetime.now(timezone.utc).date()
-    start = (end.replace(day=1) - timedelta(days=1)).replace(day=1)
-    end_month = end.replace(day=1)
-    try:
-        resp = _ce().get_cost_and_usage(
-            TimePeriod={"Start": start.isoformat(), "End": end_month.isoformat()},
-            Granularity="MONTHLY",
-            Metrics=["UnblendedCost"],
-            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-            Filter={
-                "Tags": {
-                    "Key": "aws:cloudformation:stack-name",
-                    "Values": [stack_prefix()],
-                    "MatchOptions": ["STARTS_WITH"],
-                }
-            },
-        )
-    except ClientError as exc:
-        # Tag filter can fail on empty Cost Explorer; retry unfiltered and label it.
-        if exc.response.get("Error", {}).get("Code") in ("ValidationException", "DataUnavailableException"):
-            resp = _ce().get_cost_and_usage(
-                TimePeriod={"Start": start.isoformat(), "End": end_month.isoformat()},
-                Granularity="MONTHLY",
-                Metrics=["UnblendedCost"],
-                GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-            )
-        else:
-            raise AwsToolError(f"Cost Explorer: {exc.response.get('Error', {}).get('Message', exc)}") from exc
-    results = []
+def _cost_query(start: str, end: str, *, filtered: bool) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "TimePeriod": {"Start": start, "End": end},
+        "Granularity": "MONTHLY",
+        "Metrics": ["UnblendedCost"],
+        "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
+    }
+    if filtered:
+        kwargs["Filter"] = {
+            "Tags": {
+                "Key": "aws:cloudformation:stack-name",
+                "Values": [stack_prefix()],
+                "MatchOptions": ["STARTS_WITH"],
+            }
+        }
+    return _ce().get_cost_and_usage(**kwargs)
+
+
+def _cost_rows(resp: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
+    results: list[dict[str, Any]] = []
     total = 0.0
     for period in resp.get("ResultsByTime") or []:
         for group in period.get("Groups") or []:
@@ -115,10 +134,39 @@ def fetch_monthly_cost() -> dict[str, Any]:
             total += amount
             results.append({"service": keys[0], "usd": round(amount, 2)})
     results.sort(key=lambda r: r["usd"], reverse=True)
+    return results, total
+
+
+def fetch_monthly_cost() -> dict[str, Any]:
+    end = datetime.now(timezone.utc).date()
+    start = (end.replace(day=1) - timedelta(days=1)).replace(day=1)
+    end_month = end.replace(day=1)
+    scope = COST_SCOPE_STACK
+    note = ""
+    results: list[dict[str, Any]] = []
+    total = 0.0
+    try:
+        results, total = _cost_rows(_cost_query(start.isoformat(), end_month.isoformat(), filtered=True))
+    except ClientError as exc:
+        # The tag filter can fail on an account with no Cost Explorer tag data yet.
+        if exc.response.get("Error", {}).get("Code") not in ("ValidationException", "DataUnavailableException"):
+            raise AwsToolError(f"Cost Explorer: {exc.response.get('Error', {}).get('Message', exc)}") from exc
+        scope = COST_SCOPE_ACCOUNT
+    if scope == COST_SCOPE_STACK and not results:
+        scope = COST_SCOPE_ACCOUNT
+    if scope == COST_SCOPE_ACCOUNT:
+        note = COST_ACCOUNT_NOTE
+        _log_event("info", tag="board_aws_cost_account_fallback", stackPrefix=stack_prefix())
+        try:
+            results, total = _cost_rows(_cost_query(start.isoformat(), end_month.isoformat(), filtered=False))
+        except ClientError as exc:
+            raise AwsToolError(f"Cost Explorer: {exc.response.get('Error', {}).get('Message', exc)}") from exc
     return {
         "periodStart": start.isoformat(),
         "periodEnd": end_month.isoformat(),
         "stackPrefix": stack_prefix(),
+        "scope": scope,
+        "note": note,
         "totalUsd": round(total, 2),
         "byService": results[:15],
     }
@@ -152,11 +200,9 @@ def fetch_alarms() -> dict[str, Any]:
 def fetch_lambda_health() -> dict[str, Any]:
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=24)
-    functions = [
-        "AdminApiFn",
-        "InboundStatementMailFn",
-        "PublicApiAuthorizerFn",
-    ]
+    functions = lambda_function_names()
+    if not functions:
+        return {"windowHours": 24, "functionNames": [], "functions": [], "note": NO_FUNCTIONS_NOTE}
     out: list[dict[str, Any]] = []
     for fn in functions:
         try:
@@ -197,7 +243,7 @@ def fetch_lambda_health() -> dict[str, Any]:
         errors = float((values.get("errors") or [0])[-1] or 0)
         duration = float((values.get("duration") or [0])[-1] or 0)
         out.append({"function": fn, "errors24h": int(errors), "avgDurationMs": round(duration, 1)})
-    return {"windowHours": 24, "functions": out}
+    return {"windowHours": 24, "functionNames": functions, "functions": out}
 
 
 def fetch_health_events() -> dict[str, Any]:

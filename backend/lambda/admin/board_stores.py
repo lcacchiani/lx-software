@@ -1,9 +1,19 @@
 """Executive Board ``stores`` tools: App Store Connect and Google Play.
 
-Reads (downloads, installs, crashes, ratings, review text/status) are cached
-under ``BOARD#…#cache`` and refreshed by the hourly ``board_cache`` schedule.
-Writes: reply to a customer review (CMO may ``act``); release-notes drafts
-always stay in Approvals (plan §4).
+Reads are cached under ``BOARD#…#cache`` and refreshed by the hourly
+``board_cache`` schedule. What is actually measured:
+
+- Apple downloads: yesterday's DAILY ``salesReports`` (SALES/SUMMARY, gzip
+  TSV) for ``ASC_VENDOR_NUMBER``; unavailable without a vendor number.
+- Apple "crashes": hang/performance metrics from ``perfPowerMetrics`` —
+  the API has no crash counts.
+- Play crash rate: ``crashRateMetricSet:query`` (DAILY, last 7 days).
+- Installs (both stores): ``null`` — not available from these APIs.
+- Ratings / reviews / replies: customer review endpoints.
+
+Missing credentials or env produce a structured ``{"available": false,
+"reason": ...}`` instead of fake zeros. Writes: reply to a customer review
+(CMO may ``act``); release-notes drafts always stay in Approvals (plan §4).
 
 App Store Connect JWTs are ES256, signed in this Lambda from the
 ``AppStoreConnectKey`` secret. Play uses a service-account JWT exchanged
@@ -15,12 +25,15 @@ Plan: docs/architecture/executive-board-tools-plan.md §4 ``stores``.
 from __future__ import annotations
 
 import base64
+import csv
+import gzip
+import io
 import json
 import os
 import subprocess
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib import error as urlerror
 from urllib import parse as urlparse
@@ -98,12 +111,14 @@ def _asc_secret() -> dict[str, str]:
     issuer = str(raw.get("issuerId") or raw.get("iss") or "").strip()
     pem = str(raw.get("privateKey") or raw.get("p8") or raw.get("key") or "").strip()
     app_id = str(raw.get("appId") or raw.get("app_id") or os.environ.get("APP_STORE_CONNECT_APP_ID") or "").strip()
+    vendor = str(raw.get("vendorNumber") or raw.get("vendor_number") or os.environ.get("ASC_VENDOR_NUMBER") or "").strip()
     token = (os.environ.get("APP_STORE_CONNECT_TOKEN") or "").strip()
     _asc_creds = {
         "keyId": key_id,
         "issuerId": issuer,
         "privateKey": pem,
         "appId": app_id,
+        "vendorNumber": vendor,
         "token": token,
     }
     return _asc_creds
@@ -155,6 +170,10 @@ def apple_app_id() -> str:
     return _asc_secret().get("appId") or ""
 
 
+def apple_vendor_number() -> str:
+    return _asc_secret().get("vendorNumber") or ""
+
+
 def play_package() -> str:
     return _play_secret().get("packageName") or ""
 
@@ -165,9 +184,15 @@ def status_summary() -> dict[str, Any]:
         "appleConfigured": apple_configured(),
         "playConfigured": play_configured(),
         "appleAppIdSet": bool(apple_app_id()),
+        "appleVendorNumberSet": bool(apple_vendor_number()),
         "playPackageSet": bool(play_package()),
         "cacheTtlHours": BOARD_STORES_CACHE_TTL_HOURS,
     }
+
+
+def unavailable(reason: str) -> dict[str, Any]:
+    """Structured "we could not measure this" marker; never a fake zero."""
+    return {"available": False, "reason": reason[:200]}
 
 
 # ---------------------------------------------------------------------------
@@ -287,14 +312,14 @@ def _urlopen(req: urlrequest.Request, timeout: float | None = None) -> Any:
     return urlrequest.urlopen(req, timeout=board_deadline.remaining(timeout or HTTP_TIMEOUT_SECONDS))
 
 
-def http_json(
+def http_bytes(
     method: str,
     url: str,
     *,
     headers: dict[str, str] | None = None,
     body: dict[str, Any] | None = None,
     form: dict[str, str] | None = None,
-) -> dict[str, Any]:
+) -> bytes:
     hdrs = dict(headers or {})
     data: bytes | None = None
     if form is not None:
@@ -306,12 +331,23 @@ def http_json(
     req = urlrequest.Request(url, data=data, headers=hdrs, method=method)
     try:
         with _urlopen(req) as resp:
-            raw = resp.read()
+            return resp.read() or b""
     except urlerror.HTTPError as exc:
         err = exc.read().decode("utf-8", "replace")[:300]
         raise StoresError(f"{method} {url.split('?', 1)[0]} failed ({exc.code}): {err}") from exc
     except urlerror.URLError as exc:
         raise StoresError(f"{method} {url.split('?', 1)[0]} failed: {exc.reason}") from exc
+
+
+def http_json(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: dict[str, Any] | None = None,
+    form: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    raw = http_bytes(method, url, headers=headers, body=body, form=form)
     if not raw:
         return {}
     try:
@@ -395,6 +431,100 @@ def _read(table: Any, name: str, fetcher: Any) -> dict[str, Any]:
 # Reads
 # ---------------------------------------------------------------------------
 
+def _gunzip_text(raw: bytes) -> str:
+    """Apple serves sales reports as gzip; fall back to plain text (e.g. JSON errors)."""
+    try:
+        return gzip.decompress(raw).decode("utf-8", "replace")
+    except (OSError, EOFError):
+        return raw.decode("utf-8", "replace")
+
+
+def _product_kind(product_type: str) -> str | None:
+    """Map an Apple ``Product Type Identifier`` to download / update / redownload."""
+    code = product_type.strip().upper()
+    if code.startswith("F") and len(code) > 1:
+        code = code[1:]
+    if code.startswith("IA"):
+        return None
+    if code.startswith("1"):
+        return "firstTimeDownloads"
+    if code.startswith("7"):
+        return "updates"
+    if code.startswith("3"):
+        return "redownloads"
+    return None
+
+
+def parse_sales_report_tsv(text: str, app_id: str = "") -> dict[str, Any]:
+    """Sum ``Units`` in a SALES/SUMMARY report, optionally for one Apple Identifier."""
+    reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+    totals = {"firstTimeDownloads": 0, "updates": 0, "redownloads": 0}
+    by_country: dict[str, int] = {}
+    rows = 0
+    for row in reader:
+        if app_id and str(row.get("Apple Identifier") or "").strip() != app_id:
+            continue
+        kind = _product_kind(str(row.get("Product Type Identifier") or ""))
+        if kind is None:
+            continue
+        try:
+            units = int(float(str(row.get("Units") or "0").strip() or 0))
+        except ValueError:
+            continue
+        rows += 1
+        totals[kind] += units
+        if kind == "firstTimeDownloads":
+            country = str(row.get("Country Code") or "").strip() or "??"
+            by_country[country] = by_country.get(country, 0) + units
+    top = sorted(by_country.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    return {**totals, "rows": rows, "topCountries": [{"country": c, "units": u} for c, u in top]}
+
+
+def fetch_asc_downloads(app_id: str) -> dict[str, Any]:
+    """Yesterday's DAILY SALES/SUMMARY report for the vendor, parsed for units."""
+    vendor = apple_vendor_number()
+    if not vendor:
+        return unavailable("ASC_VENDOR_NUMBER is not set; salesReports need filter[vendorNumber]")
+    report_date = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    params = {
+        "filter[frequency]": "DAILY",
+        "filter[reportType]": "SALES",
+        "filter[reportSubType]": "SUMMARY",
+        "filter[vendorNumber]": vendor,
+        "filter[reportDate]": report_date,
+    }
+    url = ASC_ORIGIN + "/v1/salesReports?" + urlparse.urlencode(params)
+    try:
+        raw = http_bytes(
+            "GET",
+            url,
+            headers={"Authorization": f"Bearer {asc_token()}", "Accept": "application/a-gzip"},
+        )
+    except StoresError as exc:
+        return {**unavailable(str(exc)), "reportDate": report_date}
+    if not raw:
+        return {**unavailable("salesReports returned an empty body"), "reportDate": report_date}
+    text = _gunzip_text(raw)
+    if text.lstrip().startswith("{"):
+        try:
+            errors = json.loads(text).get("errors") or []
+        except (json.JSONDecodeError, AttributeError):
+            errors = []
+        detail = str((errors[0] or {}).get("detail") or "salesReports returned JSON instead of a report") if errors else "salesReports returned JSON instead of a report"
+        return {**unavailable(detail), "reportDate": report_date}
+    parsed = parse_sales_report_tsv(text, app_id)
+    return {
+        "available": True,
+        "reportDate": report_date,
+        "source": "salesReports DAILY SALES SUMMARY",
+        "units": parsed["firstTimeDownloads"],
+        **parsed,
+    }
+
+
+INSTALLS_NOTE = "not available from these APIs"
+
+
 def fetch_asc_metrics() -> dict[str, Any]:
     app_id = apple_app_id()
     if not app_id:
@@ -407,16 +537,9 @@ def fetch_asc_metrics() -> dict[str, Any]:
     reviews = list_asc_reviews(BOARD_STORES_LIST_MAX)
     ratings = [int(r["rating"]) for r in reviews if r.get("rating") is not None]
     avg = round(sum(ratings) / len(ratings), 2) if ratings else None
-    downloads: Any = None
-    try:
-        sales = asc(
-            "GET",
-            "/v1/salesReports",
-            params={"filter[frequency]": "DAILY", "filter[reportType]": "SALES", "filter[reportSubType]": "SUMMARY"},
-        )
-        downloads = {"available": True, "note": "salesReports requested", "keys": list(sales.keys())[:6]}
-    except StoresError as exc:
-        downloads = {"available": False, "note": str(exc)[:160]}
+    downloads = fetch_asc_downloads(app_id)
+    if not downloads.get("available"):
+        _log_event("info", tag="board_stores_asc_downloads_unavailable", reason=str(downloads.get("reason"))[:160])
     return {
         "store": "apple",
         "appId": app_id,
@@ -427,7 +550,8 @@ def fetch_asc_metrics() -> dict[str, Any]:
         "averageRating": avg,
         "reviewCount": len(reviews),
         "downloads": downloads,
-        "installs": downloads,
+        "installs": None,
+        "installsNote": INSTALLS_NOTE,
     }
 
 
@@ -438,23 +562,15 @@ def fetch_play_metrics() -> dict[str, Any]:
     reviews = list_play_reviews(BOARD_STORES_LIST_MAX)
     ratings = [int(r["rating"]) for r in reviews if r.get("rating") is not None]
     avg = round(sum(ratings) / len(ratings), 2) if ratings else None
-    installs: Any = None
-    try:
-        data = play(
-            "POST",
-            f"/v1beta1/apps/{package}/errorCountMetricSet:query",
-            body={"timelineSpec": {"aggregationPeriod": "DAILY"}},
-        )
-        installs = {"available": True, "reporting": "errorCountMetricSet", "keys": list(data.keys())[:6]}
-    except StoresError as exc:
-        installs = {"available": False, "note": str(exc)[:160]}
     return {
         "store": "play",
         "packageName": package,
         "averageRating": avg,
         "reviewCount": len(reviews),
-        "downloads": installs,
-        "installs": installs,
+        "downloads": None,
+        "downloadsNote": INSTALLS_NOTE,
+        "installs": None,
+        "installsNote": INSTALLS_NOTE,
     }
 
 
@@ -476,29 +592,143 @@ def fetch_metrics() -> dict[str, Any]:
     return {"apple": apple, "play": google}
 
 
+APPLE_HANGS_NOTE = (
+    "App Store Connect exposes hang/performance metrics (perfPowerMetrics), not crash counts; "
+    "crash logs live in Xcode Organizer."
+)
+
+
+def _asc_hang_metrics(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten ``productData[].metricCategories[].metrics[]`` to (identifier, unit, latest p50 point)."""
+    out: list[dict[str, Any]] = []
+    for product in data.get("productData") or []:
+        if not isinstance(product, dict):
+            continue
+        for category in product.get("metricCategories") or []:
+            if not isinstance(category, dict):
+                continue
+            for metric in category.get("metrics") or []:
+                if not isinstance(metric, dict):
+                    continue
+                datasets = [d for d in metric.get("datasets") or [] if isinstance(d, dict)]
+                chosen = next(
+                    (d for d in datasets if "fifty" in str((d.get("filterCriteria") or {}).get("percentile") or "")),
+                    datasets[0] if datasets else None,
+                )
+                points = [p for p in (chosen or {}).get("points") or [] if isinstance(p, dict)]
+                latest = points[-1] if points else {}
+                unit = metric.get("unit")
+                out.append(
+                    {
+                        "platform": product.get("platform"),
+                        "category": category.get("identifier"),
+                        "identifier": metric.get("identifier"),
+                        "unit": unit.get("identifier") if isinstance(unit, dict) else unit,
+                        "version": latest.get("version"),
+                        "value": latest.get("value"),
+                    }
+                )
+    return out
+
+
+def fetch_asc_hangs(app_id: str) -> dict[str, Any]:
+    try:
+        data = asc(
+            "GET",
+            f"/v1/apps/{app_id}/perfPowerMetrics",
+            params={"filter[deviceType]": "all_iphones", "filter[metricType]": "HANG"},
+        )
+    except StoresError as exc:
+        return unavailable(str(exc))
+    metrics = _asc_hang_metrics(data)
+    if not metrics:
+        return unavailable("perfPowerMetrics returned no hang data (needs enough opted-in devices)")
+    return {"available": True, "kind": "hangs", "source": "perfPowerMetrics HANG", "metrics": metrics[:10], "note": APPLE_HANGS_NOTE}
+
+
+def _play_date(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return date(int(value.get("year")), int(value.get("month")), int(value.get("day"))).isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _play_date_obj(day: date) -> dict[str, Any]:
+    return {"year": day.year, "month": day.month, "day": day.day, "timeZone": {"id": "America/Los_Angeles"}}
+
+
+def fetch_play_crash_rate(package: str, days: int = 7) -> dict[str, Any]:
+    """DAILY ``crashRate`` / ``distinctUsers`` from the Play Developer Reporting API."""
+    end_day = datetime.now(timezone.utc).date() - timedelta(days=1)
+    try:
+        meta = play("GET", f"/v1beta1/apps/{package}/crashRateMetricSet")
+        for fresh in (meta.get("freshnessInfo") or {}).get("freshnesses") or []:
+            if isinstance(fresh, dict) and fresh.get("aggregationPeriod") == "DAILY":
+                latest = _play_date(fresh.get("latestEndTime"))
+                if latest:
+                    end_day = date.fromisoformat(latest)
+    except StoresError as exc:
+        _log_event("info", tag="board_stores_play_freshness_unavailable", error=str(exc)[:160])
+    start_day = end_day - timedelta(days=days)
+    try:
+        data = play(
+            "POST",
+            f"/v1beta1/apps/{package}/crashRateMetricSet:query",
+            body={
+                "timelineSpec": {
+                    "aggregationPeriod": "DAILY",
+                    "startTime": _play_date_obj(start_day),
+                    "endTime": _play_date_obj(end_day),
+                },
+                "metrics": ["crashRate", "distinctUsers"],
+                "dimensions": [],
+            },
+        )
+    except StoresError as exc:
+        return unavailable(str(exc))
+    series: list[dict[str, Any]] = []
+    for row in data.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        values: dict[str, float | None] = {}
+        for metric in row.get("metrics") or []:
+            if not isinstance(metric, dict):
+                continue
+            raw = (metric.get("decimalValue") or {}).get("value")
+            try:
+                values[str(metric.get("metric"))] = float(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                values[str(metric.get("metric"))] = None
+        series.append(
+            {
+                "date": _play_date(row.get("startTime")),
+                "crashRate": values.get("crashRate"),
+                "distinctUsers": values.get("distinctUsers"),
+            }
+        )
+    series.sort(key=lambda r: r.get("date") or "")
+    latest = next((r for r in reversed(series) if r.get("crashRate") is not None), None)
+    return {
+        "available": True,
+        "source": "crashRateMetricSet DAILY",
+        "windowStart": start_day.isoformat(),
+        "windowEnd": end_day.isoformat(),
+        "latestCrashRate": latest.get("crashRate") if latest else None,
+        "latestDate": latest.get("date") if latest else None,
+        "days": series,
+        "note": "" if series else "no crash-rate rows for the window (Play needs enough users per day)",
+    }
+
+
 def fetch_crashes() -> dict[str, Any]:
     apple: dict[str, Any] = {}
     google: dict[str, Any] = {}
     if apple_configured() and apple_app_id():
-        try:
-            data = asc(
-                "GET",
-                f"/v1/apps/{apple_app_id()}/perfPowerMetrics",
-                params={"filter[deviceTypes]": "ALL", "filter[metricTypes]": "HANG"},
-            )
-            apple = {"count": len(data.get("data") or data.get("productData") or []), "rawKeys": list(data.keys())[:8]}
-        except StoresError as exc:
-            apple = {"error": str(exc)[:200]}
+        apple = fetch_asc_hangs(apple_app_id())
     if play_configured() and play_package():
-        try:
-            data = play(
-                "POST",
-                f"/v1beta1/apps/{play_package()}/crashRateMetricSet:query",
-                body={"timelineSpec": {"aggregationPeriod": "DAILY"}},
-            )
-            google = {"keys": list(data.keys())[:8], "rows": (data.get("rows") or [])[:5]}
-        except StoresError as exc:
-            google = {"error": str(exc)[:200]}
+        google = fetch_play_crash_rate(play_package())
     return {"apple": apple, "play": google}
 
 

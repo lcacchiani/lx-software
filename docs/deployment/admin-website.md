@@ -241,7 +241,8 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:BoardGitHubRepo` | `owner/name` of the repository to read (default `lx-software-ltd/siutindei`). |
 | `lxsoftware:BoardToolsEnabled` | `true` (default) / `false`. Deploy-time kill switch for every board tool call, independent of the in-app settings. |
 | `lxsoftware:SearchApiKeySecretArn` | Secrets Manager secret holding a **Brave Search** API key for the `research` tool. Leave blank to fall back to OpenRouter `:online` (uses the existing OpenRouter key and costs more). |
-| `lxsoftware:BoardAwsStackPrefix` | CloudFormation stack-name prefix used to filter Cost Explorer / CloudWatch results (default `siutindei`). |
+| `lxsoftware:BoardAwsStackPrefix` | CloudFormation stack-name prefix used to filter Cost Explorer / CloudWatch results (default `siutindei`). When no cost rows carry the tag, `aws_monthly_cost` falls back to the whole account and labels the result `scope: account`. |
+| `lxsoftware:BoardAwsLambdaNames` | Comma-separated Lambda function names (the siutindei stack lives in another repo, so they cannot be derived here). `aws_lambda_health` reports 24h errors/duration for exactly these; empty means "no functions configured". |
 | `lxsoftware:SiutindeiClusterArn` | Aurora cluster ARN for the siutindei database (RDS Data API). Required for Executive Board `finance` and `product` tools. Leave blank to keep those tools returning a clear "not configured" error. |
 | `lxsoftware:SiutindeiDbSecretArn` | Secrets Manager ARN of the siutindei DB credentials the Data API uses. |
 | `lxsoftware:MetaBoardTokenSecretArn` | System User long-lived token for the Page / Instagram / WhatsApp Cloud API. |
@@ -251,6 +252,7 @@ Stack parameters (all optional, set in `backend/infrastructure/params/*.json`):
 | `lxsoftware:AppStoreConnectKeySecretArn` | Secrets Manager secret: App Store Connect API key JSON (`keyId`, `issuerId`, `privateKey`, optional `appId`). JWT is signed in `AdminApiFn`. |
 | `lxsoftware:GooglePlayServiceAccountSecretArn` | Secrets Manager secret: Google Play service-account JSON (optional `packageName`). |
 | `lxsoftware:AppStoreConnectAppId` / `GooglePlayPackageName` | App id / package if they are not already inside the secrets. |
+| `lxsoftware:AppStoreConnectVendorNumber` | App Store Connect vendor number (Payments and Financial Reports page). Needed for Apple download counts, which come from yesterday's daily `SALES`/`SUMMARY` report; may also be stored as `vendorNumber` inside the key secret. Installs are not exposed by either store API and are reported as `null`. |
 | `lxsoftware:BoardMailDomain` | Domain the board indexes (default `siutindei.com`). Every mailbox at this domain is copied to the board's SES inbound address by the Cloudflare Email Worker. |
 | `lxsoftware:BoardMailSendingEnabled` | `false` (default) / `true`. Flip to `true` only after the DKIM CNAMEs, SPF `include:amazonses.com`, and DMARC are in the `BoardMailDomain` zone. Creates the SES sending identity and the IAM send policy; until then mail tools stay read-only. |
 | `lxsoftware:BoardChatModel` / `BoardMeetingModel` / `BoardDeepDiveModel` | Default OpenRouter model slugs (`openai/gpt-4.1-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-sonnet-4`). The owner can override them per board in **Settings**. |
@@ -444,7 +446,8 @@ Design: [`docs/architecture/executive-board-tools-plan.md`](../architecture/exec
    `packageName` if it is not passed as `GooglePlayPackageName`) and pass
    the ARN as `lxsoftware:GooglePlayServiceAccountSecretArn`.
 3. Set `AppStoreConnectAppId` and `GooglePlayPackageName` if they are not
-   inside the secrets. Until at least one store is configured the `stores`
+   inside the secrets, plus `AppStoreConnectVendorNumber` for Apple
+   downloads. Until at least one store is configured the `stores`
    tools return a clear error; the hourly cache refresh skips them.
 4. Reads (`stores_metrics`, `stores_crashes`, `stores_ratings`,
    `stores_list_reviews`) are cached 20 hours and refreshed by

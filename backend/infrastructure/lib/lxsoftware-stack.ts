@@ -322,6 +322,16 @@ export class LxsoftwareStack extends cdk.Stack {
           "App Store Connect app id (numeric). May also live inside the AppStoreConnectKey secret.",
       }
     );
+    const appStoreConnectVendorNumber = new cdk.CfnParameter(
+      this,
+      "AppStoreConnectVendorNumber",
+      {
+        type: "String",
+        default: "",
+        description:
+          "App Store Connect vendor number used to download daily sales reports (stores_metrics downloads). May also live inside the AppStoreConnectKey secret as vendorNumber.",
+      }
+    );
     const googlePlayPackageName = new cdk.CfnParameter(
       this,
       "GooglePlayPackageName",
@@ -362,6 +372,16 @@ export class LxsoftwareStack extends cdk.Stack {
         default: "siutindei",
         description:
           "CloudFormation stack-name prefix used to filter Cost Explorer and CloudWatch results for the Executive Board aws tool.",
+      }
+    );
+    const boardAwsLambdaNames = new cdk.CfnParameter(
+      this,
+      "BoardAwsLambdaNames",
+      {
+        type: "String",
+        default: "",
+        description:
+          "Comma-separated Lambda function names (siutindei stack) whose 24h errors/duration the Executive Board aws_lambda_health tool reports. Empty disables the read.",
       }
     );
     const boardToolsEnabled = new cdk.CfnParameter(this, "BoardToolsEnabled", {
@@ -743,6 +763,7 @@ export class LxsoftwareStack extends cdk.Stack {
         BOARD_TOOLS_ENABLED: boardToolsEnabled.valueAsString,
         SEARCH_API_KEY_SECRET_ARN: searchApiKeySecretArn.valueAsString,
         BOARD_AWS_STACK_PREFIX: boardAwsStackPrefix.valueAsString,
+        BOARD_AWS_LAMBDA_NAMES: boardAwsLambdaNames.valueAsString,
         USER_POOL_ID: this.auth.userPool.userPoolId,
         SIUTINDEI_CLUSTER_ARN: siutindeiClusterArn.valueAsString,
         SIUTINDEI_DB_SECRET_ARN: siutindeiDbSecretArn.valueAsString,
@@ -757,6 +778,7 @@ export class LxsoftwareStack extends cdk.Stack {
         APP_STORE_CONNECT_KEY_SECRET_ARN: appStoreConnectKeySecretArn.valueAsString,
         GOOGLE_PLAY_SERVICE_ACCOUNT_SECRET_ARN: googlePlayServiceAccountSecretArn.valueAsString,
         APP_STORE_CONNECT_APP_ID: appStoreConnectAppId.valueAsString,
+        ASC_VENDOR_NUMBER: appStoreConnectVendorNumber.valueAsString,
         GOOGLE_PLAY_PACKAGE_NAME: googlePlayPackageName.valueAsString,
         GOOGLE_ANALYTICS_SERVICE_ACCOUNT_SECRET_ARN:
           googleAnalyticsServiceAccountSecretArn.valueAsString,

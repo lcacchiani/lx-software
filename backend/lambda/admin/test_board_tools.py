@@ -654,6 +654,37 @@ class TestGitHubOps(ToolsTestCase):
         self.assertTrue(overview["repoSnapshotEnabled"])
         self.assertFalse(overview["repoWriteEnabled"])
 
+    def test_search_stays_in_repo_and_strips_scope_qualifiers(self) -> None:
+        out = board_github.op_search_issues({"query": "booking REPO:evil/other org:acme user:bob label:bug"})
+        self.assertEqual(out["items"][0]["number"], 42)
+        self.assertEqual(out["strippedQualifiers"], ["REPO:evil/other", "org:acme", "user:bob"])
+        self.assertEqual(out["query"], "repo:lx-software-ltd/siutindei state:open type:issue booking label:bug")
+        _, path, _, _ = self.github.requests[0]
+        self.assertEqual(path.count("repo%3A"), 1)
+        self.assertNotIn("evil", path)
+
+    def test_list_releases(self) -> None:
+        inner = self.github
+
+        def with_releases(req, timeout=None):
+            if "/releases" in req.full_url:
+                inner.requests.append((req.get_method(), req.full_url.replace(board_github.API_ORIGIN, ""), dict(req.headers), None))
+                return _FakeResp(
+                    json.dumps(
+                        [
+                            {"id": 1, "tag_name": "v1.4.0", "name": "1.4.0", "draft": False, "prerelease": False, "author": {"login": "lx"}, "published_at": "2026-09-01T00:00:00Z", "body": "Bug fixes", "html_url": "https://github.com/x/releases/v1.4.0"},
+                        ]
+                    ).encode("utf-8")
+                )
+            return inner(req, timeout)
+
+        self.router.github = with_releases
+        out = board_github.op_list_releases({"limit": 5})
+        self.assertEqual(out["items"][0]["tag"], "v1.4.0")
+        self.assertEqual(out["items"][0]["notes"], "Bug fixes")
+        self.assertFalse(out["items"][0]["draft"])
+        self.assertEqual(self.github.requests[0][1], "/repos/lx-software-ltd/siutindei/releases?per_page=5")
+
 
 if __name__ == "__main__":
     unittest.main()
