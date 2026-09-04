@@ -29,6 +29,7 @@ from urllib import request as urlrequest
 from urllib.parse import parse_qs
 
 from admin_runtime import _get_secretsmanager_client
+import board_deadline
 import board_mail
 import board_pii
 import board_store
@@ -216,7 +217,7 @@ def status_summary(table: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _urlopen(req: urlrequest.Request, timeout: float | None = None) -> Any:
-    return urlrequest.urlopen(req, timeout=timeout or HTTP_TIMEOUT_SECONDS)
+    return urlrequest.urlopen(req, timeout=board_deadline.remaining(timeout or HTTP_TIMEOUT_SECONDS))
 
 
 def graph(
@@ -570,13 +571,19 @@ def _mask_text(text: str, pseud: board_pii.Pseudonymizer | None) -> str:
 
 
 def _mask_sender(raw: Any, pseud: board_pii.Pseudonymizer | None) -> str:
+    """Alias a Graph ``from`` object. Display names never reach the model."""
     if isinstance(raw, dict):
-        name = str(raw.get("name") or raw.get("username") or raw.get("id") or "")
+        ident = str(raw.get("id") or "")
+        display = str(raw.get("name") or raw.get("username") or "")
     else:
-        name = str(raw or "")
-    if not name:
+        ident, display = str(raw or ""), ""
+    if not ident and not display:
         return "contact#unknown"
-    return _mask_text(name, pseud)
+    if pseud is None:
+        return "contact#hidden"
+    if ident:
+        return pseud.alias_for_external("fb", ident, display=display)
+    return pseud.alias_for_external("fbname", display, display=display)
 
 
 def _mask_for_model(text: str) -> str:
