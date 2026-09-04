@@ -179,10 +179,69 @@ export type BoardMailPreview = {
   readonly sendEnabled: boolean;
 };
 
-export type BoardApprovalPreview = BoardMailPreview | { readonly error: string };
+export type BoardPhishingPreview = {
+  readonly kind: "phishing";
+  readonly threadId: string;
+  readonly subject: string;
+  readonly mailbox: string;
+  readonly from: string;
+  readonly note: string;
+};
+
+export type BoardApprovalPreview = BoardMailPreview | BoardPhishingPreview | { readonly error: string };
 
 export function isMailPreview(preview: BoardApprovalPreview | undefined): preview is BoardMailPreview {
   return !!preview && "kind" in preview && preview.kind === "email";
+}
+
+export function isPhishingPreview(preview: BoardApprovalPreview | undefined): preview is BoardPhishingPreview {
+  return !!preview && "kind" in preview && preview.kind === "phishing";
+}
+
+export type ApprovalEditField = {
+  readonly key: string;
+  readonly label: string;
+  readonly multiline: boolean;
+  readonly value: string;
+};
+
+const APPROVAL_TEXT_FIELDS: readonly { key: string; label: string; multiline: boolean }[] = [
+  { key: "subject", label: "Subject", multiline: false },
+  { key: "title", label: "Title", multiline: false },
+  { key: "body", label: "Body", multiline: true },
+  { key: "text", label: "Message", multiline: true },
+  { key: "message", label: "Message", multiline: true },
+  { key: "detail", label: "Detail", multiline: true },
+  { key: "note", label: "Note", multiline: true },
+];
+
+/** Owner-facing text fields to edit instead of raw JSON. */
+export function approvalEditableFields(
+  args: Readonly<Record<string, unknown>>,
+  preview?: BoardApprovalPreview,
+): ApprovalEditField[] {
+  const fields: ApprovalEditField[] = [];
+  const seen = new Set<string>();
+  if (isMailPreview(preview) && "body" in args) {
+    if ("subject" in args || preview.subject) {
+      fields.push({
+        key: "subject",
+        label: "Subject",
+        multiline: false,
+        value: String(args.subject ?? preview.subject ?? ""),
+      });
+      seen.add("subject");
+    }
+    fields.push({ key: "body", label: "Body", multiline: true, value: String(args.body ?? preview.text ?? "") });
+    seen.add("body");
+  }
+  for (const spec of APPROVAL_TEXT_FIELDS) {
+    if (seen.has(spec.key)) continue;
+    if (!(spec.key in args) || typeof args[spec.key] !== "string") continue;
+    fields.push({ ...spec, value: String(args[spec.key]) });
+    seen.add(spec.key);
+  }
+  return fields;
 }
 
 export type BoardMailAttachment = {

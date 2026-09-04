@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BOARD_PERSONA_DEFAULTS } from "./contracts/generated";
 import {
+  approvalEditableFields,
   formatUsageCost,
   groupActionsByPriority,
   MAIL_ALLOW_LIST_ENTRY_RE,
@@ -106,6 +107,31 @@ describe("allow-list parsing", () => {
       "coach@swimhk.example",
       "+85291234567",
     ]);
+  });
+});
+
+describe("approvalEditableFields", () => {
+  it("prefers mail body and subject over raw JSON keys", () => {
+    const fields = approvalEditableFields(
+      { threadId: "t1", body: "Hello parent", reason: "Reply" },
+      {
+        kind: "email",
+        from: "hello@siutindei.com",
+        to: ["parent@example.com"],
+        cc: [],
+        subject: "Class on Saturday",
+        text: "Hello parent",
+        threadId: "t1",
+        sendEnabled: true,
+      },
+    );
+    expect(fields.map((f) => f.key)).toEqual(["subject", "body"]);
+    expect(fields[0].value).toBe("Class on Saturday");
+  });
+
+  it("exposes message text for Meta writes", () => {
+    const fields = approvalEditableFields({ message: "Boost this", reason: "Launch" });
+    expect(fields).toEqual([{ key: "message", label: "Message", multiline: true, value: "Boost this" }]);
   });
 });
 
