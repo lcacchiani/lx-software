@@ -222,7 +222,7 @@ export function BoardMailView({ status, focusThreadId, onFocusConsumed, errorTex
                     >
                       <div className="d-flex justify-content-between gap-2">
                         <span className="text-truncate">
-                          {t.unread ? <i className="bi bi-circle-fill text-warning me-1 small" aria-label="unread" /> : null}
+                          {t.unread ? <i className="bi bi-circle-fill text-warning me-1 small" role="img" aria-label="unread" /> : null}
                           {t.subject}
                         </span>
                         <span className="small text-nowrap opacity-75">{t.lastMessageAt.slice(0, 10)}</span>
@@ -231,7 +231,7 @@ export function BoardMailView({ status, focusThreadId, onFocusConsumed, errorTex
                       <div className="small d-flex gap-2 opacity-75">
                         <span className="badge text-bg-light border text-body fw-normal">{mailboxShortLabel(t.mailbox, status.domain)}</span>
                         {t.messageCount > 1 ? <span>{t.messageCount} messages</span> : null}
-                        {t.hasAttachments ? <i className="bi bi-paperclip" aria-label="has attachments" /> : null}
+                        {t.hasAttachments ? <i className="bi bi-paperclip" role="img" aria-label="has attachments" /> : null}
                       </div>
                     </button>
                   ))}

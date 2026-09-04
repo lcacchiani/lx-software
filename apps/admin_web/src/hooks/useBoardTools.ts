@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { adminFetchJson } from "../lib/apiAdminClient";
 import {
   BOARD_API_BASE,
@@ -17,6 +17,24 @@ export type ToolsConfigPatch = Partial<Pick<BoardToolsConfig, "enabled" | "globa
   readonly allowList?: readonly string[];
 };
 
+/**
+ * Mutation options for saving a tools-config patch; the PUT body is the patch
+ * as-is (`{ globalMode }`, `{ enabled }`, `{ matrix: { toolId: { personaId: level } } }`, …).
+ */
+export function toolsSaveMutationOptions(qc: QueryClient) {
+  return {
+    mutationFn: (patch: ToolsConfigPatch) =>
+      adminFetchJson<BoardToolsPayload>(`${BOARD_API_BASE}/tools`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: (payload: BoardToolsPayload) => {
+      qc.setQueryData(BOARD_TOOLS_KEY, payload);
+      void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY, exact: true });
+    },
+  };
+}
+
 export function useBoardTools() {
   const qc = useQueryClient();
 
@@ -25,17 +43,7 @@ export function useBoardTools() {
     queryFn: () => adminFetchJson<BoardToolsPayload>(`${BOARD_API_BASE}/tools`),
   });
 
-  const save = useMutation({
-    mutationFn: (patch: ToolsConfigPatch) =>
-      adminFetchJson<BoardToolsPayload>(`${BOARD_API_BASE}/tools`, {
-        method: "PUT",
-        body: JSON.stringify(patch),
-      }),
-    onSuccess: (payload) => {
-      qc.setQueryData(BOARD_TOOLS_KEY, payload);
-      void qc.invalidateQueries({ queryKey: BOARD_QUERY_KEY, exact: true });
-    },
-  });
+  const save = useMutation(toolsSaveMutationOptions(qc));
 
   return {
     data: query.data,

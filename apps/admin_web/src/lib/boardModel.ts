@@ -340,7 +340,16 @@ export type BoardUsage = {
   readonly calls?: number;
 };
 
-export type BoardUsageToday = BoardUsage & { readonly budgetUsd: number };
+/** Non-OpenRouter usage counters for the current day; absent on stacks that predate them. */
+export type BoardExternalUsageToday = {
+  readonly searchCalls: number;
+  readonly metaAdsMonthUsd: number;
+};
+
+export type BoardUsageToday = BoardUsage & {
+  readonly budgetUsd: number;
+  readonly external?: BoardExternalUsageToday;
+};
 
 export type BoardMeetingStatus = "running" | "succeeded" | "failed" | "cancelled";
 
