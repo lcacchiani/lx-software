@@ -3,6 +3,10 @@
 Status: **draft for review**. Nothing in this document is implemented. Each
 section ends with the decisions that need sign-off before work starts.
 
+Follow-up proposal: [`executive-board-tools-plan.md`](./executive-board-tools-plan.md)
+covers tools and connectors (GitHub, mail, Meta, receivables, bank feed) for
+each board member.
+
 ## 1. Goal
 
 Give LX Software an AI "executive board" for **Siu Tin Dei**

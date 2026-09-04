@@ -1,0 +1,358 @@
+# Executive Board — tools and connectors (proposal, not yet approved)
+
+Status: **draft for review**. Nothing in this document is implemented. It
+extends [`executive-board-plan.md`](./executive-board-plan.md) (the board
+itself, shipped) with the ability for each board member to **seek information
+and take action through tools** instead of relying only on the context pack.
+
+## 1. Decisions already taken by the owner
+
+| Topic | Decision |
+|-------|----------|
+| Permission model | Three levels per tool per role: **Read**, **Propose** (drafts an action the owner approves), **Act** (executes directly, within caps). Read-only stays available as a global switch. |
+| Repository | `lx-software-ltd/siutindei` is public by design; reads need no token, writes do. |
+| Market | Hong Kong only. Physical **stores/venues** are first-class, not just online listings. |
+| Tool interaction | **Rich**: live tool calls inside chat replies and meeting phases, not a pre-computed snapshot. |
+| Budget | Daily OpenRouter cap rises to pay for tool loops (see §7). |
+| Email | **All `siutindei.com` mailboxes** are visible to the board. |
+| Meta / WhatsApp | The board **owns the existing WhatsApp number** through the WhatsApp Cloud API, plus the Facebook Page and Instagram account. |
+| Receivables | Live in the **siutindei Aurora database** (new tables) and are **mirrored into the Siu Tin Dei statement book** in this admin app. |
+| Bank feed | The business account is at a **Hong Kong bank** → see §5.6 for why Enable Banking does not apply and what replaces it. |
+
+## 2. Permission model and guardrails
+
+### 2.1 Levels
+
+| Level | Meaning | Examples |
+|-------|---------|----------|
+| `read` | Fetch and summarise. No side effects, no cost beyond tokens. | List open GitHub issues, read yesterday's WhatsApp threads, pull App Store crash counts |
+| `propose` | The tool call produces a **pending action** in the owner's approval queue. Nothing leaves the system until the owner clicks Approve. | Draft a reply to a parent, draft an invoice, draft a GitHub issue, draft an Instagram post |
+| `act` | Executes immediately, logged, subject to per-tool caps and allow-lists. | Reply inside an open WhatsApp window, comment on a GitHub issue, send a dunning reminder to a provider already on the allow-list |
+
+Rules that hold for every tool:
+
+- Levels are set **per role per tool** in the Executive Board settings card.
+  Defaults are in §6; the owner can lower any of them at any time.
+- A **global mode** switch (`readOnly` / `propose` / `act`) caps every role.
+  Shipping default is `propose`; `readOnly` is one click.
+- **Spend** is a separate cap, not a level: any tool that moves money (ads,
+  paid API quota, SES volume) has a **daily and monthly USD ceiling** the LLM
+  cannot see or change; hitting it degrades the tool to `propose`.
+- **Allow-lists** for outbound messaging: email and WhatsApp `act` are only
+  honoured for recipients the owner has marked as approved (providers,
+  vendors). Anyone else is always `propose`.
+- **Never** available to any role, at any level: pushing code, merging PRs,
+  changing IAM/DNS/Cognito, initiating bank payments, deleting data,
+  altering the board's own permissions or budgets.
+- Every call is written to an **audit log** (`BOARD#TOOLCALL#`) with role,
+  meeting/chat id, arguments, result digest, cost, level, and — for
+  `propose`/`act` — the pending action id or outcome.
+- **Kill switch**: `BOARD_TOOLS_ENABLED=false` on `AdminApiFn` or the
+  settings toggle stops all tool calls without a deploy.
+
+### 2.2 Approval queue (frontend)
+
+A new **Approvals** section on the Executive Board tab lists pending
+`propose` actions: who proposed it, why (linked transcript turn), the exact
+payload (email body, message text, invoice lines, issue title/body), and
+Approve / Edit / Reject buttons. Approving runs the action with the owner's
+identity recorded on the audit row. Rejections are fed back into the next
+meeting's context pack so the board learns what was refused.
+
+### 2.3 PII handling
+
+Parent conversations (WhatsApp, email) contain names and phone numbers.
+Before any text reaches OpenRouter the tool layer masks phone numbers and
+email addresses to stable pseudonyms (`parent#17`) and un-masks them only in
+the approval payload rendered to the owner. OpenRouter data-collection
+denial from the existing client stays on. Message bodies are stored with a
+90-day TTL; aggregates (counts, response times) are kept.
+
+## 3. How tool calling works
+
+- **Protocol**: OpenRouter function calling (`tools` / `tool_calls` on the
+  chat completions API). `openrouter_client.py` grows a `tools=` parameter
+  and returns parsed tool calls; the parser regression tests are extended.
+- **Loop**: `board_tools.py` runs up to `maxToolRoundsPerTurn` (contract,
+  default 4) rounds per persona turn: model → tool calls → results → model.
+  Each round is capped in tokens; results are truncated to
+  `toolResultMaxChars` before re-entering the prompt.
+- **In meetings**: during the *positions* and *debate* phases each persona
+  may call tools. The phase timeout in `board-timeouts.json` rises to allow
+  it, and the meeting engine records tool calls as transcript entries of a
+  new type `tool` so the owner can see who looked at what.
+- **In chat**: the reply job runs the same loop; the offcanvas shows a
+  "Looking at GitHub issues…" line per tool call while polling.
+- **Registry**: each tool declares `name`, JSON schema, `level` required,
+  `roles` allowed, `costUsd` estimate, and an executor. Tool availability is
+  filtered by role and by the current permission matrix **before** the
+  schemas are sent to the model, so a role never sees tools it cannot use.
+- **Execution**: tool executors run inside `AdminApiFn` with short
+  timeouts (10 s default, 25 s for GitHub search and Meta insights). Slow
+  or failing tools return a structured error the model can reason about.
+
+## 4. Connector inventory
+
+| Id | Source | Read | Propose | Act | Notes |
+|----|--------|------|---------|-----|-------|
+| `github` | `lx-software-ltd/siutindei` | issues, PRs, commits, Actions runs, releases, file/tree, Dependabot + code-scanning alerts, discussions | new issue, issue comment, label change | issue comment, label change | Token in Secrets Manager (already provisioned as `GITHUB_READ_TOKEN_SECRET_ARN`; needs `issues:write` for `act`) |
+| `product` | siutindei Aurora (read replica or Data API) | catalog counts by district/category/age, providers and **stores** with completeness score, search and view analytics, booking/lead funnel, provider sign-ups | flag listing for review | — | Read via RDS Data API with IAM auth; cross-account role if siutindei runs in another account |
+| `stores` | App Store Connect API, Google Play Developer API | downloads, installs, crashes, ratings, review text, review status | reply to review, release notes draft | reply to review | Two key pairs in Secrets Manager; App Store Connect JWT signed in Lambda |
+| `web` | Cloudflare Web Analytics / GA4 (whichever `www.siutindei.com` uses) | sessions, top pages, referrers, conversions to app-store links | — | — | Read-only API token |
+| `mail` | All `siutindei.com` mailboxes | thread list, thread body, attachments (PDF text), sender history | reply, new email, forward to provider | reply/new email to allow-listed recipients | Design in §5.2 |
+| `meta` | Facebook Page, Instagram, WhatsApp Cloud API | Page/IG insights, comments, DMs, WhatsApp threads, template status, ad account spend and results | post, story, reply to comment/DM, WhatsApp reply outside 24-h window (template), new ad set | reply inside open WhatsApp window, reply to comments, boost within cap | Design in §5.3 |
+| `finance` | This admin app's Siu Tin Dei finance sheets + receivables | balances, cash-flow, subscriptions, invoices, overdue list, unit economics | create invoice, send invoice, dunning reminder, price change proposal | send dunning reminder to allow-listed provider | Design in §5.4–5.6 |
+| `research` | Web search API (Brave Search or OpenRouter `:online` models) | competitor pages, HK market news, EDB/holiday calendars, venue listings | — | — | Read-only; results cached 24 h |
+| `aws` | Cost Explorer, CloudWatch, Health for the siutindei stack(s) | monthly cost by service, alarms in ALARM, error rates, Lambda durations | budget alert proposal | — | Read-only IAM policy scoped to the siutindei stack tags |
+| `security` | GitHub security tab, AWS Security Hub / IAM Access Analyzer, Cognito | open alerts, findings by severity, MFA adoption, failed sign-ins, exposed secrets scan | open GitHub issue with remediation | — | Read-only; remediations always via `propose` |
+| `board` | The board's own records | actions, minutes, charters, previous tool results | new action item, reprioritise | update own action status | Already partly present as context pack; becomes callable |
+
+## 5. Connector designs
+
+### 5.1 GitHub
+
+Reuses `board_github.py`. The snapshot stays as the cheap always-on view;
+tools add on-demand `search_issues`, `get_issue`, `list_pull_requests`,
+`get_workflow_runs`, `get_file`, `list_security_alerts`. Writes use one
+fine-grained token restricted to the `siutindei` repo with `issues: write`,
+`pull_requests: read`, `contents: read`, `security_events: read`. The
+existing `GitHubReadToken` secret is replaced by `GitHubBoardToken`; the
+CDK condition and policy pattern stay identical.
+
+### 5.2 Email — every `siutindei.com` mailbox
+
+Goal: the board reads every mailbox; nothing about the owner's own mail
+client changes.
+
+1. **Ingest**: at the current mail provider for `siutindei.com`, add a
+   forward/copy rule per mailbox (or a catch-all) to
+   `siutindei-<mailbox>@inbound.lx-software.com`. That domain already has
+   MX → SES in the stack region and the `lxsoftware-inbound-mail` receipt
+   rule set. A new receipt rule matches the whole `siutindei-` prefix and
+   stores raw MIME under `inbound-raw/siutindei/<mailbox>/`.
+   No DNS change on `siutindei.com` is needed for reading.
+2. **Index**: a new S3 event branch in `inbound_email_handler.py`
+   (`board_mail.py`) parses headers, text body, and PDF attachments (via the
+   existing statement-parser text extraction), masks PII (§2.3) and writes
+   `BOARD#MAIL#<threadId>` / `MSG#<ts>` rows plus a per-mailbox unread
+   counter. Bank alert emails (§5.6) are routed from here to the receivables
+   matcher.
+3. **Send**: verify `siutindei.com` for **sending** in SES (DKIM CNAMEs +
+   DMARC alignment; this is the only DNS change). Replies go out from the
+   mailbox they were addressed to, with `Reply-To` unchanged so the owner's
+   client keeps the thread. All outbound is BCC'd back into the index.
+4. **Levels**: CEO/COO/CMO/CFO `propose` by default; `act` only to
+   allow-listed providers and vendors. CISO reads only, and gets a
+   `report_phishing` tool that flags a thread to the owner.
+
+### 5.3 Meta — Facebook Page, Instagram, WhatsApp on the existing number
+
+- **Meta app**: one Business-type app under the Siu Tin Dei Business
+  Manager with `pages_read_engagement`, `pages_manage_posts`,
+  `pages_messaging`, `instagram_basic`, `instagram_manage_comments`,
+  `instagram_content_publish`, `instagram_manage_insights`,
+  `whatsapp_business_messaging`, `whatsapp_business_management`,
+  `ads_read`, `ads_management`. Publishing, messaging and ads permissions
+  require **App Review** with screencasts; until approved the app works for
+  admins of the Business only, which is enough for the owner. A System User
+  long-lived token lives in Secrets Manager (`MetaBoardToken`).
+- **WhatsApp number**: moving the number to the Cloud API means the phone
+  app can no longer send from it unless Meta's *coexistence* mode is
+  enabled for the account. Recommended: enable coexistence so the owner's
+  phone keeps working while the board reads and replies through the API.
+  If coexistence is unavailable for the account, the number moves fully to
+  the API and the owner replies from the Approvals section.
+- **Inbound**: new **unauthenticated** HTTP route `POST /webhooks/meta`
+  on the admin API, verified by `X-Hub-Signature-256` with the app secret,
+  plus the `GET` verify handshake. Payloads are queued to `BOARD#META#`
+  rows (masked) and acknowledged within the 20 s Meta limit; no LLM work in
+  the webhook path. This is the first non-JWT route on the admin API and
+  is documented as such in `admin-website.md`.
+- **Lead flow**: the public site's WhatsApp CTA reaches Siu Tin Dei, not
+  the provider. The COO tool `relay_lead` drafts the hand-off to the
+  provider (email or WhatsApp template) and a confirmation to the parent;
+  both are `propose` until the owner promotes them. Replies to a parent are
+  `act` only inside the 24-hour customer-service window; outside it the
+  tool switches to `propose` with a pre-approved template.
+- **Spend**: `create_ad_set` and `boost_post` are `propose` for CMO with a
+  monthly ads ceiling (`metaAdsMonthlyCapUsd`, owner-set); `act` is
+  possible later but off by default.
+
+### 5.4 Receivables — paid listings, paid offline
+
+Providers pay for listings but pay by bank transfer. The data model lives
+in the **siutindei Aurora database** so the product can show billing state
+to providers later; the admin app mirrors it into the finance book.
+
+New tables (siutindei repo, its own migration):
+
+| Table | Key columns |
+|-------|-------------|
+| `listing_plans` | `id`, `name`, `price_hkd`, `billing_period` (`monthly`/`annual`), `active` |
+| `listing_subscriptions` | `id`, `organization_id`, `store_id` (nullable), `plan_id`, `starts_on`, `renews_on`, `status` (`trial`/`active`/`past_due`/`cancelled`), `payer_contact` |
+| `invoices` | `id`, `subscription_id`, `number` (`STD-2026-0001`), `issued_on`, `due_on`, `amount_hkd`, `status` (`draft`/`sent`/`paid`/`overdue`/`void`), `fps_reference`, `pdf_key` |
+| `payments` | `id`, `invoice_id` (nullable until matched), `received_on`, `amount_hkd`, `payer_name`, `bank_reference`, `source` (`alert_email`/`statement`/`manual`), `matched_by` |
+
+Access from `AdminApiFn` is through the **RDS Data API** with IAM
+authentication (no VPC attachment, no connection pooling), using a
+cross-account role if siutindei runs in a separate account. Writes are
+limited to `invoices`, `payments`, and `listing_subscriptions.status`.
+
+**Mirror**: a nightly Scheduler job (`board_receivables_mirror`) writes
+issued invoices as receivable rows and matched payments as income rows into
+the Siu Tin Dei finance sheet (`finance_store.py`), tagged
+`source=receivables` so re-runs are idempotent.
+
+### 5.5 CFO / COO finance tools
+
+| Tool | Level (default) | What it does |
+|------|-----------------|--------------|
+| `list_subscriptions`, `list_invoices`, `aging_report` | read | Standard receivables views incl. DSO, past-due by provider |
+| `unit_economics` | read | Revenue per provider/store, cost per acquisition from `aws` + `meta` spend, gross margin |
+| `draft_invoice` | propose | Creates a `draft` invoice with a unique FPS reference; PDF rendered by a small template Lambda into S3 |
+| `send_invoice` | propose → act for allow-listed payers | Emails the invoice from `billing@siutindei.com` |
+| `send_reminder` | propose → act for allow-listed payers | Dunning at D+7 / D+21 / D+35, email or WhatsApp template |
+| `match_payment` | act | Attaches a `payments` row to an invoice when reference and amount agree; otherwise `propose` with candidates |
+| `propose_price_change` | propose | Writes a `listing_plans` change for approval |
+| `record_manual_payment` | propose | For cash or cheque handed over in person |
+
+### 5.6 Bank feed for a Hong Kong account
+
+**Enable Banking does not cover Hong Kong.** It aggregates PSD2 banks in
+30 European countries; Hong Kong's HKMA Open API Framework is voluntary per
+bank and has no third-party access regime, so no aggregator offers account
+information for HSBC HK, Hang Seng, BOC HK, Standard Chartered HK or the
+virtual banks. The existing Enable Banking sync stays for the UK accounts.
+For the HKD business account the feed comes from the bank's own outputs:
+
+1. **Payment alert emails** (primary, near real time). Enable "incoming
+   FPS / transfer" email alerts at the bank and address them to
+   `finance@siutindei.com`. Since that mailbox is already ingested (§5.2),
+   `board_mail.py` recognises the bank's alert template, extracts amount,
+   reference, payer and timestamp, and creates a `payments` row with
+   `source=alert_email`. `match_payment` runs immediately.
+2. **Monthly e-statement** (source of truth). The bank's PDF or CSV
+   statement, emailed or uploaded, goes through the existing OpenRouter
+   statement parser into a Siu Tin Dei book. A reconciliation step compares
+   parsed credits with `payments` rows, adds missing ones with
+   `source=statement`, and lists discrepancies for the CFO's next stand-up.
+3. **Later option**: if the business account moves to Airwallex, Statrys or
+   Aspire, they expose transaction APIs and this feed becomes automatic.
+   Not required to start.
+
+No payment initiation of any kind is built; the board never moves money
+out of the account.
+
+### 5.7 Product analytics from siutindei
+
+Read-only SQL views (created in the siutindei repo) expose what the board
+needs without giving the LLM raw table access:
+
+- `v_catalog_health`: activities, providers, stores by district with
+  completeness (photos, price, schedule, address geocoded).
+- `v_funnel_daily`: searches, listing views, CTA taps, leads relayed,
+  bookings confirmed.
+- `v_provider_pipeline`: sign-ups, onboarding step reached, days since last
+  edit, subscription status.
+
+The `product` tools call these views only; parameters are limited to date
+ranges and district/category filters.
+
+## 6. Default permission matrix
+
+`R` read, `P` propose, `A` act (within caps and allow-lists), `–` no access.
+
+| Tool | CEO | CFO | COO | CPO | CTO | CIO | CISO | CMO |
+|------|-----|-----|-----|-----|-----|-----|------|-----|
+| `github` | R | – | – | R/P | R/P/A | R/P | R/P | – |
+| `product` | R | R | R/P | R/P | R | R | – | R |
+| `stores` | R | – | R | R/P | R | – | – | R/P/A |
+| `web` | R | – | – | R | R | R | – | R |
+| `mail` | R/P | R/P/A | R/P/A | R | R | R | R | R/P/A |
+| `meta` | R | R | R/P/A | R | – | – | R | R/P/A |
+| `finance` | R | R/P/A | R/P | – | – | – | – | R |
+| `research` | R | R | R | R | R | R | R | R |
+| `aws` | R | R | – | – | R/P | R/P | R | – |
+| `security` | R | – | – | – | R | R | R/P | – |
+| `board` | R/P/A | R/P/A | R/P/A | R/P/A | R/P/A | R/P/A | R/P/A | R/P/A |
+
+`A` entries above are the **maximum** the owner can enable; the shipped
+default global mode is `propose`, so nothing acts until the owner flips it.
+
+## 7. Cost and budget
+
+- Tool loops multiply tokens: a stand-up with 8 personas × up to 4 rounds
+  on `gpt-4.1-mini` runs about USD 0.30–0.60; a deep dive on Sonnet with
+  tools about USD 2–4. `defaultDailyBudgetUsd` in `board-timeouts.json`
+  moves from 5 to **15**; the hard ceiling `maxDailyBudgetUsd` (100 in
+  `contracts/executive-board.json`) stays. Tool results count toward the
+  same daily cap.
+- External API costs are tracked per tool in `BOARD#USAGE#` rows (Meta
+  ads spend, search API quota) and shown on the settings card alongside
+  OpenRouter spend.
+- Cheap, cacheable reads (`product` views, `web`, `stores` daily metrics)
+  are refreshed on a Scheduler cron and served from DynamoDB with a TTL so
+  meetings do not hit third-party APIs eight times for the same number.
+
+## 8. Backend changes
+
+| Area | Change |
+|------|--------|
+| `backend/lambda/admin/` | New `board_tools.py` (registry, loop, level enforcement, audit), `board_mail.py`, `board_meta.py`, `board_receivables.py`, `board_product.py`, `board_stores.py`, `board_aws.py`, `board_research.py`; `board_github.py` gains write and search calls; `openrouter_client.py` gains tool-call support; `board_meeting.py` and `board_chat.py` call the loop |
+| Routes | `GET/POST /siu-tin-dei/board/approvals`, `POST …/approvals/{id}/approve|reject`, `GET …/board/tools` (matrix), `PUT …/board/tools` (matrix), `GET …/board/mail`, `GET …/board/mail/{threadId}`, `GET …/board/receivables/*`, `POST /webhooks/meta` (no JWT, HMAC-verified), `GET /webhooks/meta` (verify) |
+| DynamoDB | `BOARD#TOOLCALL#`, `BOARD#APPROVAL#`, `BOARD#MAIL#`, `BOARD#META#`, `BOARD#CACHE#`, `BOARD#USAGE#` prefixes; all covered by the existing `BOARD#` scan filter |
+| Contracts | `contracts/board-tools.json`: tool ids, default matrix, `maxToolRoundsPerTurn`, `toolResultMaxChars`, cap names; synced to Python, TS and CDK |
+| Secrets | `GitHubBoardToken`, `MetaBoardToken` (+ app secret), `AppStoreConnectKey`, `GooglePlayServiceAccount`, `SearchApiKey`, `SiutindeiDataApiRole` ARN parameter — each behind a `has…` condition like the GitHub secret today |
+| SES | Receipt rule for `siutindei-*@inbound.lx-software.com` → S3 prefix `inbound-raw/siutindei/`; sending identity `siutindei.com` |
+| Scheduler | `BoardCacheRefreshSchedule` (hourly), `BoardReceivablesMirrorSchedule` (nightly), `BoardDunningSchedule` (daily 09:00 HKT, produces `propose` items) — all role-based invokes, no Lambda resource-policy statements |
+| IAM | Read-only Cost Explorer/CloudWatch/Security Hub policy on `AdminApiFn`; `sts:AssumeRole` to the siutindei Data API role; `ses:SendEmail` restricted to `siutindei.com` identities |
+| siutindei repo | Migration for §5.4 tables, SQL views for §5.7, IAM role trusting the lxsoftware account for Data API reads/writes |
+
+## 9. Frontend changes (`apps/admin_web`)
+
+- **Approvals** section (queue, diff-style payload preview, approve/edit/
+  reject), badge count on the tab.
+- **Tools & permissions** card in settings: global mode switch, per-role
+  matrix with the three levels, spend caps, recipient allow-list editor,
+  kill switch state.
+- **Transcript**: `tool` entries render as collapsible "CTO looked at
+  GitHub: 3 open PRs, CI red on `main`" rows.
+- **Chat offcanvas**: live tool-call status lines while polling.
+- **Mail** and **Receivables** read-only views so the owner sees what the
+  board sees (thread list with masking off for the owner; aging table).
+- Hooks: `useBoardApprovals`, `useBoardTools`, `useBoardMail`,
+  `useBoardReceivables`; shared components under
+  `src/components/board/` documented in `UI_COMPONENTS.md`.
+
+## 10. Delivery plan (one PR per milestone, each shippable alone)
+
+| # | Scope | Depends on |
+|---|-------|------------|
+| T1 | Tool loop core: `openrouter_client` tools, `board_tools.py`, registry, level enforcement, audit rows, contracts, settings matrix API + card, `github` and `board` tools with read + propose, Approvals queue (backend + UI) | — |
+| T2 | `research`, `aws`, `security` read tools; cache refresh Scheduler | T1 |
+| T3 | Email ingest and index (§5.2) incl. sending identity, `mail` tools, Mail view | T1 |
+| T4 | Receivables: siutindei migration and views (§5.4, §5.7), Data API access, `finance` and `product` tools, statement-book mirror, bank alert parsing and statement reconciliation (§5.6), Receivables view, dunning Scheduler | T1, T3 |
+| T5 | Meta: app setup, webhook route, WhatsApp coexistence, `meta` read + propose tools, lead relay | T1, T3 |
+| T6 | `stores` (App Store Connect, Google Play) tools and review replies | T1 |
+| T7 | `act` level rollout: allow-lists, spend caps enforcement, ads tooling | T3–T6 |
+
+Each milestone ships behind the global mode switch and adds its own
+Python unit tests (`test_board_tools.py`, fakes for every external API)
+plus Vitest coverage for new hooks.
+
+## 11. Decisions still needed before starting
+
+1. **Bank**: which Hong Kong bank holds the account, and does it offer
+   email alerts for incoming FPS/transfers (drives §5.6 step 1)?
+2. **Mail provider** for `siutindei.com` today (Google Workspace,
+   Cloudflare Email Routing, other) — determines whether forwarding is per
+   mailbox or catch-all.
+3. **siutindei AWS account**: same account as the `lxsoftware` stack or
+   separate (drives the Data API role shape)?
+4. **Meta**: is there a Business Manager with the Page, IG account and the
+   WhatsApp number already grouped, and is the number currently on the
+   WhatsApp Business app (coexistence needed) or unused by any app?
+5. **App stores**: are App Store Connect API keys and a Google Play service
+   account available, or do they need to be created?
+6. **Listing pricing**: an initial `listing_plans` row set (even a
+   placeholder) so invoices can be drafted from day one.
