@@ -31,7 +31,7 @@ from openrouter_client import OpenRouterError, read_secret_string
 
 DEFAULT_REPO = "lx-software-ltd/siutindei"
 API_ORIGIN = "https://api.github.com"
-HTTP_TIMEOUT_SECONDS = 20
+HTTP_TIMEOUT_SECONDS = 25
 MAX_DOC_CHARS = 6000
 MAX_TOTAL_CHARS = 32000
 MAX_DOC_FILES = 6

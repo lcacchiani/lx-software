@@ -286,6 +286,12 @@ export class LxsoftwareStack extends cdk.Stack {
       default: "",
       description: "Meta ad account id (with or without act_ prefix).",
     });
+    const metaWabaId = new cdk.CfnParameter(this, "MetaWabaId", {
+      type: "String",
+      default: "",
+      description:
+        "WhatsApp Business Account id for listing message templates. Optional if the phone-number id can resolve it.",
+    });
     const appStoreConnectKeySecretArn = new cdk.CfnParameter(
       this,
       "AppStoreConnectKeySecretArn",
@@ -746,6 +752,7 @@ export class LxsoftwareStack extends cdk.Stack {
         META_PAGE_ID: metaPageId.valueAsString,
         META_IG_USER_ID: metaIgUserId.valueAsString,
         META_WA_PHONE_NUMBER_ID: metaWaPhoneNumberId.valueAsString,
+        META_WABA_ID: metaWabaId.valueAsString,
         META_AD_ACCOUNT_ID: metaAdAccountId.valueAsString,
         APP_STORE_CONNECT_KEY_SECRET_ARN: appStoreConnectKeySecretArn.valueAsString,
         GOOGLE_PLAY_SERVICE_ACCOUNT_SECRET_ARN: googlePlayServiceAccountSecretArn.valueAsString,

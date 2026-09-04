@@ -55,47 +55,74 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE INDEX IF NOT EXISTS invoices_status_due_idx ON invoices (status, due_on);
 CREATE INDEX IF NOT EXISTS payments_invoice_idx ON payments (invoice_id);
 
--- §5.7 views. Catalog / funnel / pipeline tables live in the product schema;
--- adjust the FROM clauses if those names differ. The board only SELECTs these
--- views, with date-range and district/category parameters.
+-- §5.7 views, aligned to the live siutindei Alembic schema
+-- (organizations, activities, activity_locations, locations,
+-- geographic_areas, activity_categories, activity_pricing,
+-- activity_schedule, organizations.media_urls). The product has no
+-- stores table and no funnel events yet: locations stand in for venues,
+-- and listing_events_daily is created here for the product to fill later.
+
+CREATE TABLE IF NOT EXISTS listing_events_daily (
+    day                 date NOT NULL,
+    location_id         uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+    searches            integer NOT NULL DEFAULT 0,
+    listing_views       integer NOT NULL DEFAULT 0,
+    cta_taps            integer NOT NULL DEFAULT 0,
+    leads_relayed       integer NOT NULL DEFAULT 0,
+    bookings_confirmed  integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, location_id)
+);
 
 CREATE OR REPLACE VIEW v_catalog_health AS
 SELECT
-    COALESCE(s.district, 'unknown') AS district,
-    COALESCE(a.category, 'unknown') AS category,
-    COUNT(*)::int AS activities,
-    COUNT(DISTINCT a.organization_id)::int AS providers,
-    COUNT(DISTINCT a.store_id)::int AS stores,
+    COALESCE(ga.name, 'unknown') AS district,
+    COALESCE(c.name, 'unknown') AS category,
+    COUNT(DISTINCT a.id)::int AS activities,
+    COUNT(DISTINCT a.org_id)::int AS providers,
+    COUNT(DISTINCT l.id)::int AS stores,
     AVG(
-        (CASE WHEN a.photo_count > 0 THEN 1 ELSE 0 END)
-        + (CASE WHEN a.price_hkd IS NOT NULL THEN 1 ELSE 0 END)
-        + (CASE WHEN a.has_schedule THEN 1 ELSE 0 END)
-        + (CASE WHEN s.geocoded THEN 1 ELSE 0 END)
+        (CASE WHEN COALESCE(cardinality(o.media_urls), 0) > 0 THEN 1 ELSE 0 END)
+        + (CASE WHEN EXISTS (
+            SELECT 1 FROM activity_pricing p WHERE p.activity_id = a.id
+        ) THEN 1 ELSE 0 END)
+        + (CASE WHEN EXISTS (
+            SELECT 1 FROM activity_schedule s WHERE s.activity_id = a.id
+        ) THEN 1 ELSE 0 END)
+        + (CASE WHEN l.lat IS NOT NULL AND l.lng IS NOT NULL THEN 1 ELSE 0 END)
     ) / 4.0 AS completeness
 FROM activities a
-LEFT JOIN stores s ON s.id = a.store_id
+JOIN organizations o ON o.id = a.org_id
+LEFT JOIN activity_categories c ON c.id = a.category_id
+LEFT JOIN activity_locations al ON al.activity_id = a.id
+LEFT JOIN locations l ON l.id = al.location_id
+LEFT JOIN geographic_areas ga ON ga.id = l.area_id
 GROUP BY 1, 2;
 
 CREATE OR REPLACE VIEW v_funnel_daily AS
 SELECT
     d.day,
-    COALESCE(s.district, 'all') AS district,
+    COALESCE(ga.name, 'all') AS district,
     SUM(d.searches)::int AS searches,
     SUM(d.listing_views)::int AS listing_views,
     SUM(d.cta_taps)::int AS cta_taps,
     SUM(d.leads_relayed)::int AS leads_relayed,
     SUM(d.bookings_confirmed)::int AS bookings_confirmed
 FROM listing_events_daily d
-LEFT JOIN stores s ON s.id = d.store_id
+LEFT JOIN locations l ON l.id = d.location_id
+LEFT JOIN geographic_areas ga ON ga.id = l.area_id
 GROUP BY 1, 2;
 
 CREATE OR REPLACE VIEW v_provider_pipeline AS
 SELECT
     o.id AS organization_id,
     o.name AS organization_name,
-    o.signed_up_on,
-    o.onboarding_step,
-    (CURRENT_DATE - o.last_edited_on) AS days_since_last_edit,
+    o.created_at::date AS signed_up_on,
+    CASE
+        WHEN EXISTS (SELECT 1 FROM activities a WHERE a.org_id = o.id) THEN 'listed'
+        WHEN COALESCE(cardinality(o.media_urls), 0) > 0 THEN 'profile'
+        ELSE 'signed_up'
+    END AS onboarding_step,
+    (CURRENT_DATE - o.updated_at::date) AS days_since_last_edit,
     ls.status AS subscription_status
 FROM organizations o
 LEFT JOIN listing_subscriptions ls

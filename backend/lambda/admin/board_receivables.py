@@ -9,13 +9,17 @@ Plan: docs/architecture/executive-board-tools-plan.md §5.4–§5.5.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import date, timedelta
 from typing import Any
 
 import board_data_api
+import board_invoice_pdf
 import board_mail
+import board_meta
 import board_store
+import runtime
 from contract_constants import BOARD_INVOICE_NUMBER_PREFIX, BOARD_RECEIVABLES_LIST_MAX
 from finance_store import (
     _finance_owner_ddb_key,
@@ -124,6 +128,12 @@ def op_unit_economics(_ctx: Any, _args: dict[str, Any]) -> dict[str, Any]:
             cost = float(aws["payload"].get("totalUsd") or 0)
         except (TypeError, ValueError):
             cost = 0.0
+    snapshot = (
+        board_meta.ads_spend_snapshot(getattr(_ctx, "table", None), getattr(_ctx, "settings", None))
+        if _ctx is not None
+        else {"monthlyUsd": 0.0, "graphMonthlyUsd": 0.0, "recordedMonthlyUsd": 0.0}
+    )
+    meta_monthly = float(snapshot.get("monthlyUsd") or 0)
     revenue = float(paid.get("total") or 0)
     providers = int(active.get("n") or 0)
     return {
@@ -131,7 +141,10 @@ def op_unit_economics(_ctx: Any, _args: dict[str, Any]) -> dict[str, Any]:
         "activeSubscriptions": providers,
         "revenuePerSubscriptionHkd": round(revenue / max(providers, 1), 2),
         "awsMonthlyUsd": cost,
-        "note": "Meta ads spend is added once the meta tool ships (T5). Gross margin uses AWS cost as the current proxy.",
+        "metaAdsMonthlyUsd": meta_monthly,
+        "metaAdsRecordedMonthlyUsd": float(snapshot.get("recordedMonthlyUsd") or 0),
+        "metaAdsGraphMonthlyUsd": float(snapshot.get("graphMonthlyUsd") or 0),
+        "note": "Gross margin uses AWS monthly cost plus Meta ads (recorded board commitment + Graph month-to-date).",
     }
 
 
@@ -181,6 +194,17 @@ def op_draft_invoice(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         amount=hkd,
         fps=fps,
     )
+    pdf_key = _store_invoice_pdf(
+        invoice_id=inv_id,
+        number=number,
+        amount_hkd=hkd,
+        fps_reference=fps,
+        issued_on=issued.isoformat(),
+        due_on=due.isoformat(),
+        payer_contact=str(sub.get("payer_contact") or ""),
+    )
+    if pdf_key:
+        _q("UPDATE invoices SET pdf_key = :key WHERE id = :id", key=pdf_key, id=inv_id)
     return {
         "ok": True,
         "invoiceId": inv_id,
@@ -190,7 +214,57 @@ def op_draft_invoice(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         "dueOn": due.isoformat(),
         "status": "draft",
         "payerContact": sub.get("payer_contact"),
+        "pdfKey": pdf_key,
     }
+
+
+def _store_invoice_pdf(
+    *,
+    invoice_id: str,
+    number: str,
+    amount_hkd: float,
+    fps_reference: str,
+    issued_on: str,
+    due_on: str,
+    payer_contact: str,
+) -> str:
+    bucket = (os.environ.get("ASSETS_BUCKET_NAME") or "").strip()
+    if not bucket:
+        return ""
+    pdf = board_invoice_pdf.render_invoice_pdf(
+        number=number,
+        amount_hkd=amount_hkd,
+        fps_reference=fps_reference,
+        issued_on=issued_on,
+        due_on=due_on,
+        payer_contact=payer_contact,
+    )
+    key = board_invoice_pdf.invoice_s3_key(invoice_id, issued_on)
+    try:
+        runtime._s3.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=pdf,
+            ContentType="application/pdf",
+        )
+    except Exception as exc:
+        _log_event("warning", tag="board_invoice_pdf_failed", error=str(exc)[:200])
+        return ""
+    return key
+
+
+def _load_invoice_pdf(inv: dict[str, Any]) -> bytes | None:
+    key = str(inv.get("pdf_key") or "").strip()
+    bucket = (os.environ.get("ASSETS_BUCKET_NAME") or "").strip()
+    if not key or not bucket:
+        return None
+    try:
+        obj = runtime._s3.get_object(Bucket=bucket, Key=key)
+        body = obj.get("Body")
+        data = body.read() if hasattr(body, "read") else body
+    except Exception:
+        return None
+    return data if isinstance(data, (bytes, bytearray)) else None
 
 
 def _invoice(invoice_id: str) -> dict[str, Any]:
@@ -243,6 +317,8 @@ def owner_preview_send(_ctx: Any, args: dict[str, Any], *, op: str) -> dict[str,
         "number": inv.get("number"),
         "fpsReference": inv.get("fps_reference"),
         "amountHkd": inv.get("amount_hkd"),
+        "pdfKey": inv.get("pdf_key") or "",
+        "attachments": [{"name": f"{inv.get('number')}.pdf"}] if inv.get("pdf_key") else [],
     }
 
 
@@ -263,6 +339,11 @@ def _send_mail(ctx: Any, inv: dict[str, Any], *, subject: str, body: str) -> dic
             "body": body,
         },
     )
+    pdf = _load_invoice_pdf(inv)
+    if pdf:
+        plan["attachments"] = [
+            {"filename": f"{inv.get('number') or 'invoice'}.pdf", "contentType": "application/pdf", "content": pdf}
+        ]
     return board_mail.send_plan(ctx.table, plan, sent_by=getattr(ctx, "persona_id", "cfo"))
 
 

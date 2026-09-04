@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -50,6 +52,8 @@ from contract_constants import (
     BOARD_TOOL_DEFINITIONS,
     BOARD_TOOL_LEVELS,
     BOARD_TOOL_RESULT_MAX_CHARS,
+    BOARD_TOOL_CALL_TIMEOUT_SECONDS,
+    BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
     BOARD_META_LIST_MAX,
     BOARD_STORES_LIST_MAX,
     BOARD_WEB_LIST_MAX,
@@ -109,6 +113,10 @@ class ToolOp:
     # renders the owner-facing, un-masked payload stored on the approval.
     act_guard: Callable[[ToolContext, dict[str, Any]], str | None] | None = None
     preview: Callable[[ToolContext, dict[str, Any]], dict[str, Any] | None] | None = None
+    # None → BOARD_TOOL_CALL_TIMEOUT_SECONDS. Slow Graph / GitHub reads use 25s.
+    timeout_seconds: int | None = None
+    # None → propose for writes, read for reads. CISO phishing is a write at read.
+    level_floor: str | None = None
 
     @property
     def is_write(self) -> bool:
@@ -116,6 +124,8 @@ class ToolOp:
 
     @property
     def min_level(self) -> str:
+        if self.level_floor:
+            return self.level_floor
         return "propose" if self.is_write else "read"
 
     def schema(self) -> dict[str, Any]:
@@ -476,6 +486,7 @@ def build_registry() -> dict[str, ToolOp]:
             ),
             run=_gh(board_github.op_search_issues),
             summarize=_summ_search,
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="github_get_issue",
@@ -542,6 +553,7 @@ def build_registry() -> dict[str, ToolOp]:
             ),
             run=_gh(board_github.op_get_file),
             summarize=_summ("Read {path}"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="github_list_security_alerts",
@@ -551,6 +563,7 @@ def build_registry() -> dict[str, ToolOp]:
             parameters=_obj({"limit": _int_param("Max alerts per kind (1-50).", maximum=50)}),
             run=_gh(board_github.op_list_security_alerts),
             summarize=_summ("Checked security alerts"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="github_create_issue",
@@ -661,7 +674,6 @@ def build_registry() -> dict[str, ToolOp]:
             ),
             run=_board_add_action,
             summarize=_summ("Add action: {title}"),
-            contexts=("chat",),
         ),
         ToolOp(
             name="board_update_action",
@@ -679,7 +691,6 @@ def build_registry() -> dict[str, ToolOp]:
             ),
             run=_board_update_action,
             summarize=_summ_update_action,
-            contexts=("chat",),
         ),
         ToolOp(
             name="mail_list_mailboxes",
@@ -786,6 +797,27 @@ def build_registry() -> dict[str, ToolOp]:
             summarize=_summ("Forward email thread {threadId}"),
             act_guard=lambda ctx, args: board_mail.act_guard(ctx, args, op="mail_forward"),
             preview=lambda ctx, args: board_mail.owner_preview(ctx, args, op="mail_forward"),
+        ),
+        ToolOp(
+            name="mail_report_phishing",
+            tool_id="mail",
+            kind="write",
+            description=(
+                "Flag a mailbox thread as suspected phishing for the founder. Always queued to Approvals; "
+                "available to every role that can read mail, including the CISO."
+            ),
+            parameters=_obj(
+                {
+                    "threadId": _str_param("Thread id from mail_list_threads.", max_len=64),
+                    "note": _str_param("Why this looks like phishing.", max_len=800),
+                    "reason": REASON_PARAM,
+                },
+                ["threadId", "reason"],
+            ),
+            run=board_mail.op_report_phishing,
+            summarize=_summ("Report phishing on thread {threadId}"),
+            level_floor="read",
+            preview=board_mail.owner_preview_phishing,
         ),
         ToolOp(
             name="research_search",
@@ -997,6 +1029,7 @@ def build_registry() -> dict[str, ToolOp]:
             parameters=_obj({"metric": _str_param("Comma-separated insight metrics.", max_len=120)}),
             run=board_meta.op_page_insights,
             summarize=_summ("Read Page insights"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="meta_ig_insights",
@@ -1006,6 +1039,7 @@ def build_registry() -> dict[str, ToolOp]:
             parameters=_obj({"metric": _str_param("Comma-separated insight metrics.", max_len=120)}),
             run=board_meta.op_ig_insights,
             summarize=_summ("Read Instagram insights"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="meta_list_comments",
@@ -1015,6 +1049,7 @@ def build_registry() -> dict[str, ToolOp]:
             parameters=_obj({"limit": _int_param("How many posts.", maximum=BOARD_META_LIST_MAX)}),
             run=board_meta.op_list_comments,
             summarize=_summ("Listed Page comments"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="meta_list_dms",
@@ -1035,6 +1070,16 @@ def build_registry() -> dict[str, ToolOp]:
             summarize=_summ("Listed WhatsApp threads"),
         ),
         ToolOp(
+            name="meta_list_whatsapp_templates",
+            tool_id="meta",
+            kind="read",
+            description="List approved WhatsApp message templates (name, language, status). Use a template name when the 24-hour window is closed.",
+            parameters=_obj({}),
+            run=board_meta.op_list_whatsapp_templates,
+            summarize=_summ("Listed WhatsApp templates"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
+        ),
+        ToolOp(
             name="meta_ad_spend",
             tool_id="meta",
             kind="read",
@@ -1042,6 +1087,7 @@ def build_registry() -> dict[str, ToolOp]:
             parameters=_obj({}),
             run=board_meta.op_ad_spend,
             summarize=_summ("Read ad spend"),
+            timeout_seconds=BOARD_TOOL_CALL_TIMEOUT_SLOW_SECONDS,
         ),
         ToolOp(
             name="meta_propose_post",
@@ -1538,6 +1584,20 @@ def _clean_arguments(args: Any) -> dict[str, Any]:
     return args
 
 
+def _invoke_op(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> dict[str, Any]:
+    timeout = op.timeout_seconds if op.timeout_seconds is not None else BOARD_TOOL_CALL_TIMEOUT_SECONDS
+    if timeout <= 0:
+        result = op.run(ctx, arguments)
+    else:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(op.run, ctx, arguments)
+            try:
+                result = future.result(timeout=timeout)
+            except FuturesTimeout as exc:
+                raise TimeoutError(f"{op.name} timed out after {timeout}s") from exc
+    return result if isinstance(result, dict) else {"result": result}
+
+
 def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> ToolOutcome:
     """Run (or record for approval) one operation and write the audit row."""
     started = time.monotonic()
@@ -1558,7 +1618,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             result={"error": f"{op.name} is not available to you at level '{level}'."},
             summary=summary,
         )
-    elif op.is_write and (level == "propose" or guard_reason):
+    elif op.is_write and (level != "act" or guard_reason):
         approval = create_approval(ctx, op, arguments, summary=summary, downgrade_reason=guard_reason)
         approval_id = str(approval["approvalId"])
         message = (
@@ -1575,9 +1635,9 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
         )
     else:
         try:
-            result = op.run(ctx, arguments)
-            status = "error" if isinstance(result, dict) and result.get("error") and len(result) == 1 else "ok"
-            outcome = ToolOutcome(status=status, result=result if isinstance(result, dict) else {"result": result}, summary=summary)
+            result = _invoke_op(ctx, op, arguments)
+            status = "error" if result.get("error") and len(result) == 1 else "ok"
+            outcome = ToolOutcome(status=status, result=result, summary=summary)
         except (
             board_github.GitHubSnapshotError,
             board_mail.MailError,
@@ -1589,6 +1649,7 @@ def execute_call(ctx: ToolContext, op: ToolOp, arguments: dict[str, Any]) -> Too
             board_meta.MetaError,
             board_stores.StoresError,
             board_web.WebError,
+            TimeoutError,
             ValueError,
         ) as exc:
             outcome = ToolOutcome(status="error", result={"error": str(exc)[:500]}, summary=summary)

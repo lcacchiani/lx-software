@@ -23,6 +23,7 @@ import html
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -687,6 +688,21 @@ def send_plan(table: Any, plan: dict[str, Any], *, sent_by: str) -> dict[str, An
         msg["References"] = " ".join(str(r) for r in plan["references"])
     msg["X-Siutindei-Board"] = sent_by[:80]
     msg.set_content(text)
+    for att in plan.get("attachments") or []:
+        if not isinstance(att, dict):
+            continue
+        payload = att.get("content")
+        if not isinstance(payload, (bytes, bytearray)):
+            continue
+        filename = str(att.get("filename") or "attachment.bin")[:180]
+        ctype = str(att.get("contentType") or "application/octet-stream")
+        main, _, sub = ctype.partition("/")
+        msg.add_attachment(
+            bytes(payload),
+            maintype=main or "application",
+            subtype=sub or "octet-stream",
+            filename=filename,
+        )
     raw = msg.as_bytes()
     response = _ses_client().send_email(
         FromEmailAddress=str(msg["From"]),
@@ -802,6 +818,55 @@ def act_guard(ctx: Any, args: dict[str, Any], *, op: str) -> str | None:
         pseud.save()
         return f"recipient(s) {aliases} are not on the founder's allow-list"
     return None
+
+
+def op_report_phishing(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Create a now-priority action so the founder reviews a suspected phishing thread."""
+    thread_id = str(args.get("threadId") or "").strip()
+    if not thread_id:
+        raise MailError("threadId is required")
+    thread = board_store.get_mail_thread(ctx.table, thread_id)
+    if not thread:
+        raise MailError(f"thread {thread_id} not found")
+    note = str(args.get("note") or args.get("reason") or "").strip()
+    subject = str(thread.get("subject") or "(no subject)")[:120]
+    now = _utc_iso_z(datetime.now(timezone.utc))
+    doc = {
+        "actionId": board_store.new_id(),
+        "title": f"Phishing report: {subject}"[:200],
+        "detail": (note or f"CISO flagged mail thread {thread_id}.")[:800],
+        "persona": getattr(ctx, "persona_id", None) or "ciso",
+        "priority": "now",
+        "effort": "S",
+        "metric": "Thread reviewed and quarantined or cleared",
+        "dependsOn": [],
+        "status": "open",
+        "note": "",
+        "meetingId": getattr(ctx, "meeting_id", "") or "",
+        "source": "tool",
+        "reaffirmedByMeetingIds": [],
+        "dueAt": None,
+        "createdAt": now,
+        "updatedAt": now,
+        "threadId": thread_id,
+    }
+    board_store.put_action(ctx.table, doc)
+    return {"ok": True, "actionId": doc["actionId"], "threadId": thread_id, "subject": subject}
+
+
+def owner_preview_phishing(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    thread_id = str(args.get("threadId") or "").strip()
+    thread = board_store.get_mail_thread(ctx.table, thread_id) if thread_id else None
+    if not thread:
+        return {"error": f"thread {thread_id or '(missing)'} not found"}
+    return {
+        "kind": "phishing",
+        "threadId": thread_id,
+        "subject": str(thread.get("subject") or ""),
+        "mailbox": str(thread.get("mailbox") or ""),
+        "from": str(thread.get("lastFrom") or ""),
+        "note": str(args.get("note") or args.get("reason") or ""),
+    }
 
 
 def owner_preview(ctx: Any, args: dict[str, Any], *, op: str) -> dict[str, Any] | None:

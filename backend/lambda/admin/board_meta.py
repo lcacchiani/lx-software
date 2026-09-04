@@ -42,6 +42,7 @@ from openrouter_client import read_secret_string
 
 GRAPH_ORIGIN = "https://graph.facebook.com/v21.0"
 HTTP_TIMEOUT_SECONDS = 12
+HTTP_TIMEOUT_SLOW_SECONDS = 25
 WINDOW_HOURS = 24
 
 _token_cache: str | None = None
@@ -75,6 +76,10 @@ def ig_user_id() -> str:
 
 def wa_phone_id() -> str:
     return (os.environ.get("META_WA_PHONE_NUMBER_ID") or "").strip()
+
+
+def waba_id() -> str:
+    return (os.environ.get("META_WABA_ID") or "").strip()
 
 
 def ad_account_id() -> str:
@@ -214,7 +219,14 @@ def _urlopen(req: urlrequest.Request, timeout: float | None = None) -> Any:
     return urlrequest.urlopen(req, timeout=timeout or HTTP_TIMEOUT_SECONDS)
 
 
-def graph(method: str, path: str, *, params: dict[str, Any] | None = None, body: dict[str, Any] | None = None) -> dict[str, Any]:
+def graph(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    body: dict[str, Any] | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
     token = board_token()
     if not token:
         raise MetaError("MetaBoardToken is not configured.")
@@ -228,7 +240,7 @@ def graph(method: str, path: str, *, params: dict[str, Any] | None = None, body:
         headers["Content-Type"] = "application/json"
     req = urlrequest.Request(url, data=data, method=method.upper(), headers=headers)
     try:
-        with _urlopen(req) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except urlerror.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:300]
@@ -436,7 +448,12 @@ def op_page_insights(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     if not pid:
         raise MetaError("META_PAGE_ID is not set.")
     metric = str(args.get("metric") or "page_impressions,page_engaged_users")
-    data = graph("GET", f"{pid}/insights", params={"metric": metric, "period": "day"})
+    data = graph(
+        "GET",
+        f"{pid}/insights",
+        params={"metric": metric, "period": "day"},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
     rows = (data.get("data") or [])[: BOARD_META_LIST_MAX]
     return {"pageId": pid, "insights": rows, "count": len(rows)}
 
@@ -446,29 +463,47 @@ def op_ig_insights(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     if not iid:
         raise MetaError("META_IG_USER_ID is not set.")
     metric = str(args.get("metric") or "impressions,reach,profile_views")
-    data = graph("GET", f"{iid}/insights", params={"metric": metric, "period": "day"})
+    data = graph(
+        "GET",
+        f"{iid}/insights",
+        params={"metric": metric, "period": "day"},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
     rows = (data.get("data") or [])[: BOARD_META_LIST_MAX]
     return {"igUserId": iid, "insights": rows, "count": len(rows)}
 
 
-def op_list_comments(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+def op_list_comments(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     pid = str(args.get("pageId") or page_id())
     if not pid:
         raise MetaError("META_PAGE_ID is not set.")
-    data = graph("GET", f"{pid}/feed", params={"fields": "id,message,comments.limit(10){from,message,created_time}", "limit": min(int(args.get("limit") or 10), BOARD_META_LIST_MAX)})
+    data = graph(
+        "GET",
+        f"{pid}/feed",
+        params={"fields": "id,message,comments.limit(10){from,message,created_time}", "limit": min(int(args.get("limit") or 10), BOARD_META_LIST_MAX)},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
+    table = getattr(ctx, "table", None)
+    pseud = board_pii.Pseudonymizer(table, own_domains=board_mail.own_domains()) if table is not None else None
     posts = []
     for post in (data.get("data") or [])[: BOARD_META_LIST_MAX]:
         comments = ((post.get("comments") or {}).get("data") or [])
         posts.append(
             {
                 "id": post.get("id"),
-                "message": _mask_for_model(str(post.get("message") or "")),
+                "message": _mask_text(str(post.get("message") or ""), pseud),
                 "comments": [
-                    {"id": c.get("id"), "from": "contact#hidden", "message": _mask_for_model(str(c.get("message") or ""))}
+                    {
+                        "id": c.get("id"),
+                        "from": _mask_sender(c.get("from"), pseud),
+                        "message": _mask_text(str(c.get("message") or ""), pseud),
+                    }
                     for c in comments
                 ],
             }
         )
+    if pseud is not None:
+        pseud.save()
     return {"posts": posts, "count": len(posts)}
 
 
@@ -488,6 +523,7 @@ def op_ad_spend(ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         "GET",
         f"{aid}/insights",
         params={"fields": "spend,impressions,clicks,actions", "date_preset": "this_month", "level": "account"},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
     )
     rows = data.get("data") or []
     spend = 0.0
@@ -527,8 +563,63 @@ def _list_stored(table: Any, *, channel: str, limit: int) -> dict[str, Any]:
     }
 
 
-def _mask_for_model(text: str) -> str:
+def _mask_text(text: str, pseud: board_pii.Pseudonymizer | None) -> str:
+    if pseud is not None:
+        return pseud.mask_text(text)
     return board_pii.EMAIL_RE.sub("contact#hidden", board_pii.PHONE_RE.sub("phone#hidden", text))
+
+
+def _mask_sender(raw: Any, pseud: board_pii.Pseudonymizer | None) -> str:
+    if isinstance(raw, dict):
+        name = str(raw.get("name") or raw.get("username") or raw.get("id") or "")
+    else:
+        name = str(raw or "")
+    if not name:
+        return "contact#unknown"
+    return _mask_text(name, pseud)
+
+
+def _mask_for_model(text: str) -> str:
+    return _mask_text(text, None)
+
+
+def resolve_waba_id() -> str:
+    explicit = waba_id()
+    if explicit:
+        return explicit
+    phone = wa_phone_id()
+    if not phone:
+        raise MetaError("META_WABA_ID or META_WA_PHONE_NUMBER_ID is not set.")
+    data = graph("GET", phone, params={"fields": "whatsapp_business_account"}, timeout=HTTP_TIMEOUT_SLOW_SECONDS)
+    account = data.get("whatsapp_business_account")
+    if isinstance(account, dict) and account.get("id"):
+        return str(account["id"])
+    if isinstance(account, str) and account:
+        return account
+    raise MetaError("Could not resolve the WhatsApp Business Account id from the phone-number id.")
+
+
+def op_list_whatsapp_templates(_ctx: Any, _args: dict[str, Any]) -> dict[str, Any]:
+    account = resolve_waba_id()
+    data = graph(
+        "GET",
+        f"{account}/message_templates",
+        params={"fields": "name,status,language,category", "limit": BOARD_META_LIST_MAX},
+        timeout=HTTP_TIMEOUT_SLOW_SECONDS,
+    )
+    rows = []
+    for row in (data.get("data") or [])[: BOARD_META_LIST_MAX]:
+        if not isinstance(row, dict):
+            continue
+        rows.append(
+            {
+                "name": row.get("name"),
+                "status": row.get("status"),
+                "language": row.get("language"),
+                "category": row.get("category"),
+            }
+        )
+    return {"wabaId": account, "templates": rows, "count": len(rows)}
 
 
 def _in_window(thread: dict[str, Any]) -> bool:
