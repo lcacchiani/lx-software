@@ -181,7 +181,7 @@ def _clean_msgid(value: Any) -> str:
 
 
 def msgid_digest(rfc_message_id: str) -> str:
-    return hashlib.sha1(_clean_msgid(rfc_message_id).lower().encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(_clean_msgid(rfc_message_id).lower().encode("utf-8")).hexdigest()[:32]
 
 
 def detect_mailbox(msg: EmailMessage, domain: str) -> str:
@@ -322,7 +322,7 @@ def _thread_id_for(table: Any, parsed: ParsedMail) -> str:
         if found:
             return found
     seed = f"{parsed.mailbox}|{normalize_subject(parsed.subject)}|{counterpart(parsed)}"
-    return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:20]
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:20]
 
 
 def _snippet(text: str) -> str:
