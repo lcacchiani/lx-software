@@ -14,9 +14,9 @@ export const PARSE_TIMEOUTS = {
 export const BOARD_TIMEOUTS = {
   chatOpenRouterTimeoutSeconds: 90,
   phaseOpenRouterTimeoutSeconds: 100,
-  maxParallelPersonaCalls: 4,
+  maxParallelPersonaCalls: 8,
   chatJobTtlSeconds: 604800,
-  chatJobStuckSeconds: 180,
+  chatJobStuckSeconds: 300,
   meetingStuckSeconds: 900,
   repoSnapshotStaleSeconds: 72000,
 } as const;

@@ -18,10 +18,12 @@ import board_budget
 import board_context
 import board_personas
 import board_store
+import board_tools
 from contract_constants import (
     BOARD_CHAT_HISTORY_TURNS,
     BOARD_CHAT_JOB_STUCK_SECONDS,
     BOARD_CHAT_OPENROUTER_TIMEOUT_SECONDS,
+    BOARD_CHAT_TOOL_LOOP_MAX_SECONDS,
     BOARD_MAX_CHAT_MESSAGE_LEN,
     BOARD_MAX_TOPIC_LEN,
 )
@@ -131,7 +133,7 @@ def handle_job_get(persona_id: str, job_id: str, user_sub: str | None) -> dict[s
     job = _finalize_stuck_job(table, job)
     status = job.get("status")
     if status in ("pending", "processing"):
-        return _json_response(200, {"status": status})
+        return _json_response(200, {"status": status, "toolCalls": job.get("toolCalls") or []})
     if status == "succeeded":
         return _json_response(
             200,
@@ -193,8 +195,15 @@ def run_chat_worker(payload: dict[str, Any]) -> None:
         return
     job = board_store.get_chat_job(table, job_id) or {"jobId": job_id, "personaId": persona_id}
 
+    def _progress(calls: list[dict[str, Any]]) -> None:
+        # Lets the SPA show "Looking at GitHub…" lines while the reply is still running.
+        board_store.put_chat_job(
+            table,
+            {**job, "status": "processing", "toolCalls": calls, "updatedAt": board_store.now_iso()},
+        )
+
     try:
-        reply = generate_reply(table, persona_id=persona_id)
+        reply = generate_reply(table, persona_id=persona_id, job_id=job_id, on_progress=_progress)
     except (OpenRouterError, board_budget.BudgetExceeded) as exc:
         _fail_job(table, job, str(exc))
         return
@@ -222,8 +231,14 @@ def _fail_job(table: Any, job: dict[str, Any], message: str) -> None:
     )
 
 
-def generate_reply(table: Any, *, persona_id: str) -> dict[str, Any]:
-    """Build the persona prompt from the thread + context pack, call the model, persist the reply."""
+def generate_reply(
+    table: Any,
+    *,
+    persona_id: str,
+    job_id: str = "",
+    on_progress: Any = None,
+) -> dict[str, Any]:
+    """Build the persona prompt from the thread + context pack, run the tool loop, persist the reply."""
     settings = board_store.load_settings(table)
     board_budget.check_budget(table, settings)
     charter = board_store.load_charter(table)
@@ -252,29 +267,42 @@ def generate_reply(table: Any, *, persona_id: str) -> dict[str, Any]:
             {"role": "user", "content": "(The founder is waiting for your reply to the thread above.)"}
         )
 
-    completion = board_budget.board_completion(
+    ctx = board_tools.ToolContext(
         table=table,
+        settings=settings,
+        persona_id=persona_id,
+        display_name=str(profile.get("displayName") or profile.get("shortName") or persona_id),
+        kind="chat",
+        job_id=job_id,
+    )
+    result = board_tools.run_tool_loop(
+        ctx=ctx,
         messages=messages,
         model=board_budget.model_for("chat", settings),
         timeout=BOARD_CHAT_OPENROUTER_TIMEOUT_SECONDS,
-        temperature=0.5,
         max_tokens=1200,
+        temperature=0.5,
+        json_mode=False,
         tag="board_chat_reply",
+        max_seconds=BOARD_CHAT_TOOL_LOOP_MAX_SECONDS,
+        on_progress=on_progress,
     )
-    text, suggested = extract_suggested_meeting(completion.text)
+    text, suggested = extract_suggested_meeting(result.text)
     extra: dict[str, Any] = {
-        "model": completion.model,
+        "model": result.model,
         "profileHash": profile["profileHash"],
         "contextHash": pack["hash"],
     }
     if suggested:
         extra["suggestedMeeting"] = suggested
+    if result.calls:
+        extra["toolCalls"] = result.calls
     return board_store.add_chat_message(
         table,
         persona_id,
         role="assistant",
         text=text.strip() or "(empty reply)",
-        usage=completion.usage,
+        usage=result.usage,
         extra=extra,
     )
 

@@ -34,16 +34,43 @@ class OpenRouterError(RuntimeError):
 
 
 @dataclass
+class ToolCall:
+    """One function call requested by the model."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+    raw_arguments: str = ""
+
+    def as_message_entry(self) -> dict[str, Any]:
+        """Shape expected inside an assistant message's ``tool_calls`` list."""
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {"name": self.name, "arguments": self.raw_arguments or json.dumps(self.arguments)},
+        }
+
+
+@dataclass
 class ChatCompletion:
     text: str
     model: str
     usage: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str = ""
 
     @property
     def cost_usd(self) -> float:
         value = self.usage.get("cost")
         return float(value) if isinstance(value, (int, float)) else 0.0
+
+    def assistant_message(self) -> dict[str, Any]:
+        """Replay this completion as the assistant turn in a follow-up request."""
+        msg: dict[str, Any] = {"role": "assistant", "content": self.text or None}
+        if self.tool_calls:
+            msg["tool_calls"] = [tc.as_message_entry() for tc in self.tool_calls]
+        return msg
 
 
 def endpoint_url() -> str:
@@ -63,15 +90,28 @@ def chat_completion(
     include_usage: bool = True,
     deny_data_collection: bool = True,
     max_retries: int = _MAX_RETRIES_DEFAULT,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
 ) -> ChatCompletion:
     """POST one chat completion and return the assistant text plus usage.
 
     With ``deny_data_collection`` (the default) OpenRouter only routes to
-    providers that do not retain prompts.
+    providers that do not retain prompts. ``tools`` follows the OpenAI
+    function-calling schema; requested calls come back in ``tool_calls``.
     """
     payload: dict[str, Any] = {"model": model, "messages": messages}
+    provider: dict[str, Any] = {}
     if deny_data_collection:
-        payload["provider"] = {"data_collection": "deny"}
+        provider["data_collection"] = "deny"
+    if tools:
+        payload["tools"] = tools
+        # Skip providers that cannot honour the tools parameter instead of
+        # silently dropping it.
+        provider["require_parameters"] = True
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+    if provider:
+        payload["provider"] = provider
     if temperature is not None:
         payload["temperature"] = temperature
     if max_tokens is not None:
@@ -98,7 +138,55 @@ def chat_completion(
         model=str(raw.get("model") or model),
         usage=normalize_usage(raw.get("usage")),
         raw=raw,
+        tool_calls=extract_tool_calls(raw),
+        finish_reason=str((raw.get("choices") or [{}])[0].get("finish_reason") or ""),
     )
+
+
+def extract_tool_calls(payload: dict[str, Any]) -> list[ToolCall]:
+    """Parse ``choices[0].message.tool_calls``; malformed entries are skipped."""
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return []
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return []
+    raw_calls = message.get("tool_calls")
+    if not isinstance(raw_calls, list):
+        return []
+    out: list[ToolCall] = []
+    for index, entry in enumerate(raw_calls):
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        raw_args = function.get("arguments")
+        arguments: dict[str, Any] = {}
+        if isinstance(raw_args, dict):
+            arguments = raw_args
+            raw_args = json.dumps(raw_args)
+        elif isinstance(raw_args, str) and raw_args.strip():
+            try:
+                parsed = json.loads(raw_args)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                arguments = parsed
+        else:
+            raw_args = "{}"
+        out.append(
+            ToolCall(
+                id=str(entry.get("id") or f"call_{index}"),
+                name=name,
+                arguments=arguments,
+                raw_arguments=str(raw_args),
+            )
+        )
+    return out
 
 
 def post_json(

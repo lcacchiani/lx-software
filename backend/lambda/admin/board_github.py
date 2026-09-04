@@ -1,10 +1,16 @@
-"""Executive Board: cached snapshot of the Siu Tin Dei GitHub repository.
+"""Executive Board: access to the Siu Tin Dei GitHub repository.
 
-Reads a fine-grained, read-only personal access token from Secrets Manager
-(``GITHUB_READ_TOKEN_SECRET_ARN``) and collects a bounded amount of
-context: README, AGENTS.md, architecture docs, open issues, recent commits
-and the latest CI run. The result is cached in the records table and
-refreshed by the daily meeting or on demand.
+Two uses share this module:
+
+- the cached **snapshot** (README, AGENTS.md, architecture docs, open
+  issues, recent commits, latest CI run) that feeds the context pack, and
+- the on-demand **tool operations** board members call during chats and
+  meetings (search issues, read a file, list CI runs, open an issue, ...).
+
+The repository is public, so reads work without credentials (subject to
+GitHub's anonymous rate limit). A fine-grained token in Secrets Manager
+(``GITHUB_READ_TOKEN_SECRET_ARN``) raises the limit and is required for
+writes (``issues: write``) and security alerts (``security_events: read``).
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib import error as urlerror
@@ -30,12 +37,26 @@ MAX_TOTAL_CHARS = 32000
 MAX_DOC_FILES = 6
 MAX_ISSUES = 30
 MAX_COMMITS = 20
+MAX_TOOL_FILE_CHARS = 12000
+MAX_TOOL_LIST = 20
+MAX_ISSUE_BODY_CHARS = 4000
+MAX_COMMENT_CHARS = 1500
+MAX_COMMENTS = 10
+_SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._\-/ ]+$")
 
 _token_cache: str | None = None
+_token_checked = False
 
 
 class GitHubSnapshotError(RuntimeError):
-    """User-facing failure while refreshing the repository snapshot."""
+    """User-facing failure while talking to GitHub."""
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+GitHubApiError = GitHubSnapshotError
 
 
 def repo_full_name() -> str:
@@ -43,57 +64,98 @@ def repo_full_name() -> str:
 
 
 def snapshot_enabled() -> bool:
-    return bool((os.environ.get("GITHUB_READ_TOKEN_SECRET_ARN") or "").strip())
+    """Reads never need credentials: the repository is public."""
+    return bool(repo_full_name())
+
+
+def token_configured() -> bool:
+    return bool(
+        (os.environ.get("GITHUB_READ_TOKEN") or "").strip()
+        or (os.environ.get("GITHUB_READ_TOKEN_SECRET_ARN") or "").strip()
+    )
+
+
+def write_enabled() -> bool:
+    return token_configured()
 
 
 def _token() -> str:
-    global _token_cache
-    if _token_cache:
+    """Bearer token, or ``""`` when none is configured (anonymous reads)."""
+    global _token_cache, _token_checked
+    if _token_checked and _token_cache is not None:
         return _token_cache
     direct = (os.environ.get("GITHUB_READ_TOKEN") or "").strip()
     if direct:
-        _token_cache = direct
+        _token_cache, _token_checked = direct, True
         return direct
     arn = (os.environ.get("GITHUB_READ_TOKEN_SECRET_ARN") or "").strip()
     if not arn:
-        raise GitHubSnapshotError(
-            "GitHub access is not configured (set the GitHubReadTokenSecretArn stack parameter)"
-        )
+        _token_cache, _token_checked = "", True
+        return ""
     try:
         _token_cache = read_secret_string(
             _get_secretsmanager_client(), arn, what="GitHub token"
         )
     except OpenRouterError as exc:
         raise GitHubSnapshotError(str(exc)) from exc
+    _token_checked = True
     return _token_cache
 
 
-def _get(path: str, *, accept: str = "application/vnd.github+json") -> Any:
+def _request(
+    method: str,
+    path: str,
+    *,
+    body: dict[str, Any] | None = None,
+    accept: str = "application/vnd.github+json",
+    timeout: int = HTTP_TIMEOUT_SECONDS,
+) -> Any:
     url = path if path.startswith("http") else f"{API_ORIGIN}{path}"
-    req = urlrequest.Request(  # noqa: S310 - fixed API origin
-        url,
-        headers={
-            "Authorization": f"Bearer {_token()}",
-            "Accept": accept,
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "lxsoftware-admin-board",
-        },
-    )
+    headers = {
+        "Accept": accept,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "lxsoftware-admin-board",
+    }
+    token = _token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urlrequest.Request(url, data=data, method=method, headers=headers)  # noqa: S310 - fixed API origin
     try:
-        with urlrequest.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310
-            body = resp.read().decode("utf-8", errors="replace")
+        with urlrequest.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            text = resp.read().decode("utf-8", errors="replace")
     except urlerror.HTTPError as exc:
-        if exc.code == 404:
+        if exc.code == 404 and method == "GET":
             return None
-        raise GitHubSnapshotError(f"GitHub API returned status {exc.code} for {path}") from exc
+        detail = ""
+        try:
+            payload = json.loads(exc.read().decode("utf-8", errors="replace"))
+            detail = str(payload.get("message") or "") if isinstance(payload, dict) else ""
+        except Exception:  # pragma: no cover - defensive
+            detail = ""
+        suffix = f": {detail[:200]}" if detail else ""
+        if exc.code in (401, 403) and not token:
+            suffix += " (no GitHub token configured; anonymous access is rate-limited and cannot write)"
+        raise GitHubSnapshotError(
+            f"GitHub API returned status {exc.code} for {method} {path}{suffix}", status=exc.code
+        ) from exc
     except urlerror.URLError as exc:
         raise GitHubSnapshotError(f"GitHub API transport error: {exc.reason}") from exc
     if accept.endswith("raw"):
-        return body
+        return text
+    if not text.strip():
+        return {}
     try:
-        return json.loads(body)
+        return json.loads(text)
     except json.JSONDecodeError as exc:
         raise GitHubSnapshotError("GitHub API returned invalid JSON") from exc
+
+
+def _get(path: str, *, accept: str = "application/vnd.github+json") -> Any:
+    return _request("GET", path, accept=accept)
 
 
 def _file_text(repo: str, path: str) -> str | None:
@@ -286,5 +348,346 @@ def public_snapshot_meta(snapshot: dict[str, Any] | None) -> dict[str, Any] | No
 
 
 def reset_token_cache_for_tests() -> None:
-    global _token_cache
+    global _token_cache, _token_checked
     _token_cache = None
+    _token_checked = False
+
+
+# ---------------------------------------------------------------------------
+# Tool operations (called by board_tools through the registry)
+# ---------------------------------------------------------------------------
+
+def _clamp_int(value: Any, *, default: int, low: int, high: int) -> int:
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(low, out), high)
+
+
+def _issue_number(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise GitHubSnapshotError("number must be an integer issue or pull request number") from None
+    if number <= 0:
+        raise GitHubSnapshotError("number must be positive")
+    return number
+
+
+def _issue_summary(it: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "number": it.get("number"),
+        "title": _cap(str(it.get("title") or ""), 200),
+        "state": it.get("state"),
+        "isPullRequest": bool(it.get("pull_request")),
+        "labels": [
+            str(lb.get("name")) for lb in (it.get("labels") or []) if isinstance(lb, dict) and lb.get("name")
+        ],
+        "author": ((it.get("user") or {}).get("login") if isinstance(it.get("user"), dict) else None),
+        "comments": it.get("comments"),
+        "createdAt": it.get("created_at"),
+        "updatedAt": it.get("updated_at"),
+        "url": it.get("html_url"),
+    }
+
+
+def op_search_issues(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    query = " ".join(str(args.get("query") or "").split())[:200]
+    state = str(args.get("state") or "open").lower()
+    if state not in ("open", "closed", "all"):
+        state = "open"
+    kind = str(args.get("type") or "issue").lower()
+    if kind not in ("issue", "pr", "any"):
+        kind = "issue"
+    limit = _clamp_int(args.get("limit"), default=10, low=1, high=MAX_TOOL_LIST)
+    q_parts = [f"repo:{repo}"]
+    if state != "all":
+        q_parts.append(f"state:{state}")
+    if kind != "any":
+        q_parts.append(f"type:{kind}")
+    if query:
+        q_parts.append(query)
+    data = _get(f"/search/issues?q={urlparse.quote(' '.join(q_parts))}&per_page={limit}&sort=updated")
+    items = data.get("items") if isinstance(data, dict) else None
+    results = [_issue_summary(it) for it in (items or []) if isinstance(it, dict)]
+    return {
+        "repo": repo,
+        "query": " ".join(q_parts),
+        "totalCount": int(data.get("total_count") or 0) if isinstance(data, dict) else 0,
+        "items": results,
+    }
+
+
+def op_get_issue(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    number = _issue_number(args.get("number"))
+    it = _get(f"/repos/{repo}/issues/{number}")
+    if not isinstance(it, dict):
+        return {"error": f"Issue #{number} not found in {repo}"}
+    out = _issue_summary(it)
+    out["body"] = _cap(str(it.get("body") or ""), MAX_ISSUE_BODY_CHARS)
+    out["assignees"] = [
+        str(a.get("login")) for a in (it.get("assignees") or []) if isinstance(a, dict) and a.get("login")
+    ]
+    comments_raw = _get(f"/repos/{repo}/issues/{number}/comments?per_page={MAX_COMMENTS}")
+    comments: list[dict[str, Any]] = []
+    if isinstance(comments_raw, list):
+        for c in comments_raw:
+            if not isinstance(c, dict):
+                continue
+            comments.append(
+                {
+                    "author": ((c.get("user") or {}).get("login") if isinstance(c.get("user"), dict) else None),
+                    "createdAt": c.get("created_at"),
+                    "body": _cap(str(c.get("body") or ""), MAX_COMMENT_CHARS),
+                }
+            )
+    out["recentComments"] = comments
+    return out
+
+
+def op_list_pull_requests(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    state = str(args.get("state") or "open").lower()
+    if state not in ("open", "closed", "all"):
+        state = "open"
+    limit = _clamp_int(args.get("limit"), default=10, low=1, high=MAX_TOOL_LIST)
+    raw = _get(f"/repos/{repo}/pulls?state={state}&per_page={limit}&sort=updated&direction=desc")
+    items: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for pr in raw:
+            if not isinstance(pr, dict):
+                continue
+            items.append(
+                {
+                    "number": pr.get("number"),
+                    "title": _cap(str(pr.get("title") or ""), 200),
+                    "state": pr.get("state"),
+                    "draft": bool(pr.get("draft")),
+                    "author": ((pr.get("user") or {}).get("login") if isinstance(pr.get("user"), dict) else None),
+                    "head": ((pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else None),
+                    "createdAt": pr.get("created_at"),
+                    "updatedAt": pr.get("updated_at"),
+                    "mergedAt": pr.get("merged_at"),
+                    "url": pr.get("html_url"),
+                }
+            )
+    return {"repo": repo, "state": state, "items": items}
+
+
+def op_list_workflow_runs(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    limit = _clamp_int(args.get("limit"), default=10, low=1, high=MAX_TOOL_LIST)
+    branch = str(args.get("branch") or "").strip()
+    query = f"per_page={limit}"
+    if branch and _SAFE_PATH_RE.match(branch):
+        query += f"&branch={urlparse.quote(branch)}"
+    raw = _get(f"/repos/{repo}/actions/runs?{query}")
+    runs: list[dict[str, Any]] = []
+    if isinstance(raw, dict):
+        for run in raw.get("workflow_runs") or []:
+            if not isinstance(run, dict):
+                continue
+            head_commit = run.get("head_commit") if isinstance(run.get("head_commit"), dict) else {}
+            commit_lines = str(head_commit.get("message") or "").splitlines()
+            runs.append(
+                {
+                    "id": run.get("id"),
+                    "name": _cap(str(run.get("name") or ""), 80),
+                    "branch": run.get("head_branch"),
+                    "event": run.get("event"),
+                    "status": run.get("status"),
+                    "conclusion": run.get("conclusion"),
+                    "commitMessage": _cap(commit_lines[0] if commit_lines else "", 120),
+                    "updatedAt": run.get("updated_at"),
+                    "url": run.get("html_url"),
+                }
+            )
+    return {"repo": repo, "items": runs}
+
+
+def op_list_commits(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    limit = _clamp_int(args.get("limit"), default=10, low=1, high=MAX_TOOL_LIST)
+    query = f"per_page={limit}"
+    path = str(args.get("path") or "").strip().strip("/")
+    if path:
+        if not _SAFE_PATH_RE.match(path) or ".." in path:
+            raise GitHubSnapshotError("path contains unsupported characters")
+        query += f"&path={urlparse.quote(path)}"
+    raw = _get(f"/repos/{repo}/commits?{query}")
+    commits: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            commit = c.get("commit") or {}
+            author = (commit.get("author") or {}) if isinstance(commit, dict) else {}
+            commits.append(
+                {
+                    "sha": str(c.get("sha") or "")[:10],
+                    "message": _cap(str(commit.get("message") or "").splitlines()[0] if commit else "", 160),
+                    "author": author.get("name"),
+                    "date": author.get("date"),
+                    "url": c.get("html_url"),
+                }
+            )
+    return {"repo": repo, "path": path or None, "items": commits}
+
+
+def op_get_file(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    path = str(args.get("path") or "").strip().strip("/")
+    if not path or not _SAFE_PATH_RE.match(path) or ".." in path:
+        raise GitHubSnapshotError("path is required and may only contain letters, digits, '.', '_', '-', '/'")
+    ref = str(args.get("ref") or "").strip()
+    query = f"?ref={urlparse.quote(ref)}" if ref and _SAFE_PATH_RE.match(ref) else ""
+    data = _get(f"/repos/{repo}/contents/{urlparse.quote(path)}{query}")
+    if data is None:
+        return {"error": f"{path} not found in {repo}"}
+    if isinstance(data, list):
+        return {
+            "repo": repo,
+            "path": path,
+            "type": "dir",
+            "entries": [
+                {"name": e.get("name"), "type": e.get("type"), "size": e.get("size")}
+                for e in data[:100]
+                if isinstance(e, dict)
+            ],
+        }
+    if not isinstance(data, dict):
+        return {"error": "Unexpected response from GitHub"}
+    content = data.get("content")
+    text = ""
+    if isinstance(content, str):
+        try:
+            text = base64.b64decode(content).decode("utf-8", errors="replace")
+        except Exception:  # pragma: no cover - defensive
+            text = ""
+    size = int(data.get("size") or 0)
+    return {
+        "repo": repo,
+        "path": path,
+        "type": "file",
+        "size": size,
+        "truncated": len(text) > MAX_TOOL_FILE_CHARS,
+        "text": _cap(text, MAX_TOOL_FILE_CHARS),
+        "url": data.get("html_url"),
+    }
+
+
+def op_list_security_alerts(args: dict[str, Any]) -> dict[str, Any]:
+    repo = repo_full_name()
+    limit = _clamp_int(args.get("limit"), default=20, low=1, high=50)
+    out: dict[str, Any] = {"repo": repo, "dependabot": [], "codeScanning": [], "notes": []}
+    try:
+        dep = _get(f"/repos/{repo}/dependabot/alerts?state=open&per_page={limit}")
+    except GitHubSnapshotError as exc:
+        dep = None
+        out["notes"].append(f"Dependabot alerts unavailable: {exc}")
+    if isinstance(dep, list):
+        for a in dep:
+            if not isinstance(a, dict):
+                continue
+            adv = a.get("security_advisory") or {}
+            dep_info = a.get("dependency") or {}
+            pkg = dep_info.get("package") or {} if isinstance(dep_info, dict) else {}
+            out["dependabot"].append(
+                {
+                    "number": a.get("number"),
+                    "severity": (adv.get("severity") if isinstance(adv, dict) else None),
+                    "package": (pkg.get("name") if isinstance(pkg, dict) else None),
+                    "ecosystem": (pkg.get("ecosystem") if isinstance(pkg, dict) else None),
+                    "summary": _cap(str(adv.get("summary") or "") if isinstance(adv, dict) else "", 200),
+                    "manifest": (dep_info.get("manifest_path") if isinstance(dep_info, dict) else None),
+                    "createdAt": a.get("created_at"),
+                    "url": a.get("html_url"),
+                }
+            )
+    elif dep is None and not out["notes"]:
+        out["notes"].append("Dependabot alerts are not enabled or not visible for this repository.")
+    try:
+        cs = _get(f"/repos/{repo}/code-scanning/alerts?state=open&per_page={limit}")
+    except GitHubSnapshotError as exc:
+        cs = None
+        out["notes"].append(f"Code scanning alerts unavailable: {exc}")
+    if isinstance(cs, list):
+        for a in cs:
+            if not isinstance(a, dict):
+                continue
+            rule = a.get("rule") or {}
+            loc = ((a.get("most_recent_instance") or {}).get("location") or {}) if isinstance(a.get("most_recent_instance"), dict) else {}
+            out["codeScanning"].append(
+                {
+                    "number": a.get("number"),
+                    "severity": (rule.get("security_severity_level") or rule.get("severity")) if isinstance(rule, dict) else None,
+                    "rule": (rule.get("id") if isinstance(rule, dict) else None),
+                    "description": _cap(str(rule.get("description") or "") if isinstance(rule, dict) else "", 200),
+                    "path": (loc.get("path") if isinstance(loc, dict) else None),
+                    "createdAt": a.get("created_at"),
+                    "url": a.get("html_url"),
+                }
+            )
+    return out
+
+
+def _clean_labels(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    labels: list[str] = []
+    for lb in raw:
+        text = str(lb or "").strip()[:50]
+        if text and text not in labels:
+            labels.append(text)
+    return labels[:10]
+
+
+def _require_write_token() -> None:
+    if not write_enabled():
+        raise GitHubSnapshotError(
+            "GitHub writes need a token: set the GitHubReadTokenSecretArn stack parameter to a "
+            "fine-grained token with issues: write on the repository"
+        )
+
+
+def op_create_issue(args: dict[str, Any]) -> dict[str, Any]:
+    _require_write_token()
+    repo = repo_full_name()
+    title = " ".join(str(args.get("title") or "").split())[:200]
+    if not title:
+        raise GitHubSnapshotError("title is required")
+    body = str(args.get("body") or "").strip()[:MAX_ISSUE_BODY_CHARS]
+    payload: dict[str, Any] = {"title": title, "body": body}
+    labels = _clean_labels(args.get("labels"))
+    if labels:
+        payload["labels"] = labels
+    created = _request("POST", f"/repos/{repo}/issues", body=payload)
+    if not isinstance(created, dict):
+        raise GitHubSnapshotError("GitHub did not return the created issue")
+    return {"ok": True, "number": created.get("number"), "url": created.get("html_url"), "title": title}
+
+
+def op_comment_issue(args: dict[str, Any]) -> dict[str, Any]:
+    _require_write_token()
+    repo = repo_full_name()
+    number = _issue_number(args.get("number"))
+    body = str(args.get("body") or "").strip()[:MAX_ISSUE_BODY_CHARS]
+    if not body:
+        raise GitHubSnapshotError("body is required")
+    created = _request("POST", f"/repos/{repo}/issues/{number}/comments", body={"body": body})
+    if not isinstance(created, dict):
+        raise GitHubSnapshotError("GitHub did not return the created comment")
+    return {"ok": True, "number": number, "commentId": created.get("id"), "url": created.get("html_url")}
+
+
+def op_set_labels(args: dict[str, Any]) -> dict[str, Any]:
+    _require_write_token()
+    repo = repo_full_name()
+    number = _issue_number(args.get("number"))
+    labels = _clean_labels(args.get("labels"))
+    updated = _request("PUT", f"/repos/{repo}/issues/{number}/labels", body={"labels": labels})
+    names = [str(lb.get("name")) for lb in updated if isinstance(lb, dict)] if isinstance(updated, list) else labels
+    return {"ok": True, "number": number, "labels": names}

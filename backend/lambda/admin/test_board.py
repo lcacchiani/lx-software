@@ -420,7 +420,11 @@ class TestBoardRoutes(BoardTestCase):
         self.assertEqual(len(body["members"]), 8)
         self.assertEqual(body["settings"]["defaultChair"], "ceo")
         self.assertEqual(body["openActionCount"], 0)
-        self.assertEqual(body["usageToday"]["budgetUsd"], 5.0)
+        self.assertEqual(body["usageToday"]["budgetUsd"], 15.0)
+        self.assertEqual(body["pendingApprovalCount"], 0)
+        self.assertTrue(body["toolsEnabled"])
+        self.assertEqual(body["settings"]["tools"]["globalMode"], "propose")
+        self.assertEqual(body["settings"]["tools"]["matrix"]["github"]["cto"], "act")
 
     def test_member_put_and_reset(self) -> None:
         status, body = self.call(
@@ -504,7 +508,7 @@ class TestChat(BoardTestCase):
         system_prompt = self.openrouter.requests[0]["messages"][0]["content"]
         self.assertIn("Your mandate: MANDATE-VERBATIM", system_prompt)
         self.assertIn("CONTEXT DATA", self.openrouter.requests[0]["messages"][1]["content"])
-        self.assertEqual(self.openrouter.requests[0]["provider"], {"data_collection": "deny"})
+        self.assertEqual(self.openrouter.requests[0]["provider"]["data_collection"], "deny")
         usage = board_store.load_usage_day(self.table)
         self.assertEqual(usage["calls"], 1)
         self.assertAlmostEqual(usage["cost"], 0.01)

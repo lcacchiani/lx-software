@@ -76,6 +76,8 @@ def board_completion(
     max_tokens: int | None = None,
     max_retries: int = 1,
     tag: str = "board_completion",
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
 ) -> openrouter_client.ChatCompletion:
     """One board LLM call with usage recorded against today's budget."""
     completion = openrouter_client.chat_completion(
@@ -89,6 +91,8 @@ def board_completion(
         include_usage=True,
         deny_data_collection=True,
         max_retries=max_retries,
+        tools=tools,
+        tool_choice=tool_choice,
     )
     try:
         board_store.add_usage_day(table, completion.usage)
@@ -101,5 +105,6 @@ def board_completion(
         prompt_tokens=completion.usage.get("promptTokens"),
         completion_tokens=completion.usage.get("completionTokens"),
         cost_usd=completion.usage.get("cost"),
+        tool_calls=len(completion.tool_calls),
     )
     return completion

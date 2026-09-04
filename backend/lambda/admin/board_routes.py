@@ -11,12 +11,16 @@ import board_github
 import board_meeting
 import board_personas
 import board_store
+import board_tools
 from contract_constants import (
     BOARD_CHAIR_DEFAULT,
+    BOARD_MAX_APPROVAL_NOTE_LEN,
     BOARD_MAX_BRIEF_LEN,
     BOARD_MAX_DAILY_BUDGET_USD,
     BOARD_MAX_UPDATE_LEN,
     BOARD_MEETING_MODES,
+    BOARD_TOOL_GLOBAL_MODES,
+    BOARD_TOOL_LEVELS,
 )
 from http_common import _audit, _json_response, _log_event, _parse_json_body
 
@@ -97,6 +101,21 @@ def handle_board_route(
     if head == "repo-snapshot" and len(rest) == 2 and rest[1] == "refresh" and method == "POST":
         return _repo_snapshot_refresh(event, user_sub)
 
+    if head == "tools":
+        if len(rest) == 1:
+            if method == "GET":
+                return _tools_get()
+            if method == "PUT":
+                return _tools_put(event, user_sub)
+        if len(rest) == 2 and rest[1] == "calls" and method == "GET":
+            return _tool_calls_get(event)
+
+    if head == "approvals":
+        if len(rest) == 1 and method == "GET":
+            return _approvals_get(event)
+        if len(rest) == 3 and rest[2] in ("approve", "reject") and method == "POST":
+            return _approval_decide(event, rest[1], approve=rest[2] == "approve", user_sub=user_sub)
+
     return _json_response(404, {"message": "Not found"})
 
 
@@ -115,6 +134,7 @@ def _overview() -> dict[str, Any]:
     running = next((m for m in meetings if m.get("status") == "running"), None)
     latest_done = next((m for m in meetings if m.get("status") == "succeeded"), None)
     usage = board_store.load_usage_day(table)
+    pending_approvals = sum(1 for a in board_store.list_approvals(table) if a.get("status") == "pending")
     return _json_response(
         200,
         {
@@ -124,6 +144,8 @@ def _overview() -> dict[str, Any]:
             "members": roster,
             "chairDefault": BOARD_CHAIR_DEFAULT,
             "openActionCount": open_count,
+            "pendingApprovalCount": pending_approvals,
+            "toolsEnabled": board_tools.tools_enabled(settings),
             "runningMeeting": board_meeting.public_meeting_summary(running) if running else None,
             "latestMeeting": board_meeting.public_meeting_summary(latest_done) if latest_done else None,
             "usageToday": {**usage, "budgetUsd": board_budget.daily_budget_usd(settings)},
@@ -134,9 +156,129 @@ def _overview() -> dict[str, Any]:
             },
             "repoSnapshot": board_github.public_snapshot_meta(board_store.load_repo_snapshot(table)),
             "repoSnapshotEnabled": board_github.snapshot_enabled(),
+            "repoWriteEnabled": board_github.write_enabled(),
             "repo": board_github.repo_full_name(),
         },
     )
+
+
+def _tools_get() -> dict[str, Any]:
+    table = board_store.records_table()
+    settings = board_store.load_settings(table)
+    return _json_response(200, _tools_payload(settings))
+
+
+def _tools_payload(settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "config": settings.get("tools") or board_store.default_tools_config(),
+        "effective": board_tools.effective_matrix(settings),
+        "enabled": board_tools.tools_enabled(settings),
+        "envDisabled": board_tools.env_disabled(),
+        "registry": board_tools.public_registry(),
+        "defaults": board_store.default_tools_config(),
+        "repoWriteEnabled": board_github.write_enabled(),
+    }
+
+
+def validate_tools_config(body: Any, current: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        raise ValueError("Body must be a JSON object")
+    out = {**current}
+    if "enabled" in body:
+        out["enabled"] = bool(body.get("enabled"))
+    if "globalMode" in body:
+        mode = body.get("globalMode")
+        if mode not in BOARD_TOOL_GLOBAL_MODES:
+            raise ValueError("globalMode must be readOnly, propose or act")
+        out["globalMode"] = mode
+    if "matrix" in body:
+        matrix = body.get("matrix")
+        if not isinstance(matrix, dict):
+            raise ValueError("matrix must be an object of {toolId: {personaId: level}}")
+        merged = {tool_id: dict(cells) for tool_id, cells in current["matrix"].items()}
+        for tool_id, cells in matrix.items():
+            if tool_id not in merged:
+                raise ValueError(f"Unknown tool '{tool_id}'")
+            if not isinstance(cells, dict):
+                raise ValueError(f"matrix.{tool_id} must be an object")
+            for pid, level in cells.items():
+                if pid not in merged[tool_id]:
+                    raise ValueError(f"Unknown board member '{pid}'")
+                if level not in BOARD_TOOL_LEVELS:
+                    raise ValueError(f"Level for {tool_id}/{pid} must be one of {', '.join(BOARD_TOOL_LEVELS)}")
+                merged[tool_id][pid] = level
+        out["matrix"] = merged
+    return board_store.normalize_tools_config(out)
+
+
+def _tools_put(event: dict[str, Any], user_sub: str | None) -> dict[str, Any]:
+    table = board_store.records_table()
+    settings = board_store.load_settings(table)
+    try:
+        tools_config = validate_tools_config(_parse_json_body(event), settings["tools"])
+    except ValueError as exc:
+        return _json_response(400, {"message": str(exc)})
+    saved = board_store.save_settings(table, {**settings, "tools": tools_config})
+    _audit(user_sub, "BOARD_TOOLS_PUT", "tools", event)
+    return _json_response(200, _tools_payload(saved))
+
+
+def _tool_calls_get(event: dict[str, Any]) -> dict[str, Any]:
+    from urllib.parse import parse_qs
+
+    qs = parse_qs(event.get("rawQueryString") or "")
+    try:
+        limit = min(max(1, int((qs.get("limit") or ["50"])[0])), 200)
+    except ValueError:
+        limit = 50
+    table = board_store.records_table()
+    return _json_response(200, {"calls": board_store.list_tool_calls(table, limit=limit)})
+
+
+def _approvals_get(event: dict[str, Any]) -> dict[str, Any]:
+    from urllib.parse import parse_qs
+
+    qs = parse_qs(event.get("rawQueryString") or "")
+    status = (qs.get("status") or [""])[0].strip().lower()
+    table = board_store.records_table()
+    items = board_store.list_approvals(table)
+    if status:
+        items = [a for a in items if a.get("status") == status]
+    return _json_response(200, {"approvals": [board_tools.public_approval(a) for a in items[:200]]})
+
+
+def _approval_decide(event: dict[str, Any], approval_id: str, *, approve: bool, user_sub: str | None) -> dict[str, Any]:
+    if not user_sub:
+        return _json_response(400, {"message": "Missing sub claim"})
+    body = _parse_json_body(event)
+    note = body.get("note") if isinstance(body, dict) else ""
+    if note is None:
+        note = ""
+    if not isinstance(note, str):
+        return _json_response(400, {"message": "note must be a string"})
+    if len(note) > BOARD_MAX_APPROVAL_NOTE_LEN:
+        return _json_response(400, {"message": f"note must be at most {BOARD_MAX_APPROVAL_NOTE_LEN} characters"})
+    override = body.get("arguments") if isinstance(body, dict) else None
+    if override is not None and not isinstance(override, dict):
+        return _json_response(400, {"message": "arguments must be an object"})
+    table = board_store.records_table()
+    settings = board_store.load_settings(table)
+    try:
+        decided = board_tools.decide_approval(
+            table,
+            settings,
+            approval_id,
+            approve=approve,
+            owner_sub=user_sub,
+            note=note.strip(),
+            arguments_override=override if approve else None,
+        )
+    except LookupError as exc:
+        return _json_response(404, {"message": str(exc)})
+    except ValueError as exc:
+        return _json_response(409, {"message": str(exc)})
+    _audit(user_sub, "BOARD_APPROVAL_APPROVE" if approve else "BOARD_APPROVAL_REJECT", approval_id, event)
+    return _json_response(200, {"approval": board_tools.public_approval(decided)})
 
 
 def _charter_put(event: dict[str, Any], user_sub: str | None) -> dict[str, Any]:

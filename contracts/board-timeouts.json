@@ -1,14 +1,14 @@
 {
   "chatOpenRouterTimeoutSeconds": 90,
   "phaseOpenRouterTimeoutSeconds": 100,
-  "maxParallelPersonaCalls": 4,
+  "maxParallelPersonaCalls": 8,
   "chatJobTtlSeconds": 604800,
-  "chatJobStuckSeconds": 180,
+  "chatJobStuckSeconds": 300,
   "meetingStuckSeconds": 900,
   "repoSnapshotStaleSeconds": 72000,
-  "chatPollDeadlineMs": 150000,
+  "chatPollDeadlineMs": 270000,
   "chatPollInitialWaitMs": 1000,
   "chatPollBackoffCapMs": 3000,
   "meetingPollIntervalMs": 3000,
-  "defaultDailyBudgetUsd": 5
+  "defaultDailyBudgetUsd": 15
 }

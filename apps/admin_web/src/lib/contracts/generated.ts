@@ -222,8 +222,59 @@ export const BOARD_MAX_TOPIC_LEN = 500;
 export const BOARD_MAX_ACTION_NOTE_LEN = 2000;
 export const BOARD_MAX_DAILY_BUDGET_USD = 100;
 
-export const BOARD_CHAT_POLL_DEADLINE_MS = 150000;
+export const BOARD_CHAT_POLL_DEADLINE_MS = 270000;
 export const BOARD_CHAT_POLL_INITIAL_WAIT_MS = 1000;
 export const BOARD_CHAT_POLL_BACKOFF_CAP_MS = 3000;
 export const BOARD_MEETING_POLL_INTERVAL_MS = 3000;
-export const BOARD_DEFAULT_DAILY_BUDGET_USD = 5;
+export const BOARD_DEFAULT_DAILY_BUDGET_USD = 15;
+
+export const BOARD_TOOL_LEVELS = ["off", "read", "propose", "act"] as const;
+export type BoardToolLevel = (typeof BOARD_TOOL_LEVELS)[number];
+export const BOARD_TOOL_GLOBAL_MODES = ["readOnly", "propose", "act"] as const;
+export type BoardToolGlobalMode = (typeof BOARD_TOOL_GLOBAL_MODES)[number];
+export const BOARD_TOOL_DEFAULT_GLOBAL_MODE: BoardToolGlobalMode = "propose";
+export type BoardToolDefinition = {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly maxLevel: BoardToolLevel;
+  readonly defaults: Readonly<Record<string, BoardToolLevel>>;
+};
+export const BOARD_TOOL_DEFINITIONS: readonly BoardToolDefinition[] = [
+  {
+    "id": "github",
+    "label": "GitHub",
+    "description": "The siutindei repository: issues, pull requests, CI runs, files, commits and security alerts. Writes are limited to issues, comments and labels.",
+    "maxLevel": "act",
+    "defaults": {
+      "ceo": "read",
+      "cfo": "off",
+      "coo": "off",
+      "cpo": "propose",
+      "cto": "act",
+      "cio": "propose",
+      "ciso": "propose",
+      "cmo": "off"
+    }
+  },
+  {
+    "id": "board",
+    "label": "Board records",
+    "description": "The board's own action items, minutes and decision log. Writes add action items or update the member's own actions.",
+    "maxLevel": "act",
+    "defaults": {
+      "ceo": "act",
+      "cfo": "act",
+      "coo": "act",
+      "cpo": "act",
+      "cto": "act",
+      "cio": "act",
+      "ciso": "act",
+      "cmo": "act"
+    }
+  }
+];
+export const BOARD_TOOL_IDS = BOARD_TOOL_DEFINITIONS.map((t) => t.id);
+export const BOARD_MAX_TOOL_ROUNDS_PER_TURN = 4;
+export const BOARD_MAX_TOOL_CALLS_PER_TURN = 8;
+export const BOARD_MAX_APPROVAL_NOTE_LEN = 1000;

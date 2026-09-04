@@ -1,0 +1,51 @@
+{
+  "levels": ["off", "read", "propose", "act"],
+  "globalModes": ["readOnly", "propose", "act"],
+  "defaultGlobalMode": "propose",
+  "tools": [
+    {
+      "id": "github",
+      "label": "GitHub",
+      "description": "The siutindei repository: issues, pull requests, CI runs, files, commits and security alerts. Writes are limited to issues, comments and labels.",
+      "maxLevel": "act",
+      "defaults": {
+        "ceo": "read",
+        "cfo": "off",
+        "coo": "off",
+        "cpo": "propose",
+        "cto": "act",
+        "cio": "propose",
+        "ciso": "propose",
+        "cmo": "off"
+      }
+    },
+    {
+      "id": "board",
+      "label": "Board records",
+      "description": "The board's own action items, minutes and decision log. Writes add action items or update the member's own actions.",
+      "maxLevel": "act",
+      "defaults": {
+        "ceo": "act",
+        "cfo": "act",
+        "coo": "act",
+        "cpo": "act",
+        "cto": "act",
+        "cio": "act",
+        "ciso": "act",
+        "cmo": "act"
+      }
+    }
+  ],
+  "limits": {
+    "maxToolRoundsPerTurn": 4,
+    "maxToolCallsPerTurn": 8,
+    "toolResultMaxChars": 6000,
+    "toolCallTimeoutSeconds": 10,
+    "chatToolLoopMaxSeconds": 120,
+    "meetingToolLoopMaxSeconds": 60,
+    "maxPendingApprovals": 200,
+    "approvalTtlDays": 60,
+    "toolCallLogTtlDays": 90,
+    "maxApprovalNoteLen": 1000
+  }
+}
