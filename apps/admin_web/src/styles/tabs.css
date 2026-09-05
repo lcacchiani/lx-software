@@ -86,12 +86,23 @@
     scrollbar-width: thin;
   }
 
+  /* Phone grid uses min-width: 0 so pills wrap text. In the md+ row that
+     shrinks neighbouring tabs over each other (CI tablet click on
+     Investments was intercepted by Savings). Keep each item content-sized
+     and scroll the row instead. */
+  .admin-tab-list .nav-item {
+    min-width: max-content;
+    flex: 0 0 auto;
+  }
+
   .admin-tab-list .nav-item:last-child:nth-child(odd) {
     grid-column: auto;
   }
 
   .admin-tab {
     width: auto;
+    min-width: max-content;
+    flex-shrink: 0;
     min-height: 0;
     padding: 0.4rem 0.9rem;
     white-space: nowrap;

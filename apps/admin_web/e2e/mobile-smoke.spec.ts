@@ -38,7 +38,7 @@ test.describe("admin viewport smoke", () => {
     if (testInfo.project.name === "phone") {
       await page.locator("#finance-select").selectOption("investments");
     } else {
-      await page.getByRole("tab", { name: "Investments" }).click();
+      await page.locator("#finance-tab-investments").click();
     }
     await expect(page.getByRole("cell", { name: /Hillmarton Road/ }).first()).toBeVisible();
     await expect(page.getByText("512,000.00").or(page.getByText("512,000")).first()).toBeVisible();
