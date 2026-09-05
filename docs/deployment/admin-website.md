@@ -534,6 +534,40 @@ threads expire after 90 days (`BOARD_MAIL_MESSAGE_TTL_DAYS`).
 
 ## Scripts
 
+### Executive Board AWS setup (CloudShell)
+
+Sign in to the AWS console as **root** (or an admin role), open **CloudShell**
+in `ap-southeast-1`, and run the standalone wizard. CloudShell already has
+the AWS CLI — you do not need a git checkout. Do **not** pipe curl to bash
+(the prompts need a real terminal).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lx-software-ltd/lx-software/main/scripts/setup-board-cloudshell.sh \
+  -o setup-board-cloudshell.sh
+bash setup-board-cloudshell.sh --dry-run    # preview
+bash setup-board-cloudshell.sh              # type / upload secrets; confirm
+```
+
+Leave a prompt blank to skip. Upload `.p8` / service-account JSON first
+(**Actions → Upload file**), then paste the path (`~/AuthKey.p8`).
+
+The wizard does **not** change the CDK-managed `lxsoftware` stack. It:
+
+1. Creates or updates Secrets Manager secrets (never prints the values).
+2. Writes `~/board-params-fragment.json` (ARNs and ids only) for you to merge
+   into `backend/infrastructure/params/production.json`.
+3. Activates the Cost Explorer tag `aws:cloudformation:stack-name` (Billing).
+4. Optionally applies `receivables.sql` through the RDS Data API (siutindei
+   Aurora).
+
+Commit the fragment and run **Deploy Backend**. That CDK deploy is what
+feeds the new env into `AdminApiFn`. `MetaVerifyToken` is saved only to
+`~/board-meta-verify-token.txt`; put it in GitHub Actions as a secret, do
+not commit it.
+
+A repo-local Python helper (`scripts/setup-board-config.py`) can still write
+the same keys from an answers file if you prefer not to use CloudShell.
+
 Local or CI deploy of static files after a build:
 
 ```bash
