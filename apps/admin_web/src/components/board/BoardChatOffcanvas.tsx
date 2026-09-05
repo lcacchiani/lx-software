@@ -133,7 +133,7 @@ export function BoardChatOffcanvas({ member, isChair, toolLabels = [], onClose, 
                     <BoardMarkdown text={m.text} className="small" />
                   </>
                 ) : (
-                  <div className="small" style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
+                  <div className="small board-prewrap">{m.text}</div>
                 )}
                 {!m.isPending ? (
                   <div className="board-chat-meta text-muted">

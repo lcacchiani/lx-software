@@ -4,9 +4,18 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap-icons/font/bootstrap-icons.css";
 import "./index.css";
 import App from "./App.tsx";
+import { isAdminMockEnabled } from "./lib/mock/isAdminMockEnabled";
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+async function bootstrap(): Promise<void> {
+  if (isAdminMockEnabled()) {
+    const { installAdminMockSession } = await import("./lib/mock/mockAdminApi");
+    installAdminMockSession();
+  }
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
+
+void bootstrap();

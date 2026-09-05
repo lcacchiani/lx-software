@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import {
+  AdminCell,
   AdminDataTable,
   AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
-  adminColumnPriorityClass,
   DateTimeDisplay,
   TableIconButton,
 } from "../ui";
@@ -50,23 +50,29 @@ export function BoardMeetingHistory({ meetings, members, selectedMeetingId, onOp
       ) : (
         rows.map((m) => (
           <tr key={m.meetingId} className={m.meetingId === selectedMeetingId ? "table-active" : ""}>
-            <td className={adminColumnPriorityClass("secondary")}><DateTimeDisplay iso={m.createdAt} /></td>
-            <td className={adminColumnPriorityClass("tertiary")}>
+            <AdminCell column="when"><DateTimeDisplay iso={m.createdAt} /></AdminCell>
+            <AdminCell column="format">
               {MEETING_MODE_LABELS[m.mode]}
               {m.trigger.startsWith("schedule") ? <span className="badge text-bg-light border ms-1">auto</span> : null}
-            </td>
-            <td className="board-clamp-1">
+            </AdminCell>
+            <AdminCell column="headline" className="board-clamp-1">
               {m.headline || m.topic || <span className="text-muted">—</span>}
               <AdminDataTableCellMeta>
-                {MEETING_MODE_LABELS[m.mode]} · {m.status}
+                <DateTimeDisplay iso={m.createdAt} className="text-muted" /> ·{" "}
+                <span className={`badge ${MEETING_STATUS_BADGE_CLASS[m.status]}`}>{m.status}</span>
+                {m.actionCount > 0 ? ` · ${m.actionCount} action${m.actionCount === 1 ? "" : "s"}` : ""}
               </AdminDataTableCellMeta>
-            </td>
-            <td className={`text-end ${adminColumnPriorityClass("secondary")}`}>{m.actionCount}</td>
-            <td className={`text-end ${adminColumnPriorityClass("tertiary")}`}>{formatUsageCost(m.usage?.cost)}</td>
-            <td className={adminColumnPriorityClass("secondary")}><span className={`badge ${MEETING_STATUS_BADGE_CLASS[m.status]}`}>{m.status}</span></td>
-            <td className="text-end">
+              <AdminDataTableCellMeta until="tertiary">
+                {MEETING_MODE_LABELS[m.mode]}
+                {m.trigger.startsWith("schedule") ? " · auto" : ""} · {formatUsageCost(m.usage?.cost)}
+              </AdminDataTableCellMeta>
+            </AdminCell>
+            <AdminCell column="actions" className="text-end">{m.actionCount}</AdminCell>
+            <AdminCell column="cost" className="text-end">{formatUsageCost(m.usage?.cost)}</AdminCell>
+            <AdminCell column="status"><span className={`badge ${MEETING_STATUS_BADGE_CLASS[m.status]}`}>{m.status}</span></AdminCell>
+            <AdminCell column="ops" className="text-end">
               <TableIconButton iconClassName="bi bi-journal-text" ariaLabel="Open meeting" onClick={() => onOpen(m.meetingId)} />
-            </td>
+            </AdminCell>
           </tr>
         ))
       )}

@@ -467,7 +467,7 @@ export function BoardToolsCard({
                 {c.resultPreview ? (
                   <details className="mt-1">
                     <summary className="text-muted">result</summary>
-                    <pre className="small bg-light border rounded p-2 mb-0 mt-1" style={{ maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                    <pre className="small bg-light border rounded p-2 mb-0 mt-1 board-tool-result">
                       {c.resultPreview}
                     </pre>
                   </details>

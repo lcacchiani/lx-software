@@ -120,6 +120,7 @@ export function useBoard() {
     overview: overview.data,
     isLoading: overview.isLoading,
     isError: overview.isError,
+    isRefetching: overview.isRefetching,
     error: overview.error,
     refetch: overview.refetch,
     saveCharter,

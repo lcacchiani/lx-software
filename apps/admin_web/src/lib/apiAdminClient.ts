@@ -1,5 +1,6 @@
 import { ensureFreshTokens } from "./auth";
 import { getAdminConfig } from "./config";
+import { isAdminMockEnabled } from "./mock/isAdminMockEnabled";
 
 export class AdminApiError extends Error {
   readonly status: number;
@@ -52,6 +53,15 @@ export async function adminFetch(
   init: AdminFetchOptions = {}
 ): Promise<Response> {
   const { requireAuth = true, ...rest } = init;
+  // Compile-time `VITE_ADMIN_MOCK` so production builds drop the fixture module.
+  if (isAdminMockEnabled()) {
+    const { mockAdminFetch } = await import("./mock/mockAdminApi");
+    const res = await mockAdminFetch(path, rest);
+    if (!res.ok) {
+      throw new AdminApiError(res.status, await res.text());
+    }
+    return res;
+  }
   const cfg = getAdminConfig();
   if (!cfg.apiBaseUrl) {
     throw new Error("VITE_API_BASE_URL is not set");

@@ -1,0 +1,78 @@
+.admin-sidebar {
+  min-width: 220px;
+  max-width: 260px;
+}
+
+.admin-nav-separator {
+  opacity: 0.55;
+  border-top-color: #94a3b8;
+}
+
+.admin-main {
+  min-height: calc(100vh - 56px);
+  min-height: calc(100dvh - 56px);
+  min-width: 0;
+  /*
+   * Clips anything a component lets escape horizontally (instead of a
+   * page-wide scrollbar). Tables and pre blocks manage their own overflow, so
+   * with the audit in tables.css / board.css nothing should reach this clip.
+   */
+  overflow-x: clip;
+}
+
+.admin-navbar-user {
+  max-width: 14rem;
+}
+
+.admin-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1040;
+  padding: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.admin-mobile-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1045;
+  width: min(280px, 86vw);
+  height: 100%;
+  padding: 1rem;
+  overflow-y: auto;
+  background: #fff;
+  box-shadow: 0 0.5rem 1rem rgba(15, 23, 42, 0.18);
+  transform: translateX(-100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 0.2s ease-out,
+    visibility 0.2s ease-out;
+}
+
+.admin-mobile-nav.is-open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.admin-field-min {
+  min-width: 6.5rem;
+}
+
+.admin-mapping-select {
+  max-width: 22rem;
+}
+
+.admin-tools-global-mode {
+  max-width: 22.5rem;
+}
+
+@media (max-width: 767.98px) {
+  .admin-field-min {
+    min-width: 0;
+    max-width: 100%;
+  }
+}

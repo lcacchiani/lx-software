@@ -27,12 +27,16 @@ import {
   useStartBoardMeeting,
   type StartMeetingVariables,
 } from "../../hooks/useBoardMeetings";
+import { AdminTabList, type AdminTabItem } from "../ui";
 import { getAdminApiErrorMessage } from "../../lib/apiAdminClient";
-import { effectiveToolLevel, type BoardMeetingMode } from "../../lib/boardModel";
+import { adminTabButtonId } from "../../lib/adminTabs";
+import { effectiveToolLevel, type BoardMeetingMode, type BoardOverview } from "../../lib/boardModel";
 
 type BoardSection = "actions" | "approvals" | "mail" | "receivables" | "meetings" | "members" | "brief" | "settings";
 
 const CLOSED_MEETING = "__closed__";
+const SECTION_ID_PREFIX = "board-section";
+const SECTION_PANEL_ID = "board-section-panel";
 
 const SECTIONS: readonly { readonly id: BoardSection; readonly label: string; readonly icon: string }[] = [
   { id: "actions", label: "Next actions", icon: "bi-list-check" },
@@ -48,6 +52,24 @@ const SECTIONS: readonly { readonly id: BoardSection; readonly label: string; re
 function errorText(err: unknown): string | null {
   if (!err) return null;
   return getAdminApiErrorMessage(err) ?? (err instanceof Error ? err.message : "Request failed.");
+}
+
+function sectionTabs(overview: BoardOverview | undefined): readonly AdminTabItem<BoardSection>[] {
+  const counts: Partial<Record<BoardSection, { value: number; tone: "neutral" | "warning" }>> = {
+    actions: { value: overview?.openActionCount ?? 0, tone: "neutral" },
+    approvals: { value: overview?.pendingApprovalCount ?? 0, tone: "warning" },
+    mail: { value: overview?.unreadMailCount ?? 0, tone: "neutral" },
+    receivables: { value: overview?.overdueInvoiceCount ?? 0, tone: "warning" },
+  };
+  return SECTIONS.map((s) => {
+    const count = counts[s.id];
+    return {
+      id: s.id,
+      label: s.label,
+      icon: s.icon,
+      ...(count && count.value > 0 ? { badge: count } : {}),
+    };
+  });
 }
 
 export function ExecutiveBoardTab() {
@@ -141,6 +163,8 @@ export function ExecutiveBoardTab() {
         isLoading={board.isLoading}
         isError={board.isError}
         loadErrorMessage="Could not load the Executive Board. Check that the lxsoftware stack is deployed with the board routes."
+        onRetry={() => void board.refetch()}
+        isRetrying={board.isRefetching}
       />
       {!board.isLoading ? (
         <>
@@ -155,35 +179,27 @@ export function ExecutiveBoardTab() {
             />
           ) : null}
 
-          <ul className="nav nav-pills mb-4 board-section-nav" role="tablist" aria-label="Board sections">
-            {SECTIONS.map((s) => (
-              <li className="nav-item" key={s.id}>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={section === s.id}
-                  className={`nav-link ${section === s.id ? "active" : ""}`}
-                  onClick={() => setSection(s.id)}
-                >
-                  <i className={`bi ${s.icon} me-1`} aria-hidden="true" />
-                  {s.label}
-                  {s.id === "actions" && (overview?.openActionCount ?? 0) > 0 ? (
-                    <span className="badge rounded-pill text-bg-light border ms-2">{overview?.openActionCount}</span>
-                  ) : null}
-                  {s.id === "approvals" && (overview?.pendingApprovalCount ?? 0) > 0 ? (
-                    <span className="badge rounded-pill text-bg-warning ms-2">{overview?.pendingApprovalCount}</span>
-                  ) : null}
-                  {s.id === "mail" && (overview?.unreadMailCount ?? 0) > 0 ? (
-                    <span className="badge rounded-pill text-bg-light border ms-2">{overview?.unreadMailCount}</span>
-                  ) : null}
-                  {s.id === "receivables" && (overview?.overdueInvoiceCount ?? 0) > 0 ? (
-                    <span className="badge rounded-pill text-bg-warning ms-2">{overview?.overdueInvoiceCount}</span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <AdminTabList
+            tabs={sectionTabs(overview)}
+            active={section}
+            onChange={setSection}
+            label="Board sections"
+            idPrefix={SECTION_ID_PREFIX}
+            panelId={SECTION_PANEL_ID}
+            disabled={!overview}
+          />
 
+          {!overview ? (
+            <p className="text-muted small mb-0">
+              Board sections open once the overview loads. Retry to continue.
+            </p>
+          ) : null}
+
+          <div
+            id={SECTION_PANEL_ID}
+            role="tabpanel"
+            aria-labelledby={adminTabButtonId(SECTION_ID_PREFIX, section)}
+          >
           {overview && section === "actions" ? (
             <BoardActionsList
               actions={actions.actions}
@@ -341,6 +357,7 @@ export function ExecutiveBoardTab() {
               />
             </>
           ) : null}
+          </div>
 
           {overview ? (
             <BoardChatOffcanvas

@@ -1,0 +1,67 @@
+/*
+ * AdminDataTable — mobile-first column visibility.
+ * Breakpoints: see base.css. Priority classes come from adminTablePriority.ts.
+ */
+
+.admin-data-table th,
+.admin-data-table td {
+  overflow-wrap: break-word;
+}
+
+/* Identifiers and hashes have no natural break points. */
+.admin-data-table .font-monospace,
+.admin-data-table .admin-table-cell-meta {
+  overflow-wrap: anywhere;
+}
+
+.admin-data-table .admin-table-cell-meta {
+  font-weight: 400;
+}
+
+.admin-data-table .admin-table-cell-meta .badge {
+  vertical-align: baseline;
+}
+
+.admin-table-total-note {
+  line-height: 1.3;
+}
+
+.admin-table-total-ccy {
+  min-width: 5.5rem;
+}
+
+.admin-table-sort .form-select {
+  min-width: 9rem;
+}
+
+@media (max-width: 767.98px) {
+  .admin-data-table .admin-col-secondary,
+  .admin-data-table .admin-col-tertiary {
+    display: none;
+  }
+
+  .admin-table-filter {
+    flex-basis: 100%;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .admin-data-table .admin-col-tertiary {
+    display: none;
+  }
+}
+
+/* Touch targets: icon buttons grow when the primary input cannot hover. */
+@media (pointer: coarse) {
+  .admin-table-icon-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .admin-table-icon-btn {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+}

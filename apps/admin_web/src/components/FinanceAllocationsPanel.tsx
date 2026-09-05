@@ -15,20 +15,29 @@ import {
 } from "../lib/financeModel";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
+  AdminCell,
   AdminDataTable,
   AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
-  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
+  AdminTableTotalCurrency,
+  AdminTableTotalLabel,
   CurrencySelect,
-  FrankfurterRatesFooterNote,
   MoneyAmount,
   TableIconButton,
   TableSortHeaderButton,
 } from "./ui";
 
 type AllocSortKey = "desc" | "monthly" | "accum" | "ccy" | "last";
+
+const ALLOC_SORT_OPTIONS: readonly { readonly key: AllocSortKey; readonly label: string }[] = [
+  { key: "desc", label: "Description" },
+  { key: "monthly", label: "Monthly amount" },
+  { key: "accum", label: "Accumulated" },
+  { key: "ccy", label: "Currency" },
+  { key: "last", label: "Last update" },
+];
 
 function allocationLastUpdatedDisplay(lastUpdated: string | undefined): string {
   if (!lastUpdated) {
@@ -188,7 +197,7 @@ export function FinanceAllocationsPanel(props: {
       },
       {
         key: "tags",
-        header: <span className="fw-semibold text-nowrap">Tags</span>,
+        header: <span className="fw-semibold admin-nowrap">Tags</span>,
         className: "small text-muted",
         priority: "secondary",
       },
@@ -205,6 +214,8 @@ export function FinanceAllocationsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "small text-end",
+        // Accumulated is what this tab edits and totals, so it stays on phones; monthly moves to md+.
+        priority: "secondary",
         thAriaSort: thAria("monthly"),
       },
       {
@@ -220,7 +231,6 @@ export function FinanceAllocationsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "small text-end",
-        priority: "secondary",
         thAriaSort: thAria("accum"),
       },
       {
@@ -247,14 +257,14 @@ export function FinanceAllocationsPanel(props: {
             onClick={() => onSort("last")}
           />
         ),
-        className: "small text-nowrap",
+        className: "small admin-nowrap",
         priority: "tertiary",
         thAriaSort: thAria("last"),
       },
       {
         key: "ops",
         header: <span className="visually-hidden">Operations</span>,
-        className: "text-end text-nowrap",
+        className: "text-end admin-nowrap",
         headerClassName: "text-end",
       },
     ];
@@ -729,18 +739,36 @@ export function FinanceAllocationsPanel(props: {
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder="Filter records…"
+          sort={{
+            options: ALLOC_SORT_OPTIONS,
+            sortKey,
+            direction: sortDir,
+            onChange: (key, dir) => {
+              setSortKey(key as AllocSortKey | null);
+              setSortDir(dir);
+            },
+          }}
         >
           {filtered.length ? (
             filtered.map((r) => {
               const monthlyCol = allocationMonthlyColumnDisplay(r);
               return (
               <tr key={r.expenseId}>
-                <td className="small">
+                <AdminCell column="desc" className="small">
                   {r.description}
-                  <AdminDataTableCellMeta>{allocationTagsCellLabel(r)}</AdminDataTableCellMeta>
-                </td>
-                <td className={`small text-muted ${adminColumnPriorityClass("secondary")}`}>{allocationTagsCellLabel(r)}</td>
-                <td className="small text-end">
+                  <AdminDataTableCellMeta>
+                    {allocationTagsCellLabel(r)} · {r.currency}
+                    {monthlyCol.kind === "dash" ? null : (
+                      <>
+                        {" · "}
+                        <MoneyAmount amount={monthlyCol.value} currency={monthlyCol.currency} />
+                        /mo
+                      </>
+                    )}
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="tags" className="small text-muted">{allocationTagsCellLabel(r)}</AdminCell>
+                <AdminCell column="monthly" className="small text-end">
                   {monthlyCol.kind === "dash" ? (
                     <span className="text-muted">—</span>
                   ) : (
@@ -750,13 +778,13 @@ export function FinanceAllocationsPanel(props: {
                       amountOnly
                     />
                   )}
-                </td>
-                <td className={`small text-end ${adminColumnPriorityClass("secondary")}`}>
+                </AdminCell>
+                <AdminCell column="accum" className="small text-end">
                   <MoneyAmount amount={r.accumulatedAmount} currency={r.currency} amountOnly />
-                </td>
-                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
-                <td className={`small ${adminColumnPriorityClass("tertiary")}`}>{allocationLastUpdatedDisplay(r.lastUpdated)}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ccy" className="small">{r.currency}</AdminCell>
+                <AdminCell column="last" className="small">{allocationLastUpdatedDisplay(r.lastUpdated)}</AdminCell>
+                <AdminCell column="ops" className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
                     ariaLabel={
@@ -774,7 +802,7 @@ export function FinanceAllocationsPanel(props: {
                       onClick={() => deleteCustomRow(r.expenseId)}
                     />
                   ) : null}
-                </td>
+                </AdminCell>
               </tr>
             );
             })
@@ -790,51 +818,18 @@ export function FinanceAllocationsPanel(props: {
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">
-                Total (accumulated)
-                <AdminDataTableCellMeta>
-                  <FrankfurterRatesFooterNote
-                    needsFx={needsFx}
-                    fxError={fxError}
-                    fxLoading={fxLoading}
-                    ratesQuery={ratesQuery}
-                  />
-                </AdminDataTableCellMeta>
-              </td>
-              <td className={`small ${adminColumnPriorityClass("secondary")}`} />
-              <td className="small text-end">
-                <span className="d-none d-md-inline text-muted fw-normal">
-                  <FrankfurterRatesFooterNote
-                    needsFx={needsFx}
-                    fxError={fxError}
-                    fxLoading={fxLoading}
-                    ratesQuery={ratesQuery}
-                  />
-                </span>
-                <span className="d-md-none">
-                  {convertedAccumulatedTotal !== null ? (
-                    <MoneyAmount
-                      amount={convertedAccumulatedTotal}
-                      currency={totalDisplayCurrency}
-                      amountOnly
-                    />
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                  <AdminDataTableCellMeta>
-                    <CurrencySelect
-                      id="finance-allocations-total-ccy-mobile"
-                      className="form-select form-select-sm"
-                      value={totalDisplayCurrency}
-                      onChange={(code) =>
-                        setTotalDisplayCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
-                      }
-                      disabled={fxLoading}
-                    />
-                  </AdminDataTableCellMeta>
-                </span>
-              </td>
-              <td className={`small text-end ${adminColumnPriorityClass("secondary")}`}>
+              <AdminCell column="desc" className="small">
+                <AdminTableTotalLabel
+                  label="Total (accumulated)"
+                  needsFx={needsFx}
+                  fxError={fxError}
+                  fxLoading={fxLoading}
+                  ratesQuery={ratesQuery}
+                />
+              </AdminCell>
+              <AdminCell column="tags" className="small" />
+              <AdminCell column="monthly" className="small" />
+              <AdminCell column="accum" className="small text-end">
                 {convertedAccumulatedTotal !== null ? (
                   <MoneyAmount
                     amount={convertedAccumulatedTotal}
@@ -844,20 +839,19 @@ export function FinanceAllocationsPanel(props: {
                 ) : (
                   <span className="text-muted">—</span>
                 )}
-              </td>
-              <td className={`small ${adminColumnPriorityClass("secondary")}`}>
-                <CurrencySelect
+                <br />
+                <AdminTableTotalCurrency
                   id="finance-allocations-total-ccy"
-                  className="form-select form-select-sm"
                   value={totalDisplayCurrency}
                   onChange={(code) =>
                     setTotalDisplayCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
                   }
                   disabled={fxLoading}
                 />
-              </td>
-              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
-              <td className="small text-end" />
+              </AdminCell>
+              <AdminCell column="ccy" className="small" />
+              <AdminCell column="last" className="small" />
+              <AdminCell column="ops" className="small text-end" />
             </tr>
           ) : null}
         </AdminDataTable>

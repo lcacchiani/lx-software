@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   coerceSupportedCurrency,
   GLOBAL_DEFAULT_CURRENCY,
@@ -19,14 +19,15 @@ import {
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
+  AdminCell,
   AdminDataTable,
   AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
-  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
+  AdminTableTotalCurrency,
+  AdminTableTotalLabel,
   CurrencySelect,
-  FrankfurterRatesFooterNote,
   MoneyAmount,
   StaleValuationBadge,
   TableIconButton,
@@ -42,6 +43,15 @@ function pensionLastUpdatedDisplay(lastUpdated: string | undefined): string {
 
 /** Pension adds server-managed `lastUpdated`. Savings adds `atype` (asset type) between label and description. */
 type MoneyRecordsSortKey = "label" | "atype" | "amt" | "ccy" | "desc" | "lastUpdated";
+
+const SORT_LABELS: Readonly<Record<MoneyRecordsSortKey, string>> = {
+  label: "Name",
+  atype: "Asset type",
+  amt: "Value",
+  ccy: "Currency",
+  desc: "Description",
+  lastUpdated: "Last update",
+};
 
 function compareSavings(
   a: FinanceSavingsRecord,
@@ -292,7 +302,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
     const opsCol: AdminDataTableColumn = {
       key: "ops",
       header: <span className="visually-hidden">Operations</span>,
-      className: "text-end text-nowrap",
+      className: "text-end admin-nowrap",
       headerClassName: "text-end",
     };
 
@@ -321,7 +331,7 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           onClick={() => onSort("lastUpdated")}
         />
       ),
-      className: "small text-nowrap",
+      className: "small admin-nowrap",
       priority: "tertiary",
       thAriaSort: thAria("lastUpdated"),
     };
@@ -344,6 +354,16 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
   ]);
 
   const colSpan = tableColumns.length;
+  const sortOptions = useMemo(
+    () =>
+      tableColumns
+        .filter((col) => col.key !== "ops")
+        .map((col) => ({
+          key: col.key,
+          label: col.key === "label" ? labelColumnHeader : SORT_LABELS[col.key as MoneyRecordsSortKey],
+        })),
+    [labelColumnHeader, tableColumns],
+  );
   const formId = `${sheetId}-form`;
   const recordEditorSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -720,109 +740,96 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder="Filter records…"
+          sort={{
+            options: sortOptions,
+            sortKey,
+            direction: sortDir,
+            onChange: (key, dir) => {
+              setSortKey(key as MoneyRecordsSortKey | null);
+              setSortDir(dir);
+            },
+          }}
         >
           {filtered.length ? (
             variant === "pension" ? (
               (filtered as readonly PensionTableRow[]).map((row) => {
                 if (row.kind === "allocation") {
                   const a = row.record;
-                  const descCell = (
-                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>{a.description}</td>
-                  );
-                  const lastUpdatedCellPension = (
-                    <td className={`small ${adminColumnPriorityClass("tertiary")}`}>
-                      {pensionLastUpdatedDisplay(a.lastUpdated)}
-                    </td>
-                  );
-                  const cellsValueFirst = (
-                    <>
-                      <td className="small">
+                  const cells: Record<string, ReactNode> = {
+                    label: (
+                      <AdminCell key="label" column="label" className="small">
                         Allocation
-                        <AdminDataTableCellMeta>{a.description}</AdminDataTableCellMeta>
-                      </td>
-                      {descCell}
-                      <td className="small text-end">
-                        <MoneyAmount
-                          amount={a.accumulatedAmount}
-                          currency={a.currency}
-                          amountOnly
-                        />
-                      </td>
-                      <td className={`small ${adminColumnPriorityClass("secondary")}`}>{a.currency}</td>
-                      {lastUpdatedCellPension}
-                    </>
-                  );
-                  const cellsCurrencyFirst = (
-                    <>
-                      <td className="small">
-                        Allocation
-                        <AdminDataTableCellMeta>{a.description}</AdminDataTableCellMeta>
-                      </td>
-                      {descCell}
-                      <td className={`small ${adminColumnPriorityClass("secondary")}`}>{a.currency}</td>
-                      <td className="small text-end">
-                        <MoneyAmount
-                          amount={a.accumulatedAmount}
-                          currency={a.currency}
-                          amountOnly
-                        />
-                      </td>
-                      {lastUpdatedCellPension}
-                    </>
-                  );
+                        <AdminDataTableCellMeta>
+                          {a.description} · {a.currency}
+                        </AdminDataTableCellMeta>
+                      </AdminCell>
+                    ),
+                    desc: (
+                      <AdminCell key="desc" column="desc" className="small">
+                        {a.description}
+                      </AdminCell>
+                    ),
+                    amt: (
+                      <AdminCell key="amt" column="amt" className="small text-end">
+                        <MoneyAmount amount={a.accumulatedAmount} currency={a.currency} amountOnly />
+                      </AdminCell>
+                    ),
+                    ccy: (
+                      <AdminCell key="ccy" column="ccy" className="small">
+                        {a.currency}
+                      </AdminCell>
+                    ),
+                    lastUpdated: (
+                      <AdminCell key="lastUpdated" column="lastUpdated" className="small">
+                        {pensionLastUpdatedDisplay(a.lastUpdated)}
+                      </AdminCell>
+                    ),
+                    ops: (
+                      <AdminCell key="ops" column="ops" className="small text-end text-muted">
+                        <span className="visually-hidden">Edit on Allocations</span>—
+                      </AdminCell>
+                    ),
+                  };
                   return (
                     <tr key={`alloc-${a.expenseId}`}>
-                      {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
-                      <td className="small text-end text-muted">
-                        <span className="visually-hidden">Edit on Allocations</span>—
-                      </td>
+                      {tableColumns.map((col) => cells[col.key])}
                     </tr>
                   );
                 }
                 const r = row.record;
-                const label = r.fund;
-                const descriptionText = r.description;
-                const descCell = (
-                  <td className={`small ${adminColumnPriorityClass("secondary")}`}>{descriptionText}</td>
-                );
-                const lastUpdatedCellPension = (
-                  <td className={`small ${adminColumnPriorityClass("tertiary")}`}>
-                    {pensionLastUpdatedDisplay(r.lastUpdated)}
-                    <StaleValuationBadge lastUpdated={r.lastUpdated} />
-                  </td>
-                );
-                const cellsValueFirst = (
-                  <>
-                    <td className="small">
-                      {label}
-                      <AdminDataTableCellMeta>{descriptionText}</AdminDataTableCellMeta>
-                    </td>
-                    {descCell}
-                    <td className="small text-end">
+                const cells: Record<string, ReactNode> = {
+                  label: (
+                    <AdminCell key="label" column="label" className="small">
+                      {r.fund}
+                      <AdminDataTableCellMeta>
+                        {r.description} · {r.currency}
+                        <StaleValuationBadge lastUpdated={r.lastUpdated} />
+                      </AdminDataTableCellMeta>
+                    </AdminCell>
+                  ),
+                  desc: (
+                    <AdminCell key="desc" column="desc" className="small">
+                      {r.description}
+                    </AdminCell>
+                  ),
+                  amt: (
+                    <AdminCell key="amt" column="amt" className="small text-end">
                       <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
-                    </td>
-                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
-                    {lastUpdatedCellPension}
-                  </>
-                );
-                const cellsCurrencyFirst = (
-                  <>
-                    <td className="small">
-                      {label}
-                      <AdminDataTableCellMeta>{descriptionText}</AdminDataTableCellMeta>
-                    </td>
-                    {descCell}
-                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
-                    <td className="small text-end">
-                      <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
-                    </td>
-                    {lastUpdatedCellPension}
-                  </>
-                );
-                return (
-                  <tr key={r.id}>
-                    {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
-                    <td className="small text-end">
+                    </AdminCell>
+                  ),
+                  ccy: (
+                    <AdminCell key="ccy" column="ccy" className="small">
+                      {r.currency}
+                    </AdminCell>
+                  ),
+                  lastUpdated: (
+                    <AdminCell key="lastUpdated" column="lastUpdated" className="small">
+                      {pensionLastUpdatedDisplay(r.lastUpdated)}
+                      <StaleValuationBadge lastUpdated={r.lastUpdated} />
+                    </AdminCell>
+                  ),
+                  ops: (
+                    <AdminCell key="ops" column="ops" className="small text-end">
                       <TableIconButton
                         iconClassName="bi bi-pencil"
                         ariaLabel="Edit record"
@@ -834,52 +841,44 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                         variant="danger"
                         onClick={() => deleteRow(r.id)}
                       />
-                    </td>
-                  </tr>
-                );
+                    </AdminCell>
+                  ),
+                };
+                return <tr key={r.id}>{tableColumns.map((col) => cells[col.key])}</tr>;
               })
             ) : (
               (filtered as readonly FinanceSavingsRecord[]).map((r) => {
-                const label = r.deposit;
-                const descriptionText = r.description;
-                const descCell = (
-                  <td className={`small ${adminColumnPriorityClass("secondary")}`}>{descriptionText}</td>
-                );
-                const assetTypeCell = (
-                  <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.assetType}</td>
-                );
-                const cellsValueFirst = (
-                  <>
-                    <td className="small">
-                      {label}
-                      <AdminDataTableCellMeta>{descriptionText}</AdminDataTableCellMeta>
-                    </td>
-                    {assetTypeCell}
-                    {descCell}
-                    <td className="small text-end">
+                const cells: Record<string, ReactNode> = {
+                  label: (
+                    <AdminCell key="label" column="label" className="small">
+                      {r.deposit}
+                      <AdminDataTableCellMeta>
+                        {r.assetType} · {r.description} · {r.currency}
+                      </AdminDataTableCellMeta>
+                    </AdminCell>
+                  ),
+                  atype: (
+                    <AdminCell key="atype" column="atype" className="small">
+                      {r.assetType}
+                    </AdminCell>
+                  ),
+                  desc: (
+                    <AdminCell key="desc" column="desc" className="small">
+                      {r.description}
+                    </AdminCell>
+                  ),
+                  amt: (
+                    <AdminCell key="amt" column="amt" className="small text-end">
                       <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
-                    </td>
-                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
-                  </>
-                );
-                const cellsCurrencyFirst = (
-                  <>
-                    <td className="small">
-                      {label}
-                      <AdminDataTableCellMeta>{descriptionText}</AdminDataTableCellMeta>
-                    </td>
-                    {assetTypeCell}
-                    {descCell}
-                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
-                    <td className="small text-end">
-                      <MoneyAmount amount={r.value} currency={r.currency} amountOnly />
-                    </td>
-                  </>
-                );
-                return (
-                  <tr key={r.id}>
-                    {columnOrder === "valueFirst" ? cellsValueFirst : cellsCurrencyFirst}
-                    <td className="small text-end">
+                    </AdminCell>
+                  ),
+                  ccy: (
+                    <AdminCell key="ccy" column="ccy" className="small">
+                      {r.currency}
+                    </AdminCell>
+                  ),
+                  ops: (
+                    <AdminCell key="ops" column="ops" className="small text-end">
                       <TableIconButton
                         iconClassName="bi bi-pencil"
                         ariaLabel="Edit record"
@@ -891,9 +890,10 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                         variant="danger"
                         onClick={() => deleteRow(r.id)}
                       />
-                    </td>
-                  </tr>
-                );
+                    </AdminCell>
+                  ),
+                };
+                return <tr key={r.id}>{tableColumns.map((col) => cells[col.key])}</tr>;
               })
             )
           ) : (
@@ -916,97 +916,43 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
               pensionTaggedAllocationRecords.some((r) => r.isPension === true))) ||
           (variant === "savings" && (records as readonly FinanceSavingsRecord[]).length > 0)) ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">
-                Total
-                <AdminDataTableCellMeta>
-                  <FrankfurterRatesFooterNote
-                    needsFx={needsFx}
-                    fxError={fxError}
-                    fxLoading={fxLoading}
-                    ratesQuery={ratesQuery}
-                  />
-                </AdminDataTableCellMeta>
-              </td>
-              {variant === "savings" ? (
-                <td className={`small ${adminColumnPriorityClass("secondary")}`} />
-              ) : null}
-              <td className={`small text-muted fw-normal ${adminColumnPriorityClass("secondary")}`}>
-                <FrankfurterRatesFooterNote
-                  needsFx={needsFx}
-                  fxError={fxError}
-                  fxLoading={fxLoading}
-                  ratesQuery={ratesQuery}
-                />
-              </td>
-              {columnOrder === "valueFirst" ? (
-                <>
-                  <td className="small text-end">
-                    {convertedTotal !== null ? (
-                      <MoneyAmount
-                        amount={convertedTotal}
-                        currency={totalDisplayCurrency}
-                        amountOnly
+              {tableColumns.map((col) => {
+                if (col.key === "label") {
+                  return (
+                    <AdminCell key={col.key} column="label" className="small">
+                      <AdminTableTotalLabel
+                        needsFx={needsFx}
+                        fxError={fxError}
+                        fxLoading={fxLoading}
+                        ratesQuery={ratesQuery}
                       />
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                    <AdminDataTableCellMeta>
-                      <CurrencySelect
-                        id={`${sheetId}-total-ccy-mobile`}
-                        className="form-select form-select-sm"
+                    </AdminCell>
+                  );
+                }
+                if (col.key === "amt") {
+                  return (
+                    <AdminCell key={col.key} column="amt" className="small text-end">
+                      {convertedTotal !== null ? (
+                        <MoneyAmount
+                          amount={convertedTotal}
+                          currency={totalDisplayCurrency}
+                          amountOnly
+                        />
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                      <br />
+                      <AdminTableTotalCurrency
+                        id={`${sheetId}-total-ccy`}
                         value={totalDisplayCurrency}
-                        onChange={(code) => setTotalDisplayCurrency(code)}
+                        onChange={setTotalDisplayCurrency}
                         disabled={fxLoading}
                       />
-                    </AdminDataTableCellMeta>
-                  </td>
-                  <td className={`small ${adminColumnPriorityClass("secondary")}`}>
-                    <CurrencySelect
-                      id={`${sheetId}-total-ccy`}
-                      className="form-select form-select-sm"
-                      value={totalDisplayCurrency}
-                      onChange={(code) => setTotalDisplayCurrency(code)}
-                      disabled={fxLoading}
-                    />
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td className={`small ${adminColumnPriorityClass("secondary")}`}>
-                    <CurrencySelect
-                      id={`${sheetId}-total-ccy`}
-                      className="form-select form-select-sm"
-                      value={totalDisplayCurrency}
-                      onChange={(code) => setTotalDisplayCurrency(code)}
-                      disabled={fxLoading}
-                    />
-                  </td>
-                  <td className="small text-end">
-                    {convertedTotal !== null ? (
-                      <MoneyAmount
-                        amount={convertedTotal}
-                        currency={totalDisplayCurrency}
-                        amountOnly
-                      />
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                    <AdminDataTableCellMeta>
-                      <CurrencySelect
-                        id={`${sheetId}-total-ccy-mobile`}
-                        className="form-select form-select-sm"
-                        value={totalDisplayCurrency}
-                        onChange={(code) => setTotalDisplayCurrency(code)}
-                        disabled={fxLoading}
-                      />
-                    </AdminDataTableCellMeta>
-                  </td>
-                </>
-              )}
-              {variant === "pension" ? (
-                <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
-              ) : null}
-              <td className="small text-end" />
+                    </AdminCell>
+                  );
+                }
+                return <AdminCell key={col.key} column={col.key} className="small" />;
+              })}
             </tr>
           ) : null}
         </AdminDataTable>

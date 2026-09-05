@@ -104,6 +104,14 @@ CloudFront.
    under `ASSET#...` / `META`.
 7. Sign out, reload, and confirm you return to the login screen.
 
+## Local UI without a stack
+
+`npm run dev` still needs a real Cognito pool and API. For layout and table
+work, `npm run dev:mock` (from `apps/admin_web`) loads `.env.mock`, signs the
+SPA in with a fake admin token, and serves fixture rows from
+`src/lib/mock/fixtures.ts`. Never set `VITE_ADMIN_MOCK=1` on a production
+build.
+
 ## Operating
 
 For investigating production issues from CloudWatch, S3 access logs, and the

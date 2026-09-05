@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import {
+  AdminCell,
   AdminDataTable,
   AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
-  adminColumnPriorityClass,
   MoneyAmount,
 } from "../ui";
 import { useBoardReceivables } from "../../hooks/useBoardReceivables";
@@ -49,21 +49,26 @@ function InvoiceRows({ rows }: { readonly rows: readonly BoardReceivablesInvoice
     <>
       {rows.map((inv) => (
         <tr key={inv.id}>
-          <td>
+          <AdminCell column="number">
             {inv.number}
             <AdminDataTableCellMeta>
               {inv.status}
               {inv.due_on ? ` · due ${inv.due_on}` : ""}
             </AdminDataTableCellMeta>
-          </td>
-          <td className={adminColumnPriorityClass("secondary")}>{inv.due_on ?? "—"}</td>
-          <td className="text-end">
+            {inv.fps_reference ? (
+              <AdminDataTableCellMeta until="tertiary">
+                FPS <span className="font-monospace">{inv.fps_reference}</span>
+              </AdminDataTableCellMeta>
+            ) : null}
+          </AdminCell>
+          <AdminCell column="due">{inv.due_on ?? "—"}</AdminCell>
+          <AdminCell column="amount" className="text-end">
             <MoneyAmount amount={Number(inv.amount_hkd)} currency="HKD" />
-          </td>
-          <td className={adminColumnPriorityClass("secondary")}>
+          </AdminCell>
+          <AdminCell column="status">
             <span className="badge text-bg-light border">{inv.status}</span>
-          </td>
-          <td className={`font-monospace small ${adminColumnPriorityClass("tertiary")}`}>{inv.fps_reference ?? "—"}</td>
+          </AdminCell>
+          <AdminCell column="fps" className="font-monospace small">{inv.fps_reference ?? "—"}</AdminCell>
         </tr>
       ))}
     </>
@@ -155,17 +160,20 @@ export function BoardReceivablesView({ overdueCount, errorText }: BoardReceivabl
               ) : (
                 subscriptions.map((s) => (
                   <tr key={s.id}>
-                    <td>
+                    <AdminCell column="plan">
                       {s.plan_name ?? "—"}{" "}
                       {s.price_hkd != null ? <MoneyAmount amount={Number(s.price_hkd)} currency="HKD" /> : null}
                       <AdminDataTableCellMeta>
                         {s.status}
                         {s.renews_on ? ` · renews ${s.renews_on}` : ""}
                       </AdminDataTableCellMeta>
-                    </td>
-                    <td className={adminColumnPriorityClass("secondary")}>{s.status}</td>
-                    <td className={adminColumnPriorityClass("secondary")}>{s.renews_on ?? "—"}</td>
-                    <td className={adminColumnPriorityClass("tertiary")}>{s.payer_contact ?? "—"}</td>
+                      {s.payer_contact ? (
+                        <AdminDataTableCellMeta until="tertiary">{s.payer_contact}</AdminDataTableCellMeta>
+                      ) : null}
+                    </AdminCell>
+                    <AdminCell column="status">{s.status}</AdminCell>
+                    <AdminCell column="renews">{s.renews_on ?? "—"}</AdminCell>
+                    <AdminCell column="payer">{s.payer_contact ?? "—"}</AdminCell>
                   </tr>
                 ))
               )}

@@ -1,0 +1,105 @@
+/*
+ * AdminTabList — one visual language for every section switcher.
+ * Phones: two-column grid of pill buttons (a native <select> replaces it above
+ * ADMIN_TAB_SELECT_THRESHOLD tabs). md+: single scrollable row.
+ */
+
+.admin-tab-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.375rem;
+}
+
+.admin-tab-list .nav-item {
+  min-width: 0;
+}
+
+/* An odd tab count would leave a hole; let the last pill span the row. */
+.admin-tab-list .nav-item:last-child:nth-child(odd) {
+  grid-column: span 2;
+}
+
+.admin-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: #fff;
+  color: var(--bs-body-color);
+  font-weight: 500;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.admin-tab:hover {
+  color: var(--bs-primary);
+  border-color: var(--bs-primary-border-subtle);
+  background: var(--bs-primary-bg-subtle);
+}
+
+.admin-tab:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
+.admin-tab.active {
+  color: #fff;
+  background: var(--bs-primary);
+  border-color: var(--bs-primary);
+}
+
+.admin-tab.active .badge {
+  color: var(--bs-primary);
+  background: #fff;
+  border-color: #fff;
+}
+
+.admin-tab[disabled],
+.admin-tab[aria-disabled="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.admin-tab .badge {
+  font-size: 0.7em;
+  line-height: 1;
+}
+
+.admin-tab-select {
+  min-height: 2.75rem;
+}
+
+@media (min-width: 768px) {
+  .admin-tab-list {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.375rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .admin-tab-list .nav-item:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+
+  .admin-tab {
+    width: auto;
+    min-height: 0;
+    padding: 0.4rem 0.9rem;
+    white-space: nowrap;
+  }
+}
+
+@media (pointer: coarse) {
+  .admin-tab {
+    min-height: 2.75rem;
+  }
+}

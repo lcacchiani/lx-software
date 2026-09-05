@@ -83,6 +83,20 @@ export const BANK_CONNECT_COUNTRIES: readonly {
   { code: "LV", label: "Latvia" },
 ];
 
+/** Consents this close to expiry are flagged so the owner re-authorises before sync stops. */
+export const CONSENT_EXPIRY_WARNING_DAYS = 14;
+
+/**
+ * Whole days until a PSD2 consent expires (negative once expired); null when
+ * the session has no `validUntil` or it is not a parseable instant.
+ */
+export function consentDaysRemaining(validUntil: string | undefined, now = new Date()): number | null {
+  if (!validUntil) return null;
+  const end = Date.parse(validUntil);
+  if (!Number.isFinite(end)) return null;
+  return Math.floor((end - now.getTime()) / 86_400_000);
+}
+
 /** Human label for a linked bank account row. */
 export function bankAccountLabel(account: BankSyncAccount): string {
   const parts: string[] = [];

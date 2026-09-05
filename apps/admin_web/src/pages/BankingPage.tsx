@@ -1,20 +1,24 @@
 import { useMemo, useState } from "react";
 import {
+  AdminCell,
   AdminDataTable,
   AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
-  adminColumnPriorityClass,
   AdminEditorSection,
+  AdminPageIntro,
   DateTimeDisplay,
   MoneyAmount,
   TableIconButton,
 } from "../components/ui";
+import { FinanceDataLoadOrError } from "../components/FinanceDataStatus";
 import { useBankOptions, useBankSync } from "../hooks/useBankSync";
 import { useFinance } from "../hooks/useFinance";
 import { getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
   BANK_CONNECT_COUNTRIES,
   bankAccountLabel,
+  CONSENT_EXPIRY_WARNING_DAYS,
+  consentDaysRemaining,
   type BankSyncAccount,
   type BankSyncMapping,
   type BankSyncSession,
@@ -22,6 +26,43 @@ import {
 
 function errorText(err: unknown, fallback: string): string {
   return getAdminApiErrorMessage(err) ?? fallback;
+}
+
+/**
+ * Consent expiry with an urgency cue. Rendered in the dedicated column on
+ * wide screens and repeated under the bank name on phones, so an expiring
+ * consent is never hidden by the responsive layout.
+ */
+function ConsentExpiryNote({
+  validUntil,
+  showDate = false,
+}: {
+  readonly validUntil: string | undefined;
+  readonly showDate?: boolean;
+}) {
+  const days = consentDaysRemaining(validUntil);
+  if (days === null || !validUntil) {
+    return showDate ? <span className="text-muted">—</span> : null;
+  }
+  const isExpired = days < 0;
+  const isExpiring = !isExpired && days <= CONSENT_EXPIRY_WARNING_DAYS;
+  const tone = isExpired ? "text-danger fw-semibold" : isExpiring ? "text-warning-emphasis fw-semibold" : "";
+  const summary = isExpired
+    ? "Consent expired"
+    : isExpiring
+      ? `Consent expires in ${days} day${days === 1 ? "" : "s"}`
+      : `Consent valid ${days} more days`;
+  return (
+    <span className={tone}>
+      {isExpired || isExpiring ? (
+        <i className="bi bi-exclamation-triangle-fill me-1" aria-hidden="true" />
+      ) : null}
+      {showDate ? <DateTimeDisplay iso={validUntil} className={tone} /> : summary}
+      {showDate && (isExpired || isExpiring) ? (
+        <span className="d-block small">{summary}</span>
+      ) : null}
+    </span>
+  );
 }
 
 type LinkedAccountRow = {
@@ -34,6 +75,8 @@ export function BankingPage() {
     state,
     isLoading,
     isError,
+    isRefetching,
+    refetch,
     error,
     startAuth,
     saveMappings,
@@ -134,8 +177,15 @@ export function BankingPage() {
 
   if (isError) {
     return (
-      <div className="alert alert-danger" role="alert">
-        Could not load bank connections: {errorText(error, "request failed")}
+      <div>
+        <h1 className="h4 mb-3">Banking</h1>
+        <FinanceDataLoadOrError
+          isLoading={false}
+          isError
+          loadErrorMessage={`Could not load bank connections: ${errorText(error, "request failed")}`}
+          onRetry={() => void refetch()}
+          isRetrying={isRefetching}
+        />
       </div>
     );
   }
@@ -153,11 +203,11 @@ export function BankingPage() {
           {syncNow.isPending ? "Syncing…" : "Sync now"}
         </button>
       </div>
-      <p className="text-muted small">
+      <AdminPageIntro>
         Link bank accounts through Enable Banking (open banking / PSD2) and
         refresh the Finance → Accounts sheet from live balances. A scheduled
         sync also runs daily.
-      </p>
+      </AdminPageIntro>
 
       {state && !state.enabled ? (
         <div className="alert alert-warning" role="alert">
@@ -281,7 +331,7 @@ export function BankingPage() {
           ) : (
             filteredSessions.map((session) => (
               <tr key={session.sessionId}>
-                <td>
+                <AdminCell column="bank">
                   {session.bankName}
                   <AdminDataTableCellMeta>
                     {session.bankCountry}
@@ -289,9 +339,12 @@ export function BankingPage() {
                       ? ` · ${session.accounts.length} account${session.accounts.length === 1 ? "" : "s"}`
                       : ""}
                   </AdminDataTableCellMeta>
-                </td>
-                <td className={adminColumnPriorityClass("secondary")}>{session.bankCountry}</td>
-                <td className={adminColumnPriorityClass("secondary")}>
+                  <AdminDataTableCellMeta until="tertiary">
+                    <ConsentExpiryNote validUntil={session.validUntil} />
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="country">{session.bankCountry}</AdminCell>
+                <AdminCell column="accounts">
                   {session.accounts.length === 0 ? (
                     <span className="text-muted">none</span>
                   ) : (
@@ -306,15 +359,11 @@ export function BankingPage() {
                       ))}
                     </ul>
                   )}
-                </td>
-                <td className={adminColumnPriorityClass("tertiary")}>
-                  {session.validUntil ? (
-                    <DateTimeDisplay iso={session.validUntil} />
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </td>
-                <td className="text-end">
+                </AdminCell>
+                <AdminCell column="validUntil">
+                  <ConsentExpiryNote validUntil={session.validUntil} showDate />
+                </AdminCell>
+                <AdminCell column="ops" className="text-end">
                   <TableIconButton
                     iconClassName="bi bi-trash"
                     ariaLabel={`Disconnect ${session.bankName}`}
@@ -322,7 +371,7 @@ export function BankingPage() {
                     onClick={() => onDeleteSession(session)}
                     disabled={deleteSession.isPending}
                   />
-                </td>
+                </AdminCell>
               </tr>
             ))
           )}

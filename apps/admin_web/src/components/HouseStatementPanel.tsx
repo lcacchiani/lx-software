@@ -22,10 +22,10 @@ import {
 } from "../hooks/useParseStatement";
 import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 import {
+  AdminCell,
   AdminDataTable,
   AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
-  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
@@ -207,7 +207,7 @@ const TABLE_COLUMNS: AdminDataTableColumn[] = [
   {
     key: "ops",
     header: <span className="visually-hidden">Operations</span>,
-    className: "text-end text-nowrap",
+    className: "text-end admin-nowrap",
     headerClassName: "text-end",
   },
 ];
@@ -948,20 +948,15 @@ export function HouseStatementPanel({
           {filteredLines.length ? (
             filteredLines.map((line) => (
               <tr key={line.id}>
-                <td className={`small ${adminColumnPriorityClass("secondary")}`}>
+                <AdminCell column="when" className="small">
                   {formatDateUtc(line.dateUtc)}
-                </td>
-                <td className={`small ${adminColumnPriorityClass("secondary")}`}>
+                </AdminCell>
+                <AdminCell column="type" className="small">
                   <span className={statementLineTypeClass(line.type)}>
                     {statementLineTypeLabel(line.type, lockedLineType)}
                   </span>
-                </td>
-                <td className="small">
-                  <AdminDataTableCellMeta>
-                    {formatDateUtc(line.dateUtc)}
-                    {" · "}
-                    {statementLineTypeLabel(line.type, lockedLineType)}
-                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="desc" className="small">
                   <div className="d-flex flex-wrap align-items-center gap-2">
                     <span>{line.description}</span>
                     {statementLineAssetKeys(line).map((assetKey) => (
@@ -980,30 +975,39 @@ export function HouseStatementPanel({
                       </span>
                     ))}
                   </div>
-                </td>
-                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
+                  <AdminDataTableCellMeta>
+                    {formatDateUtc(line.dateUtc)}
+                    {" · "}
+                    <span className={statementLineTypeClass(line.type)}>
+                      {statementLineTypeLabel(line.type, lockedLineType)}
+                    </span>
+                    {" · "}
+                    {line.currency}
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="net" className="small text-end">
                   <MoneyAmount
                     amount={line.netAmount}
                     currency={line.currency}
                     amountOnly
                   />
-                </td>
-                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
+                </AdminCell>
+                <AdminCell column="vat" className="small text-end">
                   <MoneyAmount
                     amount={line.vat}
                     currency={line.currency}
                     amountOnly
                   />
-                </td>
-                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{line.currency}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ccy" className="small">{line.currency}</AdminCell>
+                <AdminCell column="gross" className="small text-end">
                   <MoneyAmount
                     amount={line.grossAmount}
                     currency={line.currency}
                     amountOnly
                   />
-                </td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ops" className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
                     ariaLabel="Edit line"
@@ -1020,7 +1024,7 @@ export function HouseStatementPanel({
                     variant="danger"
                     onClick={() => deleteLine(line.id)}
                   />
-                </td>
+                </AdminCell>
               </tr>
             ))
           ) : (
