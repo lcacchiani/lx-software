@@ -142,45 +142,49 @@ export function ExecutiveBoardTab() {
         isError={board.isError}
         loadErrorMessage="Could not load the Executive Board. Check that the lxsoftware stack is deployed with the board routes."
       />
-      {overview ? (
+      {!board.isLoading ? (
         <>
-          <BoardHeaderStrip
-            overview={overview}
-            onRunStandup={runStandup}
-            onPlanDeepDive={() => planDeepDive()}
-            onOpenMeeting={openMeeting}
-            isStarting={startMeeting.isPending}
-            startError={errorText(startMeeting.error)}
-          />
+          {overview ? (
+            <BoardHeaderStrip
+              overview={overview}
+              onRunStandup={runStandup}
+              onPlanDeepDive={() => planDeepDive()}
+              onOpenMeeting={openMeeting}
+              isStarting={startMeeting.isPending}
+              startError={errorText(startMeeting.error)}
+            />
+          ) : null}
 
-          <ul className="nav nav-pills mb-4 board-section-nav">
+          <ul className="nav nav-pills mb-4 board-section-nav" role="tablist" aria-label="Board sections">
             {SECTIONS.map((s) => (
               <li className="nav-item" key={s.id}>
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={section === s.id}
                   className={`nav-link ${section === s.id ? "active" : ""}`}
                   onClick={() => setSection(s.id)}
                 >
                   <i className={`bi ${s.icon} me-1`} aria-hidden="true" />
                   {s.label}
-                  {s.id === "actions" && overview.openActionCount > 0 ? (
-                    <span className="badge rounded-pill text-bg-light border ms-2">{overview.openActionCount}</span>
+                  {s.id === "actions" && (overview?.openActionCount ?? 0) > 0 ? (
+                    <span className="badge rounded-pill text-bg-light border ms-2">{overview?.openActionCount}</span>
                   ) : null}
-                  {s.id === "approvals" && overview.pendingApprovalCount > 0 ? (
-                    <span className="badge rounded-pill text-bg-warning ms-2">{overview.pendingApprovalCount}</span>
+                  {s.id === "approvals" && (overview?.pendingApprovalCount ?? 0) > 0 ? (
+                    <span className="badge rounded-pill text-bg-warning ms-2">{overview?.pendingApprovalCount}</span>
                   ) : null}
-                  {s.id === "mail" && overview.unreadMailCount > 0 ? (
-                    <span className="badge rounded-pill text-bg-light border ms-2">{overview.unreadMailCount}</span>
+                  {s.id === "mail" && (overview?.unreadMailCount ?? 0) > 0 ? (
+                    <span className="badge rounded-pill text-bg-light border ms-2">{overview?.unreadMailCount}</span>
                   ) : null}
-                  {s.id === "receivables" && (overview.overdueInvoiceCount ?? 0) > 0 ? (
-                    <span className="badge rounded-pill text-bg-warning ms-2">{overview.overdueInvoiceCount}</span>
+                  {s.id === "receivables" && (overview?.overdueInvoiceCount ?? 0) > 0 ? (
+                    <span className="badge rounded-pill text-bg-warning ms-2">{overview?.overdueInvoiceCount}</span>
                   ) : null}
                 </button>
               </li>
             ))}
           </ul>
 
-          {section === "actions" ? (
+          {overview && section === "actions" ? (
             <BoardActionsList
               actions={actions.actions}
               members={members}
@@ -190,7 +194,7 @@ export function ExecutiveBoardTab() {
             />
           ) : null}
 
-          {section === "approvals" ? (
+          {overview && section === "approvals" ? (
             <BoardApprovalsList
               approvals={approvals.approvals}
               members={members}
@@ -204,7 +208,7 @@ export function ExecutiveBoardTab() {
             />
           ) : null}
 
-          {section === "mail" ? (
+          {overview && section === "mail" ? (
             <BoardMailView
               status={overview.mail}
               focusThreadId={focusThreadId}
@@ -213,11 +217,11 @@ export function ExecutiveBoardTab() {
             />
           ) : null}
 
-          {section === "receivables" ? (
+          {overview && section === "receivables" ? (
             <BoardReceivablesView overdueCount={overview.overdueInvoiceCount} errorText={errorText} />
           ) : null}
 
-          {section === "meetings" ? (
+          {overview && section === "meetings" ? (
             <>
               {startForm ? (
                 <StartMeetingForm
@@ -263,7 +267,7 @@ export function ExecutiveBoardTab() {
             </>
           ) : null}
 
-          {section === "members" ? (
+          {overview && section === "members" ? (
             <>
               <p className="text-muted small">
                 Eight fixed roles. Each member argues from its own vision, mission and mandate; edit them to
@@ -279,7 +283,7 @@ export function ExecutiveBoardTab() {
             </>
           ) : null}
 
-          {section === "brief" ? (
+          {overview && section === "brief" ? (
             <>
               <BoardCharterEditor
                 key={`charter-${overview.charter.updatedAt ?? ""}`}
@@ -304,7 +308,7 @@ export function ExecutiveBoardTab() {
             </>
           ) : null}
 
-          {section === "settings" ? (
+          {overview && section === "settings" ? (
             <>
               {tools.data ? (
                 <BoardToolsCard
@@ -338,23 +342,25 @@ export function ExecutiveBoardTab() {
             </>
           ) : null}
 
-          <BoardChatOffcanvas
-            member={chatMember}
-            isChair={chatMember?.id === overview.settings.defaultChair}
-            toolLabels={chatToolLabels}
-            onOpenApproval={openApproval}
-            onClose={() => setChatPersonaId(null)}
-            onStartMeeting={(mode, topic) => {
-              setChatPersonaId(null);
-              if (mode === "standup" && !topic) runStandup();
-              else {
-                setStartForm({ mode, topic });
-                setSection("meetings");
-              }
-            }}
-          />
+          {overview ? (
+            <BoardChatOffcanvas
+              member={chatMember}
+              isChair={chatMember?.id === overview.settings.defaultChair}
+              toolLabels={chatToolLabels}
+              onOpenApproval={openApproval}
+              onClose={() => setChatPersonaId(null)}
+              onStartMeeting={(mode, topic) => {
+                setChatPersonaId(null);
+                if (mode === "standup" && !topic) runStandup();
+                else {
+                  setStartForm({ mode, topic });
+                  setSection("meetings");
+                }
+              }}
+            />
+          ) : null}
 
-          {editMember ? (
+          {overview && editMember ? (
           <BoardMemberEditor
             key={`${editMember.id}-${editMember.updatedAt ?? ""}`}
             member={editMember}

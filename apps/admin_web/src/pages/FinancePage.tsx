@@ -76,7 +76,7 @@ export function FinancePage() {
         outstanding balances (e.g. mortgages), optionally linked to a property for equity.
       </p>
       <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
-      {!isLoading && !isError ? (
+      {!isLoading ? (
         <>
           <FinanceSaveStatus
             isSaving={isSaving}

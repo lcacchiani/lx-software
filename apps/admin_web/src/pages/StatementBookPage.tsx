@@ -60,7 +60,7 @@ export function StatementBookPage({
         isError={isError}
         loadErrorMessage={`Could not load ${title} records. Check API configuration and sign-in.`}
       />
-      {!isLoading && !isError ? (
+      {!isLoading ? (
         <>
           <FinanceSaveStatus
             isSaving={isSaving}
