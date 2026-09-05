@@ -534,6 +534,36 @@ threads expire after 90 days (`BOARD_MAIL_MESSAGE_TTL_DAYS`).
 
 ## Scripts
 
+### Executive Board AWS setup
+
+`scripts/setup-board-config.py` creates the Secrets Manager secrets and CDK
+parameter keys listed above. Fill in tokens and file paths; the script never
+prints secret values and never writes them into the committed
+`params/production.json`.
+
+```bash
+# 1. Copy the template (gitignored once filled in)
+python3 scripts/setup-board-config.py init --out setup-board-config.answers.json
+
+# 2. See what the account already has (stack outputs, secrets, Lambdas, Aurora)
+python3 scripts/setup-board-config.py status
+
+# 3. Preview, then apply
+python3 scripts/setup-board-config.py apply --answers setup-board-config.answers.json --dry-run
+python3 scripts/setup-board-config.py apply --answers setup-board-config.answers.json --yes
+```
+
+Leave a field blank to skip it. Useful optional flags: `--generate-verify-token`
+(writes `MetaVerifyToken` only to the gitignored
+`params/production.local.json`), `--apply-sql` (runs
+`scripts/siutindei/receivables.sql` through the RDS Data API), `--skip-cost-tag`.
+
+After apply, commit the updated ARNs/IDs in `params/production.json` and
+redeploy `lxsoftware`. Pass the local overlay as extra `--parameters` (or add
+`lxsoftware:MetaVerifyToken` as a GitHub Actions secret). Cloudflare, Meta's
+webhook subscription, App Store / Play roles, and the GitHub PAT itself stay
+manual — `status` reprints that list.
+
 Local or CI deploy of static files after a build:
 
 ```bash
