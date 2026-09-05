@@ -993,6 +993,8 @@ export function FinanceInvestmentsPanel({
                     {" · "}
                     Principal{" "}
                     <MoneyAmount amount={r.principalAmount} currency={r.currency} />
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
                     <StaleValuationBadge lastUpdated={r.lastUpdated} />
                   </AdminDataTableCellMeta>
                 </AdminCell>

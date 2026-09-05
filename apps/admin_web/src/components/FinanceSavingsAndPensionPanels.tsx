@@ -803,6 +803,8 @@ function SimpleMoneyRecordsPanel(props: SimpleMoneyRecordsPanelProps) {
                       {r.fund}
                       <AdminDataTableCellMeta>
                         {r.description} · {r.currency}
+                      </AdminDataTableCellMeta>
+                      <AdminDataTableCellMeta until="tertiary">
                         <StaleValuationBadge lastUpdated={r.lastUpdated} />
                       </AdminDataTableCellMeta>
                     </AdminCell>

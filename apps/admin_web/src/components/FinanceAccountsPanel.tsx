@@ -608,6 +608,8 @@ export function FinanceAccountsPanel(props: {
                   {r.description || "—"}
                   <AdminDataTableCellMeta>
                     {r.accountType} · {r.currency}
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
                     <StaleValuationBadge lastUpdated={r.lastUpdated} />
                   </AdminDataTableCellMeta>
                 </AdminCell>

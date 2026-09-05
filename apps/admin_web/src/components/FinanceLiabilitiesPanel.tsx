@@ -555,6 +555,8 @@ export function FinanceLiabilitiesPanel(props: {
                   <AdminDataTableCellMeta>
                     {r.liabilityType} · {r.currency}
                     {r.relatedHouse ? ` · ${houseDisplayLabel(r.relatedHouse)}` : ""}
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
                     <StaleValuationBadge lastUpdated={r.lastUpdated} />
                   </AdminDataTableCellMeta>
                 </AdminCell>
