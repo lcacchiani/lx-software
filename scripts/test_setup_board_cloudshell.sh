@@ -48,6 +48,8 @@ grep -q "cluster:siutindei" "$out"
 grep -q "MetaPageId=1234567890" "$out"
 grep -q "BoardAwsLambdaNames=siutindei-ApiFn" "$out"
 grep -q "Dry run — nothing written to AWS." "$out"
+grep -q "Write CDK param fragment (no live stack change)" "$out"
+! grep -q "Update CloudFormation stack" "$out"
 # must not leak a fake token if we did not set one
 ! grep -qi "github_pat" "$out"
 echo "cloudshell dry-run smoke: OK"

@@ -551,19 +551,19 @@ bash setup-board-cloudshell.sh              # type / upload secrets; confirm
 Leave a prompt blank to skip. Upload `.p8` / service-account JSON first
 (**Actions → Upload file**), then paste the path (`~/AuthKey.p8`).
 
-The wizard:
+The wizard does **not** change the CDK-managed `lxsoftware` stack. It:
 
 1. Creates or updates Secrets Manager secrets (never prints the values).
-2. Updates the live `lxsoftware` stack with `UsePreviousValue` for everything
-   you skip (Cognito passwords stay untouched).
-3. Activates the Cost Explorer tag `aws:cloudformation:stack-name`.
-4. Optionally applies `receivables.sql` through the RDS Data API.
+2. Writes `~/board-params-fragment.json` (ARNs and ids only) for you to merge
+   into `backend/infrastructure/params/production.json`.
+3. Activates the Cost Explorer tag `aws:cloudformation:stack-name` (Billing).
+4. Optionally applies `receivables.sql` through the RDS Data API (siutindei
+   Aurora).
 
-It writes `~/board-params-fragment.json` (ARNs and ids, no tokens) — merge
-that into `backend/infrastructure/params/production.json` and commit **before
-the next GitHub backend deploy**, or CI may reset the new parameters to empty
-defaults. `MetaVerifyToken` is saved only to `~/board-meta-verify-token.txt`;
-put it in GitHub Actions as a secret, do not commit it.
+Commit the fragment and run **Deploy Backend**. That CDK deploy is what
+feeds the new env into `AdminApiFn`. `MetaVerifyToken` is saved only to
+`~/board-meta-verify-token.txt`; put it in GitHub Actions as a secret, do
+not commit it.
 
 A repo-local Python helper (`scripts/setup-board-config.py`) can still write
 the same keys from an answers file if you prefer not to use CloudShell.

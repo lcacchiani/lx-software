@@ -9,16 +9,17 @@
 #
 # Do NOT pipe curl to bash — prompts need a real terminal.
 #
-# What it does:
+# What it does (does NOT touch the CDK-managed CloudFormation stack):
 #   1. Creates / updates Secrets Manager secrets
-#   2. Updates the live lxsoftware CloudFormation stack (UsePreviousValue for
-#      everything you skip, including Cognito passwords)
+#   2. Writes ~/board-params-fragment.json for you to merge into
+#      backend/infrastructure/params/production.json and deploy via CDK
 #   3. Activates the Cost Explorer tag aws:cloudformation:stack-name
-#   4. Optionally applies receivables.sql via the RDS Data API
+#      (Billing, not the lxsoftware stack)
+#   4. Optionally applies receivables.sql via the RDS Data API (siutindei
+#      Aurora, not the lxsoftware stack)
 #
-# It never prints a secret value. Next GitHub deploy can wipe stack params
-# that are not in params/production.json — the script writes a fragment to
-# ~/board-params-fragment.json for you to commit.
+# It never prints a secret value. The live stack changes only on the next
+# GitHub / CDK deploy, once the fragment is committed.
 
 set -euo pipefail
 
@@ -378,15 +379,9 @@ fi
 
 DO_COST=1
 DO_SQL=0
-DO_STACK=1
 if [[ "$NONINTERACTIVE" -eq 0 ]]; then
-  confirm "Activate Cost Explorer tag $COST_TAG?" y && DO_COST=1 || DO_COST=0
-  confirm "Apply receivables.sql via the RDS Data API?" n && DO_SQL=1 || DO_SQL=0
-  if [[ -n "$STACK_JSON" ]]; then
-    confirm "Update CloudFormation stack $STACK now (UsePreviousValue for everything else)?" y && DO_STACK=1 || DO_STACK=0
-  else
-    DO_STACK=0
-  fi
+  confirm "Activate Cost Explorer tag $COST_TAG (Billing, not the CDK stack)?" y && DO_COST=1 || DO_COST=0
+  confirm "Apply receivables.sql via the RDS Data API (siutindei Aurora)?" n && DO_SQL=1 || DO_SQL=0
 fi
 
 # --- plan --------------------------------------------------------------------
@@ -432,9 +427,9 @@ put_cfn SiutindeiClusterArn "$SIUTINDEI_CLUSTER_ARN"
 put_cfn SiutindeiDbSecretArn "$SIUTINDEI_DB_SECRET_ARN"
 put_cfn BoardMailSendingEnabled "$BOARD_MAIL_SENDING_ENABLED"
 
-[[ "$DO_COST" -eq 1 ]] && ACTIONS+=("Activate cost allocation tag $COST_TAG (us-east-1)")
+[[ "$DO_COST" -eq 1 ]] && ACTIONS+=("Activate cost allocation tag $COST_TAG (us-east-1 Billing)")
 [[ "$DO_SQL" -eq 1 ]] && ACTIONS+=("Apply receivables.sql via RDS Data API")
-[[ "$DO_STACK" -eq 1 ]] && ACTIONS+=("Update CloudFormation stack $STACK")
+ACTIONS+=("Write CDK param fragment (no live stack change)")
 
 echo
 echo "Plan:"
@@ -472,21 +467,10 @@ if [[ ${#ACTIONS[@]} -eq 0 && ${#CFN_SET[@]} -eq 0 ]]; then
   exit 0
 fi
 
-if ! confirm "Apply these changes to AWS now?" n; then
+if ! confirm "Create secrets / write the CDK fragment (the live stack is not changed)?" n; then
   echo "Aborted."
   exit 1
 fi
-
-dump_cfn_set() {
-  python3 -c '
-import json, sys
-pairs = sys.argv[1:]
-out = {}
-for i in range(0, len(pairs), 2):
-    out[pairs[i]] = pairs[i + 1]
-print(json.dumps(out))
-' $(for k in "${!CFN_SET[@]}"; do printf '%s %s ' "$k" "${CFN_SET[$k]}"; done)
-}
 
 # --- apply -------------------------------------------------------------------
 
@@ -550,7 +534,8 @@ done
 
 FRAGMENT_PATH="${HOME:-/tmp}/board-params-fragment.json"
 printf '%s\n' "$FRAGMENT" > "$FRAGMENT_PATH"
-echo "  wrote $FRAGMENT_PATH  (merge into backend/infrastructure/params/production.json before the next GitHub deploy)"
+echo "  wrote $FRAGMENT_PATH"
+echo "  merge that into backend/infrastructure/params/production.json, commit, then run Deploy Backend (CDK)."
 
 if [[ "$DO_COST" -eq 1 ]]; then
   aws_ce ce update-cost-allocation-tags-status \
@@ -660,69 +645,25 @@ if grant_to:
 PY
 fi
 
-if [[ "$DO_STACK" -eq 1 && -n "$STACK_JSON" ]]; then
-  OVERRIDES_FILE=$(mktemp)
-  PARAMS_FILE=$(mktemp)
-  dump_cfn_set > "$OVERRIDES_FILE"
-  python3 - "$STACK_JSON" "$OVERRIDES_FILE" "$PARAMS_FILE" <<'PY'
-import json, sys
-stack = json.load(open(sys.argv[1], encoding="utf-8"))
-overrides = json.load(open(sys.argv[2], encoding="utf-8"))
-existing = {p["ParameterKey"]: p for p in (stack["Stacks"][0].get("Parameters") or [])}
-params = []
-unknown = []
-for key, value in overrides.items():
-    if str(value).startswith("__SECRET__:"):
-        continue
-    if key not in existing:
-        unknown.append(key)
-        continue
-    params.append({"ParameterKey": key, "ParameterValue": value})
-for key in existing:
-    if key in overrides and not str(overrides[key]).startswith("__SECRET__:"):
-        continue
-    params.append({"ParameterKey": key, "UsePreviousValue": True})
-open(sys.argv[3], "w", encoding="utf-8").write(json.dumps(params))
-if unknown:
-    print(
-        "  warning: stack does not have these parameters yet (deploy the latest CDK first): "
-        + ", ".join(unknown),
-        file=sys.stderr,
-    )
-changed = sum(1 for p in params if "ParameterValue" in p)
-kept = sum(1 for p in params if p.get("UsePreviousValue"))
-print(f"  updating {changed} parameter(s); {kept} kept")
-PY
-  if aws_cli cloudformation update-stack \
-      --stack-name "$STACK" \
-      --use-previous-template \
-      --parameters "file://$PARAMS_FILE" \
-      --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM >/dev/null; then
-    echo "  stack update started; waiting…"
-    aws_cli cloudformation wait stack-update-complete --stack-name "$STACK"
-    echo "  stack $STACK is UPDATE_COMPLETE"
-  else
-    echo "  stack update returned an error (often 'No updates are to be performed'). Check above."
-  fi
-fi
-
 API=""
 INBOUND=""
 if [[ -n "$STACK_JSON" ]]; then
-  STACK_JSON=$(aws_cli cloudformation describe-stacks --stack-name "$STACK" --output json)
   API=$(python3 -c 'import json,sys; o={x["OutputKey"]:x["OutputValue"] for x in json.load(sys.stdin)["Stacks"][0].get("Outputs") or []}; print(o.get("AdminApiBaseUrl",""))' <<<"$STACK_JSON")
   INBOUND=$(python3 -c 'import json,sys; o={x["OutputKey"]:x["OutputValue"] for x in json.load(sys.stdin)["Stacks"][0].get("Outputs") or []}; print(o.get("BoardMailInboundAddress",""))' <<<"$STACK_JSON")
 fi
 
 echo
-echo "Done."
+echo "Done. The CDK stack was not modified."
+echo
+echo "Next (git / CDK):"
+echo "  1. Merge $FRAGMENT_PATH into backend/infrastructure/params/production.json,"
+echo "     commit, and run the Deploy Backend workflow. That is what updates"
+echo "     AdminApiFn. Put MetaVerifyToken in GitHub Actions as a secret"
+echo "     (do not commit it; it is also in ~/board-meta-verify-token.txt)."
 echo
 echo "Still manual:"
-echo "  1. Merge $FRAGMENT_PATH into params/production.json and commit, or the next"
-echo "     GitHub backend deploy may reset these stack parameters to empty defaults."
-echo "     Put MetaVerifyToken in GitHub Actions as a secret (do not commit it)."
 echo "  2. Meta: subscribe GET/POST ${API:-<AdminApiBaseUrl>}/webhooks/meta"
-echo "     with the verify token in ~/board-meta-verify-token.txt. Enable coexistence."
+echo "     with that verify token. Enable WhatsApp coexistence."
 echo "  3. Cloudflare Email Routing → destination ${INBOUND:-<BoardMailInboundAddress>}"
 echo "     Worker scripts/cloudflare/siutindei-mail-fanout.js (OWNER + BOARD dest)."
 echo "  4. App Store / Play / GA4 console roles for the keys you uploaded."
