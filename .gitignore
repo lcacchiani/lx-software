@@ -48,6 +48,9 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+apps/admin_web/playwright-report/
+apps/admin_web/test-results/
+apps/admin_web/blob-report/
 
 # Temporary files
 *.tmp

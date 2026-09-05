@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bankAccountLabel } from "./bankSyncModel";
+import { bankAccountLabel, consentDaysRemaining } from "./bankSyncModel";
 
 describe("bankAccountLabel", () => {
   it("joins name and identifier", () => {
@@ -20,3 +20,21 @@ describe("bankAccountLabel", () => {
     expect(bankAccountLabel({ uid: "u1" })).toBe("u1");
   });
 });
+
+describe("consentDaysRemaining", () => {
+  const now = new Date("2026-09-05T00:00:00.000Z");
+
+  it("returns whole days until expiry", () => {
+    expect(consentDaysRemaining("2026-09-14T12:00:00.000Z", now)).toBe(9);
+  });
+
+  it("is negative once expired", () => {
+    expect(consentDaysRemaining("2026-09-01T00:00:00.000Z", now)).toBe(-4);
+  });
+
+  it("returns null when the instant is missing or unparseable", () => {
+    expect(consentDaysRemaining(undefined, now)).toBeNull();
+    expect(consentDaysRemaining("not-a-date", now)).toBeNull();
+  });
+});
+

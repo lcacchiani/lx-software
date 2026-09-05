@@ -17,12 +17,15 @@ import {
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
+  AdminCell,
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
+  AdminTableTotalCurrency,
+  AdminTableTotalLabel,
   CurrencySelect,
-  FrankfurterRatesFooterNote,
   MoneyAmount,
   StaleValuationBadge,
   TableIconButton,
@@ -45,6 +48,16 @@ function accountTypeIsCreditCard(t: FinanceAccountType): boolean {
 }
 
 type AccountsSortKey = "desc" | "atype" | "day" | "amt" | "stmt" | "ccy" | "lastUpdated";
+
+const ACCOUNT_SORT_OPTIONS: readonly { readonly key: AccountsSortKey; readonly label: string }[] = [
+  { key: "desc", label: "Description" },
+  { key: "atype", label: "Account type" },
+  { key: "amt", label: "Current balance" },
+  { key: "stmt", label: "Last statement" },
+  { key: "ccy", label: "Currency" },
+  { key: "day", label: "Billing cycle day" },
+  { key: "lastUpdated", label: "Last update" },
+];
 
 function compareAccounts(
   a: FinanceAccountRecord,
@@ -177,6 +190,7 @@ export function FinanceAccountsPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("atype"),
       },
       {
@@ -205,6 +219,7 @@ export function FinanceAccountsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "text-end",
+        priority: "tertiary",
         thAriaSort: thAria("stmt"),
       },
       {
@@ -218,6 +233,7 @@ export function FinanceAccountsPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -232,6 +248,7 @@ export function FinanceAccountsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "text-end",
+        priority: "tertiary",
         thAriaSort: thAria("day"),
       },
       {
@@ -244,13 +261,14 @@ export function FinanceAccountsPanel(props: {
             onClick={() => onSort("lastUpdated")}
           />
         ),
-        className: "small text-nowrap",
+        className: "small admin-nowrap",
+        priority: "tertiary",
         thAriaSort: thAria("lastUpdated"),
       },
       {
         key: "ops",
         header: <span className="visually-hidden">Operations</span>,
-        className: "text-end text-nowrap",
+        className: "text-end admin-nowrap",
         headerClassName: "text-end",
       },
     ];
@@ -443,7 +461,7 @@ export function FinanceAccountsPanel(props: {
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-description`}>
                 Description
               </label>
@@ -457,7 +475,7 @@ export function FinanceAccountsPanel(props: {
                 autoComplete="off"
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
                 Account Type
               </label>
@@ -480,7 +498,7 @@ export function FinanceAccountsPanel(props: {
                 ))}
               </select>
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-value`}>
                 Current Balance
               </label>
@@ -494,7 +512,7 @@ export function FinanceAccountsPanel(props: {
                 onChange={(ev) => setValueStr(ev.target.value)}
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label
                 className="form-label small"
                 htmlFor={accountTypeIsCreditCard(accountTypeInput) ? `${sheetId}-last-statement` : undefined}
@@ -517,7 +535,7 @@ export function FinanceAccountsPanel(props: {
                 </div>
               )}
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                 Currency
               </label>
@@ -529,7 +547,7 @@ export function FinanceAccountsPanel(props: {
                 }
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label
                 className="form-label small"
                 htmlFor={
@@ -573,16 +591,33 @@ export function FinanceAccountsPanel(props: {
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder="Filter records…"
+          sort={{
+            options: ACCOUNT_SORT_OPTIONS,
+            sortKey,
+            direction: sortDir,
+            onChange: (key, dir) => {
+              setSortKey(key as AccountsSortKey | null);
+              setSortDir(dir);
+            },
+          }}
         >
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.description || "—"}</td>
-                <td className="small">{r.accountType}</td>
-                <td className="small text-end">
+                <AdminCell column="desc" className="small">
+                  {r.description || "—"}
+                  <AdminDataTableCellMeta>
+                    {r.accountType} · {r.currency}
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
+                    <StaleValuationBadge lastUpdated={r.lastUpdated} />
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="atype" className="small">{r.accountType}</AdminCell>
+                <AdminCell column="amt" className="small text-end">
                   <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
-                </td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="stmt" className="small text-end">
                   {accountTypeIsCreditCard(r.accountType) ? (
                     <MoneyAmount
                       amount={r.lastStatementAmount ?? 0}
@@ -592,16 +627,16 @@ export function FinanceAccountsPanel(props: {
                   ) : (
                     "—"
                   )}
-                </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ccy" className="small">{r.currency}</AdminCell>
+                <AdminCell column="day" className="small text-end">
                   {accountTypeUsesBillingCycleDay(r.accountType) ? r.billingCycleDay : "—"}
-                </td>
-                <td className="small text-nowrap">
+                </AdminCell>
+                <AdminCell column="lastUpdated" className="small">
                   {accountLastUpdatedDisplay(r.lastUpdated)}
                   <StaleValuationBadge lastUpdated={r.lastUpdated} />
-                </td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ops" className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
                     ariaLabel="Edit record"
@@ -613,7 +648,7 @@ export function FinanceAccountsPanel(props: {
                     variant="danger"
                     onClick={() => deleteRow(r.id)}
                   />
-                </td>
+                </AdminCell>
               </tr>
             ))
           ) : (
@@ -624,16 +659,16 @@ export function FinanceAccountsPanel(props: {
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
-              <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
+              <AdminCell column="desc" className="small">
+                <AdminTableTotalLabel
                   needsFx={needsFx}
                   fxError={fxError}
                   fxLoading={fxLoading}
                   ratesQuery={ratesQuery}
                 />
-              </td>
-              <td className="small text-end">
+              </AdminCell>
+              <AdminCell column="atype" className="small" />
+              <AdminCell column="amt" className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount
                     amount={convertedTotal}
@@ -643,20 +678,19 @@ export function FinanceAccountsPanel(props: {
                 ) : (
                   <span className="text-muted">—</span>
                 )}
-              </td>
-              <td className="small" />
-              <td className="small">
-                <CurrencySelect
+                <br />
+                <AdminTableTotalCurrency
                   id={`${sheetId}-total-ccy`}
-                  className="form-select form-select-sm"
                   value={totalDisplayCurrency}
-                  onChange={(code) => setTotalDisplayCurrency(code)}
+                  onChange={setTotalDisplayCurrency}
                   disabled={fxLoading}
                 />
-              </td>
-              <td className="small" />
-              <td className="small" />
-              <td className="small text-end" />
+              </AdminCell>
+              <AdminCell column="stmt" className="small" />
+              <AdminCell column="ccy" className="small" />
+              <AdminCell column="day" className="small" />
+              <AdminCell column="lastUpdated" className="small" />
+              <AdminCell column="ops" className="small text-end" />
             </tr>
           ) : null}
         </AdminDataTable>

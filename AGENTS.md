@@ -26,6 +26,16 @@ cd apps/admin_web && npm run dev
 Use a local `.env` copied from `apps/admin_web/.env.example` so `VITE_*` values
 resolve (Cognito and API URLs can point to a dev stack or be stubbed for UI-only work).
 
+To exercise every table and tab with fixture rows and no AWS stack:
+
+```bash
+cd apps/admin_web && npm run dev:mock
+```
+
+That loads `.env.mock`, signs in with a fake admin token, and serves
+`src/lib/mock/fixtures.ts` through `adminFetch`. Playwright viewport smoke
+tests use the same mode (`npm run test:e2e`).
+
 ### Lint / Build / Test
 
 | Command | Directory | Purpose |
@@ -35,6 +45,8 @@ resolve (Cognito and API URLs can point to a dev stack or be stubbed for UI-only
 | `npm run lint` | `apps/admin_web` | ESLint (flat config, TS + React) |
 | `npm run build` | `apps/admin_web` | TypeScript check + Vite build |
 | `npm run test` | `apps/admin_web` | Vitest + admin Lambda Python unit tests |
+| `npm run test:e2e` | `apps/admin_web` | Playwright viewport smoke (fixture API) |
+| `npm run dev:mock` | `apps/admin_web` | Vite + fixture admin API (no AWS) |
 | `npm run build` | `backend/infrastructure` | Compile CDK TypeScript |
 
 There are no automated test suites for `apps/public_www` or CDK currently.

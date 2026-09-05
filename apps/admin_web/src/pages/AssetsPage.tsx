@@ -1,7 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
+  AdminCell,
+  AdminPageIntro,
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
   TableIconButton,
 } from "../components/ui";
@@ -88,10 +91,10 @@ function AssetOpenLink({
 }
 
 const ASSET_TABLE_COLUMNS = [
-  { key: "uploaded", header: "Uploaded" },
+  { key: "uploaded", header: "Uploaded", priority: "secondary" as const },
   { key: "file", header: "File" },
-  { key: "entity", header: "Entity" },
-  { key: "actions", header: "Actions", className: "text-end text-nowrap" },
+  { key: "entity", header: "Entity", priority: "secondary" as const },
+  { key: "actions", header: "Actions", className: "text-end admin-nowrap" },
 ] as const;
 
 function AssetDeleteButton({
@@ -160,10 +163,10 @@ export function AssetsPage() {
   return (
     <div>
       <h1 className="h3 mb-3">Assets</h1>
-      <p className="text-muted">
+      <AdminPageIntro>
         Statement uploads and other files stored in the admin assets bucket;
         metadata is stored in DynamoDB (<code>ASSET#</code> keys).
-      </p>
+      </AdminPageIntro>
       {q.isLoading ? (
         <p className="text-muted">Loading…</p>
       ) : q.isError ? (
@@ -200,19 +203,23 @@ export function AssetsPage() {
                 const objectKey = objectKeyFromAssetPk(row.pk);
                 return (
                   <tr key={row.pk}>
-                    <td className="text-nowrap small">
+                    <AdminCell column="uploaded" className="small">
                       {formatUploadedInstant(row.uploadedAt)}
-                    </td>
-                    <td>
+                    </AdminCell>
+                    <AdminCell column="file">
                       <div className="fw-medium">{displayFileName(row)}</div>
                       {typeof row.size === "number" ? (
                         <div className="text-muted small">
                           {formatFileSizeBytes(row.size)}
                         </div>
                       ) : null}
-                    </td>
-                    <td className="small">{houseDisplayLabel(row.house)}</td>
-                    <td className="text-end">
+                      <AdminDataTableCellMeta>
+                        {houseDisplayLabel(row.house)}
+                        {row.uploadedAt ? ` · ${formatUploadedInstant(row.uploadedAt)}` : ""}
+                      </AdminDataTableCellMeta>
+                    </AdminCell>
+                    <AdminCell column="entity" className="small">{houseDisplayLabel(row.house)}</AdminCell>
+                    <AdminCell column="actions" className="text-end">
                       <div className="d-inline-flex align-items-center gap-1">
                         <AssetOpenLink
                           objectKey={objectKey}
@@ -224,7 +231,7 @@ export function AssetsPage() {
                           onError={setPageError}
                         />
                       </div>
-                    </td>
+                    </AdminCell>
                   </tr>
                 );
               })

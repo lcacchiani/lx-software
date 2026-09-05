@@ -63,7 +63,7 @@ export function LoginPage() {
   );
 
   return (
-    <div className="min-vh-100 d-flex align-items-center justify-content-center p-3 bg-light">
+    <div className="admin-full-height d-flex align-items-center justify-content-center p-3 bg-light">
       <div
         className="d-flex flex-column gap-3 align-items-stretch w-100"
         style={{ maxWidth: "420px" }}

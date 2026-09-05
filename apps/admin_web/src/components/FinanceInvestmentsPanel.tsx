@@ -28,10 +28,13 @@ import { useFinanceQuotes } from "../hooks/useFinanceQuotes";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import { formatDateUtc } from "../lib/formatDisplay";
 import {
+  AdminCell,
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
+  AdminTableTotalCurrency,
   CurrencySelect,
   FrankfurterRatesFooterNote,
   MoneyAmount,
@@ -104,6 +107,18 @@ type InvSortKey =
   | "unit"
   | "currVal"
   | "lastUpd";
+
+const INVESTMENT_SORT_OPTIONS: readonly { readonly key: InvSortKey; readonly label: string }[] = [
+  { key: "cat", label: "Category" },
+  { key: "details", label: "Details" },
+  { key: "atype", label: "Asset type" },
+  { key: "prov", label: "Provider" },
+  { key: "amt", label: "Principal" },
+  { key: "ccy", label: "Currency" },
+  { key: "unit", label: "Units" },
+  { key: "currVal", label: "Current value" },
+  { key: "lastUpd", label: "Last update" },
+];
 
 function compareInv(
   a: FinanceInvestmentRecord,
@@ -278,6 +293,7 @@ export function FinanceInvestmentsPanel({
         />
       ),
       className: "small",
+      priority: "secondary",
       thAriaSort: thAria("details"),
     });
     cols.push(
@@ -292,6 +308,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("atype"),
       },
       {
@@ -305,6 +322,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("prov"),
       },
       {
@@ -320,6 +338,8 @@ export function FinanceInvestmentsPanel({
         ),
         className: "small text-end",
         headerClassName: "small text-end",
+        // Current Value is the metric that matters on a phone; principal moves to md+.
+        priority: "secondary",
         thAriaSort: thAria("amt"),
       },
       {
@@ -333,6 +353,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -348,6 +369,7 @@ export function FinanceInvestmentsPanel({
         ),
         className: "small text-end",
         headerClassName: "small text-end",
+        priority: "tertiary",
         thAriaSort: thAria("unit"),
       },
       {
@@ -375,13 +397,14 @@ export function FinanceInvestmentsPanel({
             onClick={() => onSort("lastUpd")}
           />
         ),
-        className: "small text-nowrap",
+        className: "small admin-nowrap",
+        priority: "tertiary",
         thAriaSort: thAria("lastUpd"),
       },
       {
         key: "ops",
         header: <span className="visually-hidden">Operations</span>,
-        className: "text-end text-nowrap",
+        className: "text-end admin-nowrap",
         headerClassName: "text-end",
       },
     );
@@ -947,24 +970,47 @@ export function FinanceInvestmentsPanel({
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder="Filter records…"
+          sort={{
+            options: INVESTMENT_SORT_OPTIONS,
+            sortKey,
+            direction: sortDir,
+            onChange: (key, dir) => {
+              setSortKey(key as InvSortKey | null);
+              setSortDir(dir);
+            },
+          }}
         >
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.category}</td>
-                <td className="small text-muted">
+                <AdminCell column="cat" className="small">
+                  {r.category}
+                  <AdminDataTableCellMeta>
+                    {r.provider}
+                    {investmentDetailsDisplay(r, relatedHouseLabelByValue)
+                      ? ` · ${investmentDetailsDisplay(r, relatedHouseLabelByValue)}`
+                      : ""}
+                    {" · "}
+                    Principal{" "}
+                    <MoneyAmount amount={r.principalAmount} currency={r.currency} />
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
+                    <StaleValuationBadge lastUpdated={r.lastUpdated} />
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="details" className="small text-muted">
                   {investmentDetailsDisplay(r, relatedHouseLabelByValue) || "—"}
-                </td>
-                <td className="small">{r.assetType}</td>
-                <td className="small">{r.provider}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="atype" className="small">{r.assetType}</AdminCell>
+                <AdminCell column="prov" className="small">{r.provider}</AdminCell>
+                <AdminCell column="amt" className="small text-end">
                   <MoneyAmount amount={r.principalAmount} currency={r.currency} amountOnly />
-                </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ccy" className="small">{r.currency}</AdminCell>
+                <AdminCell column="unit" className="small text-end">
                   {r.category === "Real Estate" ? "—" : formatUnitCell(r.unit)}
-                </td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="currVal" className="small text-end">
                   {(() => {
                     const marketPriced = isInvestmentMarketPriced(r);
                     if (marketPriced) {
@@ -1012,12 +1058,12 @@ export function FinanceInvestmentsPanel({
                       <MoneyAmount amount={valueInRowCcy} currency={r.currency} amountOnly />
                     );
                   })()}
-                </td>
-                <td className="small text-muted">
+                </AdminCell>
+                <AdminCell column="lastUpd" className="small text-muted">
                   {investmentLastUpdatedDisplay(r.lastUpdated)}
                   <StaleValuationBadge lastUpdated={r.lastUpdated} />
-                </td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ops" className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
                     ariaLabel="Edit record"
@@ -1029,7 +1075,7 @@ export function FinanceInvestmentsPanel({
                     variant="danger"
                     onClick={() => deleteRow(r.id)}
                   />
-                </td>
+                </AdminCell>
               </tr>
             ))
           ) : (
@@ -1042,26 +1088,29 @@ export function FinanceInvestmentsPanel({
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
-              <td className="small text-muted fw-normal">
-                {quotesPending ? (
-                  "Loading quotes…"
-                ) : quotesErrored ? (
-                  <span className="text-danger">
-                    {quotesQuery.error?.message ?? "Could not load quotes."}
-                  </span>
-                ) : (
-                  <FrankfurterRatesFooterNote
-                    needsFx={needsFx}
-                    fxError={fxError}
-                    fxLoading={fxLoading}
-                    ratesQuery={ratesQuery}
-                  />
-                )}
-              </td>
-              <td className="small" />
-              <td className="small" />
-              <td className="small text-end">
+              <AdminCell column="cat" className="small">
+                Total
+                <span className="d-block small text-muted fw-normal admin-table-total-note">
+                  {quotesPending ? (
+                    "Loading quotes…"
+                  ) : quotesErrored ? (
+                    <span className="text-danger">
+                      {quotesQuery.error?.message ?? "Could not load quotes."}
+                    </span>
+                  ) : (
+                    <FrankfurterRatesFooterNote
+                      needsFx={needsFx}
+                      fxError={fxError}
+                      fxLoading={fxLoading}
+                      ratesQuery={ratesQuery}
+                    />
+                  )}
+                </span>
+              </AdminCell>
+              <AdminCell column="details" className="small" />
+              <AdminCell column="atype" className="small" />
+              <AdminCell column="prov" className="small" />
+              <AdminCell column="amt" className="small text-end">
                 {(() => {
                   if (needsFx && ratesQuery.isPending) {
                     return <span className="text-muted">—</span>;
@@ -1080,18 +1129,10 @@ export function FinanceInvestmentsPanel({
                   }
                   return <span className="text-muted">—</span>;
                 })()}
-              </td>
-              <td className="small">
-                <CurrencySelect
-                  id={`${sheetId}-total-ccy`}
-                  className="form-select form-select-sm"
-                  value={totalDisplayCurrency}
-                  onChange={(code) => setTotalDisplayCurrency(code)}
-                  disabled={fxLoading}
-                />
-              </td>
-              <td className="small" />
-              <td className="small text-end">
+              </AdminCell>
+              <AdminCell column="ccy" className="small" />
+              <AdminCell column="unit" className="small" />
+              <AdminCell column="currVal" className="small text-end">
                 {(() => {
                   if (needsFx && ratesQuery.isPending) {
                     return <span className="text-muted">—</span>;
@@ -1110,9 +1151,16 @@ export function FinanceInvestmentsPanel({
                   }
                   return <span className="text-muted">—</span>;
                 })()}
-              </td>
-              <td className="small" />
-              <td className="small text-end" />
+                <br />
+                <AdminTableTotalCurrency
+                  id={`${sheetId}-total-ccy`}
+                  value={totalDisplayCurrency}
+                  onChange={setTotalDisplayCurrency}
+                  disabled={fxLoading}
+                />
+              </AdminCell>
+              <AdminCell column="lastUpd" className="small" />
+              <AdminCell column="ops" className="small text-end" />
             </tr>
           ) : null}
         </AdminDataTable>

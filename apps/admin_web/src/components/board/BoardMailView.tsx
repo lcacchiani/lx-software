@@ -55,7 +55,7 @@ function MessageCard({
   const from = typeof message.from === "string" ? message.from : message.from.name ? `${message.from.name} <${message.from.address}>` : message.from.address;
   const isOut = message.direction === "out";
   return (
-    <li className={`list-group-item px-0 board-mail-message ${isOut ? "board-mail-message-out" : ""}`}>
+    <li className={`list-group-item board-mail-message ${isOut ? "board-mail-message-out" : "px-0"}`}>
       <div className="d-flex flex-wrap align-items-center gap-2 small">
         <span className={`badge ${isOut ? "text-bg-primary" : "text-bg-secondary"}`}>{isOut ? "sent" : "received"}</span>
         <span className="fw-semibold">{from}</span>

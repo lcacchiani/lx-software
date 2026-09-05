@@ -160,8 +160,7 @@ export function BoardToolsCard({
           </label>
           <select
             id="board-tools-global-mode"
-            className="form-select form-select-sm"
-            style={{ maxWidth: 360 }}
+            className="form-select form-select-sm admin-tools-global-mode"
             value={draft.globalMode}
             onChange={(ev) => setDraft((d) => ({ ...d, globalMode: ev.target.value as BoardToolGlobalMode }))}
           >
@@ -190,7 +189,7 @@ export function BoardToolsCard({
         <table className="table table-sm align-middle board-tools-matrix mb-2">
           <thead>
             <tr>
-              <th scope="col" style={{ minWidth: 220 }}>Tool</th>
+              <th scope="col">Tool</th>
               {members.map((m) => (
                 <th scope="col" key={m.id} className="text-center small" title={memberLabel(members, m.id)}>
                   {m.shortName}
@@ -468,7 +467,7 @@ export function BoardToolsCard({
                 {c.resultPreview ? (
                   <details className="mt-1">
                     <summary className="text-muted">result</summary>
-                    <pre className="small bg-light border rounded p-2 mb-0 mt-1" style={{ maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                    <pre className="small bg-light border rounded p-2 mb-0 mt-1 board-tool-result">
                       {c.resultPreview}
                     </pre>
                   </details>

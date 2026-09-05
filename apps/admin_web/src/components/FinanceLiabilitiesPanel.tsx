@@ -18,12 +18,15 @@ import { houseDisplayLabel } from "../lib/houses";
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
+  AdminCell,
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
+  AdminTableTotalCurrency,
+  AdminTableTotalLabel,
   CurrencySelect,
-  FrankfurterRatesFooterNote,
   MoneyAmount,
   StaleValuationBadge,
   TableIconButton,
@@ -38,6 +41,16 @@ function liabilityLastUpdatedDisplay(lastUpdated: string | undefined): string {
 }
 
 type LiabilitiesSortKey = "desc" | "ltype" | "amt" | "rate" | "ccy" | "house" | "lastUpdated";
+
+const LIABILITY_SORT_OPTIONS: readonly { readonly key: LiabilitiesSortKey; readonly label: string }[] = [
+  { key: "desc", label: "Description" },
+  { key: "ltype", label: "Type" },
+  { key: "amt", label: "Outstanding" },
+  { key: "ccy", label: "Currency" },
+  { key: "rate", label: "Interest rate" },
+  { key: "house", label: "Property" },
+  { key: "lastUpdated", label: "Last update" },
+];
 
 function compareLiabilities(
   a: FinanceLiabilityRecord,
@@ -173,6 +186,7 @@ export function FinanceLiabilitiesPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ltype"),
       },
       {
@@ -200,6 +214,7 @@ export function FinanceLiabilitiesPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -214,6 +229,7 @@ export function FinanceLiabilitiesPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "text-end",
+        priority: "tertiary",
         thAriaSort: thAria("rate"),
       },
       {
@@ -227,6 +243,7 @@ export function FinanceLiabilitiesPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("house"),
       },
       {
@@ -239,13 +256,14 @@ export function FinanceLiabilitiesPanel(props: {
             onClick={() => onSort("lastUpdated")}
           />
         ),
-        className: "small text-nowrap",
+        className: "small admin-nowrap",
+        priority: "tertiary",
         thAriaSort: thAria("lastUpdated"),
       },
       {
         key: "ops",
         header: <span className="visually-hidden">Operations</span>,
-        className: "text-end text-nowrap",
+        className: "text-end admin-nowrap",
         headerClassName: "text-end",
       },
     ];
@@ -415,7 +433,7 @@ export function FinanceLiabilitiesPanel(props: {
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-description`}>
                 Description
               </label>
@@ -430,7 +448,7 @@ export function FinanceLiabilitiesPanel(props: {
                 autoComplete="off"
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-liability-type`}>
                 Liability Type
               </label>
@@ -447,7 +465,7 @@ export function FinanceLiabilitiesPanel(props: {
                 ))}
               </select>
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-balance`}>
                 Outstanding Balance
               </label>
@@ -462,7 +480,7 @@ export function FinanceLiabilitiesPanel(props: {
                 onChange={(ev) => setBalanceStr(ev.target.value)}
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                 Currency
               </label>
@@ -474,7 +492,7 @@ export function FinanceLiabilitiesPanel(props: {
                 }
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-rate`}>
                 Interest Rate %
               </label>
@@ -490,7 +508,7 @@ export function FinanceLiabilitiesPanel(props: {
                 placeholder="optional"
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-related-house`}>
                 Related Property
               </label>
@@ -519,25 +537,43 @@ export function FinanceLiabilitiesPanel(props: {
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder="Filter records…"
+          sort={{
+            options: LIABILITY_SORT_OPTIONS,
+            sortKey,
+            direction: sortDir,
+            onChange: (key, dir) => {
+              setSortKey(key as LiabilitiesSortKey | null);
+              setSortDir(dir);
+            },
+          }}
         >
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.description}</td>
-                <td className="small">{r.liabilityType}</td>
-                <td className="small text-end">
+                <AdminCell column="desc" className="small">
+                  {r.description}
+                  <AdminDataTableCellMeta>
+                    {r.liabilityType} · {r.currency}
+                    {r.relatedHouse ? ` · ${houseDisplayLabel(r.relatedHouse)}` : ""}
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
+                    <StaleValuationBadge lastUpdated={r.lastUpdated} />
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="ltype" className="small">{r.liabilityType}</AdminCell>
+                <AdminCell column="amt" className="small text-end">
                   <MoneyAmount amount={r.outstandingBalance} currency={r.currency} amountOnly />
-                </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ccy" className="small">{r.currency}</AdminCell>
+                <AdminCell column="rate" className="small text-end">
                   {r.interestRatePercent !== undefined ? `${r.interestRatePercent}%` : "—"}
-                </td>
-                <td className="small">{houseDisplayLabel(r.relatedHouse)}</td>
-                <td className="small text-nowrap">
+                </AdminCell>
+                <AdminCell column="house" className="small">{houseDisplayLabel(r.relatedHouse)}</AdminCell>
+                <AdminCell column="lastUpdated" className="small">
                   {liabilityLastUpdatedDisplay(r.lastUpdated)}
                   <StaleValuationBadge lastUpdated={r.lastUpdated} />
-                </td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ops" className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
                     ariaLabel="Edit record"
@@ -549,7 +585,7 @@ export function FinanceLiabilitiesPanel(props: {
                     variant="danger"
                     onClick={() => deleteRow(r.id)}
                   />
-                </td>
+                </AdminCell>
               </tr>
             ))
           ) : (
@@ -562,35 +598,35 @@ export function FinanceLiabilitiesPanel(props: {
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total owed</td>
-              <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
+              <AdminCell column="desc" className="small">
+                <AdminTableTotalLabel
+                  label="Total owed"
                   needsFx={needsFx}
                   fxError={fxError}
                   fxLoading={fxLoading}
                   ratesQuery={ratesQuery}
                 />
-              </td>
-              <td className="small text-end">
+              </AdminCell>
+              <AdminCell column="ltype" className="small" />
+              <AdminCell column="amt" className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount amount={convertedTotal} currency={totalDisplayCurrency} amountOnly />
                 ) : (
                   <span className="text-muted">—</span>
                 )}
-              </td>
-              <td className="small">
-                <CurrencySelect
+                <br />
+                <AdminTableTotalCurrency
                   id={`${sheetId}-total-ccy`}
-                  className="form-select form-select-sm"
                   value={totalDisplayCurrency}
-                  onChange={(code) => setTotalDisplayCurrency(code)}
+                  onChange={setTotalDisplayCurrency}
                   disabled={fxLoading}
                 />
-              </td>
-              <td className="small" />
-              <td className="small" />
-              <td className="small" />
-              <td className="small text-end" />
+              </AdminCell>
+              <AdminCell column="ccy" className="small" />
+              <AdminCell column="rate" className="small" />
+              <AdminCell column="house" className="small" />
+              <AdminCell column="lastUpdated" className="small" />
+              <AdminCell column="ops" className="small text-end" />
             </tr>
           ) : null}
         </AdminDataTable>

@@ -33,7 +33,7 @@ export function TableSortHeaderButton({
           : `Sort by ${label}`
       }
     >
-      <span className="text-nowrap">{label}</span>
+      <span className="admin-nowrap">{label}</span>
       {iconClass ? <i className={`${iconClass} ms-1`} aria-hidden /> : null}
     </button>
   );

@@ -22,18 +22,29 @@ import {
 import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
+  AdminCell,
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
   type AdminDataTableColumn,
   AdminEditorSection,
+  AdminTableTotalCurrency,
+  AdminTableTotalLabel,
   CurrencySelect,
-  FrankfurterRatesFooterNote,
   MoneyAmount,
   TableIconButton,
   TableSortHeaderButton,
 } from "./ui";
 
 type LedgerSortColumnKey = "cat" | "desc" | "house" | "amt" | "ccy";
+
+const LEDGER_SORT_OPTIONS: readonly { readonly key: LedgerSortColumnKey; readonly label: string }[] = [
+  { key: "cat", label: "Category" },
+  { key: "desc", label: "Description" },
+  { key: "house", label: "Related property" },
+  { key: "amt", label: "Monthly amount" },
+  { key: "ccy", label: "Currency" },
+];
 
 function relatedHouseSortLabel(
   record: FinanceLedgerRecord,
@@ -381,6 +392,7 @@ export function FinanceLedgerSheetPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("cat"),
       },
       {
@@ -400,8 +412,9 @@ export function FinanceLedgerSheetPanel({
     if (showIncomeFlagsCol || showExpenseFlagsCol) {
       cols.push({
         key: "flags",
-        header: <span className="fw-semibold text-nowrap">Tags</span>,
+        header: <span className="fw-semibold admin-nowrap">Tags</span>,
         className: "small",
+        priority: "secondary",
       });
     }
     if (showRelatedHouseCol) {
@@ -416,6 +429,7 @@ export function FinanceLedgerSheetPanel({
           />
         ),
         className: "small",
+        priority: "tertiary",
         thAriaSort: thAria("house"),
       });
     }
@@ -446,18 +460,24 @@ export function FinanceLedgerSheetPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
         key: "ops",
         header: <span className="visually-hidden">Operations</span>,
-        className: "text-end text-nowrap",
+        className: "text-end admin-nowrap",
         headerClassName: "text-end",
       },
     );
     return cols;
   }, [showRelatedHouseCol, showIncomeFlagsCol, showExpenseFlagsCol, sortKey, sortDir, onLedgerSort]);
   const colSpan = tableColumns.length;
+  const ledgerSortOptions = useMemo(
+    () =>
+      LEDGER_SORT_OPTIONS.filter((o) => o.key !== "house" || showRelatedHouseCol),
+    [showRelatedHouseCol],
+  );
 
   const formId = `${sheetId}-ledger-form`;
   const categoryOptions = useMemo(() => {
@@ -884,43 +904,61 @@ export function FinanceLedgerSheetPanel({
           filterValue={tableFilter}
           onFilterChange={setTableFilter}
           filterPlaceholder={filterPlaceholder}
+          sort={{
+            options: ledgerSortOptions,
+            sortKey,
+            direction: sortDir,
+            onChange: (key, dir) => {
+              setSortKey(key as LedgerSortColumnKey | null);
+              setSortDir(dir);
+            },
+          }}
         >
           {filtered.length ? (
-            filtered.map((r) => (
+            filtered.map((r) => {
+              const flagsLabel = showIncomeFlagsCol
+                ? r.isDerivedFromAllocation
+                  ? "Allocation"
+                  : incomeLedgerFlagLabels(r, incomeFlagFields)
+                : showExpenseFlagsCol
+                  ? r.isDerivedFromTaggedIncome
+                    ? "Allocate"
+                    : expenseLedgerFlagLabels(r, expenseFlagFields)
+                  : "";
+              const houseLabel = r.relatedHouse
+                ? (relatedHouseLabelByValue.get(r.relatedHouse) ?? r.relatedHouse)
+                : "";
+              return (
               <tr key={r.id}>
-                <td className="small">{r.category}</td>
-                <td className="small">{r.description}</td>
+                <AdminCell column="cat" className="small">{r.category}</AdminCell>
+                <AdminCell column="desc" className="small">
+                  {r.description}
+                  <AdminDataTableCellMeta>
+                    {[r.category, flagsLabel, r.currency].filter(Boolean).join(" · ")}
+                  </AdminDataTableCellMeta>
+                  {showRelatedHouseCol && houseLabel ? (
+                    <AdminDataTableCellMeta until="tertiary">{houseLabel}</AdminDataTableCellMeta>
+                  ) : null}
+                </AdminCell>
                 {showIncomeFlagsCol || showExpenseFlagsCol ? (
-                  <td className="small text-muted">
-                    {showIncomeFlagsCol ? (
-                      r.isDerivedFromAllocation ? (
-                        "Allocation"
-                      ) : (
-                        incomeLedgerFlagLabels(r, incomeFlagFields) || "—"
-                      )
-                    ) : r.isDerivedFromTaggedIncome ? (
-                      "Allocate"
-                    ) : (
-                      expenseLedgerFlagLabels(r, expenseFlagFields) || "—"
-                    )}
-                  </td>
+                  <AdminCell column="flags" className="small text-muted">
+                    {flagsLabel || "—"}
+                  </AdminCell>
                 ) : null}
                 {showRelatedHouseCol ? (
-                  <td className="small text-muted">
-                    {r.relatedHouse
-                      ? (relatedHouseLabelByValue.get(r.relatedHouse) ?? r.relatedHouse)
-                      : "—"}
-                  </td>
+                  <AdminCell column="house" className="small text-muted">
+                    {houseLabel || "—"}
+                  </AdminCell>
                 ) : null}
-                <td className="small text-end">
+                <AdminCell column="amt" className="small text-end">
                   <MoneyAmount
                     amount={ledgerMonthlyAmount(r)}
                     currency={r.currency}
                     amountOnly
                   />
-                </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-end">
+                </AdminCell>
+                <AdminCell column="ccy" className="small">{r.currency}</AdminCell>
+                <AdminCell column="ops" className="small text-end">
                   {r.isDerivedFromTaggedIncome ? (
                     <span className="text-muted small">Derived</span>
                   ) : r.isDerivedFromAllocation ? (
@@ -940,9 +978,10 @@ export function FinanceLedgerSheetPanel({
                       />
                     </>
                   )}
-                </td>
+                </AdminCell>
               </tr>
-            ))
+              );
+            })
           ) : (
             <AdminDataTableEmptyRow
               colSpan={colSpan}
@@ -955,18 +994,20 @@ export function FinanceLedgerSheetPanel({
           )}
           {tableSourceRecords.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
-              <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
+              <AdminCell column="cat" className="small" />
+              <AdminCell column="desc" className="small">
+                <AdminTableTotalLabel
                   needsFx={needsFx}
                   fxError={fxError}
                   fxLoading={fxLoading}
                   ratesQuery={ratesQuery}
                 />
-              </td>
-              {showIncomeFlagsCol || showExpenseFlagsCol ? <td className="small" /> : null}
-              {showRelatedHouseCol ? <td className="small" /> : null}
-              <td className="small text-end">
+              </AdminCell>
+              {showIncomeFlagsCol || showExpenseFlagsCol ? (
+                <AdminCell column="flags" className="small" />
+              ) : null}
+              {showRelatedHouseCol ? <AdminCell column="house" className="small" /> : null}
+              <AdminCell column="amt" className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount
                     amount={convertedTotal}
@@ -976,17 +1017,16 @@ export function FinanceLedgerSheetPanel({
                 ) : (
                   <span className="text-muted">—</span>
                 )}
-              </td>
-              <td className="small">
-                <CurrencySelect
+                <br />
+                <AdminTableTotalCurrency
                   id={`${sheetId}-ledger-total-ccy`}
-                  className="form-select form-select-sm"
                   value={totalDisplayCurrency}
-                  onChange={(code) => setTotalDisplayCurrency(code)}
+                  onChange={setTotalDisplayCurrency}
                   disabled={fxLoading}
                 />
-              </td>
-              <td className="small text-end" />
+              </AdminCell>
+              <AdminCell column="ccy" className="small" />
+              <AdminCell column="ops" className="small text-end" />
             </tr>
           ) : null}
         </AdminDataTable>

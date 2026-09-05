@@ -20,13 +20,13 @@ export function BoardMembersStrip({ members, chairId, openActionsByPersona, onCh
                 <div className="d-flex align-items-center gap-3 mb-2">
                   <div className="board-avatar" aria-hidden="true">{memberInitials(m)}</div>
                   <div className="flex-grow-1 min-w-0">
-                    <div className="fw-semibold text-truncate">
+                    <div className="fw-semibold text-break">
                       {m.displayName}
                       {m.id === chairId ? (
                         <span className="badge text-bg-dark ms-2" title="Chairs meetings by default">Chair</span>
                       ) : null}
                     </div>
-                    <div className="small text-muted text-truncate">{m.title}</div>
+                    <div className="small text-muted text-break">{m.title}</div>
                   </div>
                 </div>
                 <p className="small text-muted flex-grow-1 mb-2 board-clamp-3">{m.mandate}</p>

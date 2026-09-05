@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FinanceDataLoadOrError } from "../components/FinanceDataStatus";
+import { AdminPageIntro } from "../components/ui";
 import { StatementBookDashboardCard } from "../components/StatementBookDashboardCard";
 import { AllocationCoverageDashboardCard } from "../components/dashboard/AllocationCoverageDashboardCard";
 import { DashboardApiHealthCard } from "../components/dashboard/DashboardApiHealthCard";
@@ -56,16 +57,21 @@ export function DashboardPage() {
   return (
     <div>
       <h1 className="h3 mb-3">Dashboard</h1>
-      <p className="text-muted">
+      <AdminPageIntro>
         Welcome to the LX Software admin console. Use the navigation menu to
         manage assets and records.
-      </p>
+      </AdminPageIntro>
 
       <FinanceDataLoadOrError
         isLoading={booksLoading}
         isError={booksError}
         loadingMessage="Loading LX Software and Siu Tin Dei summaries…"
         loadErrorMessage="Could not load LX Software and Siu Tin Dei summaries. Check API configuration and sign-in."
+        onRetry={() => {
+          void lxSoftwareQuery.refetch();
+          void siuTinDeiQuery.refetch();
+        }}
+        isRetrying={lxSoftwareQuery.isRefetching || siuTinDeiQuery.isRefetching}
       />
       {!booksLoading && !booksError ? (
         <div className="row g-3 mb-3">
@@ -92,6 +98,8 @@ export function DashboardPage() {
         isLoading={financeQuery.isLoading}
         isError={financeQuery.isError}
         loadErrorMessage="Could not load finance data for summaries. Check API configuration and sign-in."
+        onRetry={() => void financeQuery.refetch()}
+        isRetrying={financeQuery.isRefetching}
       />
       {!financeQuery.isLoading && !financeQuery.isError ? (
         <>

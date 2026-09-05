@@ -1,18 +1,24 @@
 import { useMemo, useState } from "react";
 import {
+  AdminCell,
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
   AdminEditorSection,
+  AdminPageIntro,
   DateTimeDisplay,
   MoneyAmount,
   TableIconButton,
 } from "../components/ui";
+import { FinanceDataLoadOrError } from "../components/FinanceDataStatus";
 import { useBankOptions, useBankSync } from "../hooks/useBankSync";
 import { useFinance } from "../hooks/useFinance";
 import { getAdminApiErrorMessage } from "../lib/apiAdminClient";
 import {
   BANK_CONNECT_COUNTRIES,
   bankAccountLabel,
+  CONSENT_EXPIRY_WARNING_DAYS,
+  consentDaysRemaining,
   type BankSyncAccount,
   type BankSyncMapping,
   type BankSyncSession,
@@ -20,6 +26,43 @@ import {
 
 function errorText(err: unknown, fallback: string): string {
   return getAdminApiErrorMessage(err) ?? fallback;
+}
+
+/**
+ * Consent expiry with an urgency cue. Rendered in the dedicated column on
+ * wide screens and repeated under the bank name on phones, so an expiring
+ * consent is never hidden by the responsive layout.
+ */
+function ConsentExpiryNote({
+  validUntil,
+  showDate = false,
+}: {
+  readonly validUntil: string | undefined;
+  readonly showDate?: boolean;
+}) {
+  const days = consentDaysRemaining(validUntil);
+  if (days === null || !validUntil) {
+    return showDate ? <span className="text-muted">—</span> : null;
+  }
+  const isExpired = days < 0;
+  const isExpiring = !isExpired && days <= CONSENT_EXPIRY_WARNING_DAYS;
+  const tone = isExpired ? "text-danger fw-semibold" : isExpiring ? "text-warning-emphasis fw-semibold" : "";
+  const summary = isExpired
+    ? "Consent expired"
+    : isExpiring
+      ? `Consent expires in ${days} day${days === 1 ? "" : "s"}`
+      : `Consent valid ${days} more days`;
+  return (
+    <span className={tone}>
+      {isExpired || isExpiring ? (
+        <i className="bi bi-exclamation-triangle-fill me-1" aria-hidden="true" />
+      ) : null}
+      {showDate ? <DateTimeDisplay iso={validUntil} className={tone} /> : summary}
+      {showDate && (isExpired || isExpiring) ? (
+        <span className="d-block small">{summary}</span>
+      ) : null}
+    </span>
+  );
 }
 
 type LinkedAccountRow = {
@@ -32,6 +75,8 @@ export function BankingPage() {
     state,
     isLoading,
     isError,
+    isRefetching,
+    refetch,
     error,
     startAuth,
     saveMappings,
@@ -132,8 +177,15 @@ export function BankingPage() {
 
   if (isError) {
     return (
-      <div className="alert alert-danger" role="alert">
-        Could not load bank connections: {errorText(error, "request failed")}
+      <div>
+        <h1 className="h4 mb-3">Banking</h1>
+        <FinanceDataLoadOrError
+          isLoading={false}
+          isError
+          loadErrorMessage={`Could not load bank connections: ${errorText(error, "request failed")}`}
+          onRetry={() => void refetch()}
+          isRetrying={isRefetching}
+        />
       </div>
     );
   }
@@ -151,11 +203,11 @@ export function BankingPage() {
           {syncNow.isPending ? "Syncing…" : "Sync now"}
         </button>
       </div>
-      <p className="text-muted small">
+      <AdminPageIntro>
         Link bank accounts through Enable Banking (open banking / PSD2) and
         refresh the Finance → Accounts sheet from live balances. A scheduled
         sync also runs daily.
-      </p>
+      </AdminPageIntro>
 
       {state && !state.enabled ? (
         <div className="alert alert-warning" role="alert">
@@ -254,9 +306,9 @@ export function BankingPage() {
         <AdminDataTable
           columns={[
             { key: "bank", header: "Bank" },
-            { key: "country", header: "Country" },
-            { key: "accounts", header: "Accounts" },
-            { key: "validUntil", header: "Consent valid until" },
+            { key: "country", header: "Country", priority: "secondary" },
+            { key: "accounts", header: "Accounts", priority: "secondary" },
+            { key: "validUntil", header: "Consent valid until", priority: "tertiary" },
             {
               key: "ops",
               header: <span className="visually-hidden">Operations</span>,
@@ -279,9 +331,20 @@ export function BankingPage() {
           ) : (
             filteredSessions.map((session) => (
               <tr key={session.sessionId}>
-                <td>{session.bankName}</td>
-                <td>{session.bankCountry}</td>
-                <td>
+                <AdminCell column="bank">
+                  {session.bankName}
+                  <AdminDataTableCellMeta>
+                    {session.bankCountry}
+                    {session.accounts.length
+                      ? ` · ${session.accounts.length} account${session.accounts.length === 1 ? "" : "s"}`
+                      : ""}
+                  </AdminDataTableCellMeta>
+                  <AdminDataTableCellMeta until="tertiary">
+                    <ConsentExpiryNote validUntil={session.validUntil} />
+                  </AdminDataTableCellMeta>
+                </AdminCell>
+                <AdminCell column="country">{session.bankCountry}</AdminCell>
+                <AdminCell column="accounts">
                   {session.accounts.length === 0 ? (
                     <span className="text-muted">none</span>
                   ) : (
@@ -296,15 +359,11 @@ export function BankingPage() {
                       ))}
                     </ul>
                   )}
-                </td>
-                <td>
-                  {session.validUntil ? (
-                    <DateTimeDisplay iso={session.validUntil} />
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </td>
-                <td className="text-end">
+                </AdminCell>
+                <AdminCell column="validUntil">
+                  <ConsentExpiryNote validUntil={session.validUntil} showDate />
+                </AdminCell>
+                <AdminCell column="ops" className="text-end">
                   <TableIconButton
                     iconClassName="bi bi-trash"
                     ariaLabel={`Disconnect ${session.bankName}`}
@@ -312,7 +371,7 @@ export function BankingPage() {
                     onClick={() => onDeleteSession(session)}
                     disabled={deleteSession.isPending}
                   />
-                </td>
+                </AdminCell>
               </tr>
             ))
           )}
@@ -363,7 +422,7 @@ export function BankingPage() {
                         {account.currency ? ` · ${account.currency}` : ""}
                       </span>
                     </td>
-                    <td style={{ maxWidth: "22rem" }}>
+                    <td className="admin-mapping-select">
                       <label
                         className="visually-hidden"
                         htmlFor={`mapping-${account.uid}`}
@@ -411,7 +470,7 @@ export function BankingPage() {
               Ran <DateTimeDisplay iso={lastSync.at} />
             </p>
             <div className="table-responsive">
-              <table className="table table-sm align-middle mb-0">
+              <table className="table table-sm align-middle mb-0 admin-data-table">
                 <thead>
                   <tr>
                     <th scope="col">Record</th>
@@ -419,7 +478,7 @@ export function BankingPage() {
                     <th scope="col" className="text-end">
                       Balance
                     </th>
-                    <th scope="col">Details</th>
+                    <th scope="col" className="admin-col-secondary">Details</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -455,7 +514,7 @@ export function BankingPage() {
                             <span className="text-muted">—</span>
                           )}
                         </td>
-                        <td className="small text-muted">
+                        <td className="small text-muted admin-col-secondary">
                           {result.status === "ok"
                             ? result.balanceType
                             : result.message}

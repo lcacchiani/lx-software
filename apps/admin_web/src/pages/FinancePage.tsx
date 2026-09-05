@@ -7,8 +7,9 @@ import { FinanceAllocationsPanel } from "../components/FinanceAllocationsPanel";
 import { FinanceLiabilitiesPanel } from "../components/FinanceLiabilitiesPanel";
 import { FinanceLedgerSheetPanel } from "../components/FinanceLedgerSheetPanel";
 import { HouseStatementPanel } from "../components/HouseStatementPanel";
-import { AdminTabList, type AdminTabItem } from "../components/ui";
+import { AdminPageIntro, AdminTabList, type AdminTabItem } from "../components/ui";
 import { useFinance } from "../hooks/useFinance";
+import { adminTabButtonId } from "../lib/adminTabs";
 import { HOUSE_DISPLAY_LABEL, LEDGER_RELATED_HOUSE_OPTIONS } from "../lib/houses";
 import {
   EXPENSE_CATEGORIES,
@@ -42,6 +43,9 @@ const FINANCE_TABS: readonly AdminTabItem<FinanceTab>[] = [
   { id: "liabilities", label: "Liabilities" },
 ];
 
+const TAB_ID_PREFIX = "finance";
+const PANEL_ID = "finance-tabpanel";
+
 export function FinancePage() {
   const {
     data,
@@ -56,6 +60,8 @@ export function FinancePage() {
     patchExpenseIncomeAllocationPercents,
     isLoading,
     isError,
+    isRefetching,
+    refetch,
     isSaving,
     saveError,
     saveErrorDetail,
@@ -65,7 +71,7 @@ export function FinancePage() {
   return (
     <div>
       <h1 className="h3 mb-3">Finance</h1>
-      <p className="text-muted mb-4">
+      <AdminPageIntro>
         House statements, floats, investments, savings, pension, and income and expense ledgers are
         stored in the admin API (DynamoDB). The Allocations tab lists expenses tagged{" "}
         <strong>Allocate</strong>, derived allocation lines from tagged income (both labeled Allocate
@@ -74,9 +80,14 @@ export function FinancePage() {
         <strong>Pension</strong> so it appears in the Pension tab table (with fund rows). The Accounts
         tab stores bank and card balances with billing cycle metadata. The Liabilities tab tracks
         outstanding balances (e.g. mortgages), optionally linked to a property for equity.
-      </p>
-      <FinanceDataLoadOrError isLoading={isLoading} isError={isError} />
-      {!isLoading && !isError ? (
+      </AdminPageIntro>
+      <FinanceDataLoadOrError
+        isLoading={isLoading}
+        isError={isError}
+        onRetry={() => void refetch()}
+        isRetrying={isRefetching}
+      />
+      {!isLoading ? (
         <>
           <FinanceSaveStatus
             isSaving={isSaving}
@@ -84,9 +95,27 @@ export function FinancePage() {
             saveErrorDetail={saveErrorDetail}
           />
 
-          <AdminTabList tabs={FINANCE_TABS} active={tab} onChange={setTab} />
+          <AdminTabList
+            tabs={FINANCE_TABS}
+            active={tab}
+            onChange={setTab}
+            label="Finance sections"
+            idPrefix={TAB_ID_PREFIX}
+            panelId={PANEL_ID}
+            disabled={isError}
+          />
 
-          <div className="tab-content">
+          {isError ? (
+            <p className="text-muted small mb-0">
+              Records could not be loaded, so editing is paused. Retry to continue.
+            </p>
+          ) : (
+          <div
+            className="tab-content"
+            id={PANEL_ID}
+            role="tabpanel"
+            aria-labelledby={adminTabButtonId(TAB_ID_PREFIX, tab)}
+          >
             {tab === "hillmarton" ? (
               <HouseStatementPanel
                 houseKey="hillmarton"
@@ -168,6 +197,7 @@ export function FinancePage() {
               />
             ) : null}
           </div>
+          )}
         </>
       ) : null}
     </div>

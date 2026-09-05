@@ -180,7 +180,7 @@ export function BoardSettingsCard({
           <div className="form-text">Leave blank to use the stack defaults. Requests are routed only to providers that do not retain prompts.</div>
 
           <h3 className="h6 mt-4">Daily budget</h3>
-          <div className="input-group input-group-sm" style={{ maxWidth: 220 }}>
+          <div className="input-group input-group-sm board-budget-input">
             <span className="input-group-text">USD</span>
             <input
               type="number"

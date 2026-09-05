@@ -43,8 +43,8 @@ function ArgumentsTable({ args }: { readonly args: Readonly<Record<string, unkno
       <tbody>
         {entries.map(([k, v]) => (
           <tr key={k}>
-            <th scope="row" className="text-muted fw-normal text-nowrap pe-3 ps-0" style={{ width: "1%" }}>{k}</th>
-            <td className="ps-0" style={{ whiteSpace: "pre-wrap" }}>{formatArgValue(v)}</td>
+            <th scope="row" className="text-muted fw-normal pe-3 ps-0 board-approval-arg-key">{k}</th>
+            <td className="ps-0 board-approval-arg-value">{formatArgValue(v)}</td>
           </tr>
         ))}
       </tbody>
@@ -181,7 +181,7 @@ export function BoardApprovalsList({
       <li
         key={a.approvalId}
         id={`board-approval-${a.approvalId}`}
-        className={`list-group-item px-0 ${isFocused ? "board-approval-focus" : ""}`}
+        className={`list-group-item ${isFocused ? "board-approval-focus" : "px-0"}`}
       >
         <div className="d-flex flex-wrap align-items-center gap-2">
           <span className={`badge ${APPROVAL_STATUS_BADGE_CLASS[a.status] ?? "text-bg-secondary"}`}>{a.status}</span>
@@ -289,7 +289,7 @@ export function BoardApprovalsList({
               aria-label="Decision note"
               onChange={(ev) => setNoteDrafts((d) => ({ ...d, [a.approvalId]: ev.target.value }))}
             />
-            <div className="d-flex gap-2 text-nowrap">
+            <div className="d-flex flex-wrap gap-2">
               <button type="button" className="btn btn-sm btn-success" disabled={isDeciding} onClick={() => approve(a)}>
                 <i className="bi bi-check2 me-1" aria-hidden="true" />
                 {editingArgsId === a.approvalId ? "Approve edited" : "Approve"}

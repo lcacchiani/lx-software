@@ -99,19 +99,24 @@ export function AuthenticatedShell() {
         setIsNavOpen(false);
       }
     };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    // iOS Safari ignores `overflow: hidden` on body, so the lock pins the body
+    // in place and restores the scroll offset when the drawer closes.
+    const scrollY = window.scrollY;
+    document.body.classList.add("admin-nav-open");
+    document.body.style.top = `-${scrollY}px`;
     document.addEventListener("keydown", onKeyDown);
     media.addEventListener("change", onViewportChange);
     return () => {
-      document.body.style.overflow = previousOverflow;
+      document.body.classList.remove("admin-nav-open");
+      document.body.style.top = "";
+      window.scrollTo(0, scrollY);
       document.removeEventListener("keydown", onKeyDown);
       media.removeEventListener("change", onViewportChange);
     };
   }, [isNavOpen]);
 
   return (
-    <div className="d-flex flex-column min-vh-100">
+    <div className="d-flex flex-column admin-full-height">
       <nav className="navbar navbar-expand-md navbar-dark bg-dark">
         <div className="container-fluid">
           <button
@@ -128,7 +133,10 @@ export function AuthenticatedShell() {
           <span className="navbar-brand mb-0 h1 ms-2 ms-md-0">LX Admin</span>
           <div className="navbar-nav ms-auto align-items-center gap-2 flex-row">
             {user?.email ? (
-              <span className="navbar-text text-white-50 small me-2 d-none d-sm-inline text-truncate">
+              <span
+                className="navbar-text text-white-50 small me-2 d-none d-sm-inline text-truncate admin-navbar-user"
+                title={user.email}
+              >
                 {user.email}
               </span>
             ) : null}
