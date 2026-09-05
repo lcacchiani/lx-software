@@ -534,35 +534,39 @@ threads expire after 90 days (`BOARD_MAIL_MESSAGE_TTL_DAYS`).
 
 ## Scripts
 
-### Executive Board AWS setup
+### Executive Board AWS setup (CloudShell)
 
-`scripts/setup-board-config.py` creates the Secrets Manager secrets and CDK
-parameter keys listed above. Fill in tokens and file paths; the script never
-prints secret values and never writes them into the committed
-`params/production.json`.
+Sign in to the AWS console as **root** (or an admin role), open **CloudShell**
+in `ap-southeast-1`, and run the standalone wizard. CloudShell already has
+the AWS CLI — you do not need a git checkout. Do **not** pipe curl to bash
+(the prompts need a real terminal).
 
 ```bash
-# 1. Copy the template (gitignored once filled in)
-python3 scripts/setup-board-config.py init --out setup-board-config.answers.json
-
-# 2. See what the account already has (stack outputs, secrets, Lambdas, Aurora)
-python3 scripts/setup-board-config.py status
-
-# 3. Preview, then apply
-python3 scripts/setup-board-config.py apply --answers setup-board-config.answers.json --dry-run
-python3 scripts/setup-board-config.py apply --answers setup-board-config.answers.json --yes
+curl -fsSL https://raw.githubusercontent.com/lx-software-ltd/lx-software/main/scripts/setup-board-cloudshell.sh \
+  -o setup-board-cloudshell.sh
+bash setup-board-cloudshell.sh --dry-run    # preview
+bash setup-board-cloudshell.sh              # type / upload secrets; confirm
 ```
 
-Leave a field blank to skip it. Useful optional flags: `--generate-verify-token`
-(writes `MetaVerifyToken` only to the gitignored
-`params/production.local.json`), `--apply-sql` (runs
-`scripts/siutindei/receivables.sql` through the RDS Data API), `--skip-cost-tag`.
+Leave a prompt blank to skip. Upload `.p8` / service-account JSON first
+(**Actions → Upload file**), then paste the path (`~/AuthKey.p8`).
 
-After apply, commit the updated ARNs/IDs in `params/production.json` and
-redeploy `lxsoftware`. Pass the local overlay as extra `--parameters` (or add
-`lxsoftware:MetaVerifyToken` as a GitHub Actions secret). Cloudflare, Meta's
-webhook subscription, App Store / Play roles, and the GitHub PAT itself stay
-manual — `status` reprints that list.
+The wizard:
+
+1. Creates or updates Secrets Manager secrets (never prints the values).
+2. Updates the live `lxsoftware` stack with `UsePreviousValue` for everything
+   you skip (Cognito passwords stay untouched).
+3. Activates the Cost Explorer tag `aws:cloudformation:stack-name`.
+4. Optionally applies `receivables.sql` through the RDS Data API.
+
+It writes `~/board-params-fragment.json` (ARNs and ids, no tokens) — merge
+that into `backend/infrastructure/params/production.json` and commit **before
+the next GitHub backend deploy**, or CI may reset the new parameters to empty
+defaults. `MetaVerifyToken` is saved only to `~/board-meta-verify-token.txt`;
+put it in GitHub Actions as a secret, do not commit it.
+
+A repo-local Python helper (`scripts/setup-board-config.py`) can still write
+the same keys from an answers file if you prefer not to use CloudShell.
 
 Local or CI deploy of static files after a build:
 
