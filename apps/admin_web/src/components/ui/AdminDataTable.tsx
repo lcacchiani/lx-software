@@ -1,10 +1,26 @@
 import { useId, type ReactNode } from "react";
+import {
+  adminColumnPriorityClass,
+  type AdminTableColumnPriority,
+} from "../../lib/adminTablePriority";
+
+function mergeCellClass(
+  ...parts: readonly (string | undefined)[]
+): string | undefined {
+  const merged = parts.filter((part) => part && part.length > 0).join(" ");
+  return merged.length > 0 ? merged : undefined;
+}
 
 export type AdminDataTableColumn = {
   readonly key: string;
   readonly header: ReactNode;
   readonly className?: string;
   readonly headerClassName?: string;
+  /**
+   * Mobile-first visibility. `primary` always shows; `secondary` from `md`;
+   * `tertiary` from `lg`. Pair hidden values with `AdminDataTableCellMeta`.
+   */
+  readonly priority?: AdminTableColumnPriority;
   /** For sortable tables: maps to `<th aria-sort="…">` when set. */
   readonly thAriaSort?: "ascending" | "descending" | "none" | "other";
 };
@@ -56,7 +72,7 @@ export function AdminDataTable({
   const tableBlock = (
     <div className={embedded ? "table-responsive pt-3" : "table-responsive"}>
       <table
-        className={`table table-striped mb-0 align-middle ${embedded ? "" : "table-sm"}`}
+        className={`table table-striped mb-0 align-middle admin-data-table ${embedded ? "" : "table-sm"}`.trim()}
       >
         <thead>
           <tr>
@@ -64,7 +80,10 @@ export function AdminDataTable({
               <th
                 key={col.key}
                 scope="col"
-                className={col.headerClassName ?? col.className}
+                className={mergeCellClass(
+                  adminColumnPriorityClass(col.priority),
+                  col.headerClassName ?? col.className,
+                )}
                 aria-sort={col.thAriaSort}
               >
                 {col.header}
@@ -106,5 +125,27 @@ export function AdminDataTableEmptyRow({ colSpan, message }: AdminDataTableEmpty
         {message}
       </td>
     </tr>
+  );
+}
+
+export type AdminDataTableCellMetaProps = {
+  readonly children: ReactNode;
+  /** Breakpoint at which the dedicated column takes over. */
+  readonly until?: Exclude<AdminTableColumnPriority, "primary">;
+};
+
+/** Secondary line under a primary cell, shown only while its column is hidden. */
+export function AdminDataTableCellMeta({
+  children,
+  until = "secondary",
+}: AdminDataTableCellMetaProps) {
+  return (
+    <span
+      className={`admin-table-cell-meta d-block small text-muted ${
+        until === "secondary" ? "d-md-none" : "d-lg-none"
+      }`}
+    >
+      {children}
+    </span>
   );
 }

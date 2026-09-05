@@ -16,7 +16,9 @@ import {
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
@@ -188,6 +190,7 @@ export function FinanceAllocationsPanel(props: {
         key: "tags",
         header: <span className="fw-semibold text-nowrap">Tags</span>,
         className: "small text-muted",
+        priority: "secondary",
       },
       {
         key: "monthly",
@@ -217,6 +220,7 @@ export function FinanceAllocationsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "small text-end",
+        priority: "secondary",
         thAriaSort: thAria("accum"),
       },
       {
@@ -230,6 +234,7 @@ export function FinanceAllocationsPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -243,6 +248,7 @@ export function FinanceAllocationsPanel(props: {
           />
         ),
         className: "small text-nowrap",
+        priority: "tertiary",
         thAriaSort: thAria("last"),
       },
       {
@@ -729,8 +735,11 @@ export function FinanceAllocationsPanel(props: {
               const monthlyCol = allocationMonthlyColumnDisplay(r);
               return (
               <tr key={r.expenseId}>
-                <td className="small">{r.description}</td>
-                <td className="small text-muted">{allocationTagsCellLabel(r)}</td>
+                <td className="small">
+                  {r.description}
+                  <AdminDataTableCellMeta>{allocationTagsCellLabel(r)}</AdminDataTableCellMeta>
+                </td>
+                <td className={`small text-muted ${adminColumnPriorityClass("secondary")}`}>{allocationTagsCellLabel(r)}</td>
                 <td className="small text-end">
                   {monthlyCol.kind === "dash" ? (
                     <span className="text-muted">—</span>
@@ -742,11 +751,11 @@ export function FinanceAllocationsPanel(props: {
                     />
                   )}
                 </td>
-                <td className="small text-end">
+                <td className={`small text-end ${adminColumnPriorityClass("secondary")}`}>
                   <MoneyAmount amount={r.accumulatedAmount} currency={r.currency} amountOnly />
                 </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-nowrap">{allocationLastUpdatedDisplay(r.lastUpdated)}</td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
+                <td className={`small ${adminColumnPriorityClass("tertiary")}`}>{allocationLastUpdatedDisplay(r.lastUpdated)}</td>
                 <td className="small text-end">
                   <TableIconButton
                     iconClassName="bi bi-pencil"
@@ -781,17 +790,51 @@ export function FinanceAllocationsPanel(props: {
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total (accumulated)</td>
-              <td className="small" />
-              <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
-                  needsFx={needsFx}
-                  fxError={fxError}
-                  fxLoading={fxLoading}
-                  ratesQuery={ratesQuery}
-                />
+              <td className="small">
+                Total (accumulated)
+                <AdminDataTableCellMeta>
+                  <FrankfurterRatesFooterNote
+                    needsFx={needsFx}
+                    fxError={fxError}
+                    fxLoading={fxLoading}
+                    ratesQuery={ratesQuery}
+                  />
+                </AdminDataTableCellMeta>
               </td>
+              <td className={`small ${adminColumnPriorityClass("secondary")}`} />
               <td className="small text-end">
+                <span className="d-none d-md-inline text-muted fw-normal">
+                  <FrankfurterRatesFooterNote
+                    needsFx={needsFx}
+                    fxError={fxError}
+                    fxLoading={fxLoading}
+                    ratesQuery={ratesQuery}
+                  />
+                </span>
+                <span className="d-md-none">
+                  {convertedAccumulatedTotal !== null ? (
+                    <MoneyAmount
+                      amount={convertedAccumulatedTotal}
+                      currency={totalDisplayCurrency}
+                      amountOnly
+                    />
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                  <AdminDataTableCellMeta>
+                    <CurrencySelect
+                      id="finance-allocations-total-ccy-mobile"
+                      className="form-select form-select-sm"
+                      value={totalDisplayCurrency}
+                      onChange={(code) =>
+                        setTotalDisplayCurrency(coerceSupportedCurrency(code, GLOBAL_DEFAULT_CURRENCY))
+                      }
+                      disabled={fxLoading}
+                    />
+                  </AdminDataTableCellMeta>
+                </span>
+              </td>
+              <td className={`small text-end ${adminColumnPriorityClass("secondary")}`}>
                 {convertedAccumulatedTotal !== null ? (
                   <MoneyAmount
                     amount={convertedAccumulatedTotal}
@@ -802,7 +845,7 @@ export function FinanceAllocationsPanel(props: {
                   <span className="text-muted">—</span>
                 )}
               </td>
-              <td className="small">
+              <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                 <CurrencySelect
                   id="finance-allocations-total-ccy"
                   className="form-select form-select-sm"
@@ -813,7 +856,7 @@ export function FinanceAllocationsPanel(props: {
                   disabled={fxLoading}
                 />
               </td>
-              <td className="small" />
+              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
               <td className="small text-end" />
             </tr>
           ) : null}

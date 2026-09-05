@@ -20,7 +20,7 @@ export function TableIconButton({
   return (
     <button
       type={type}
-      className={`btn btn-sm btn-link p-1 lh-1 ${variant === "danger" ? "text-danger" : ""}`}
+      className={`btn btn-sm btn-link p-1 lh-1 admin-table-icon-btn ${variant === "danger" ? "text-danger" : ""}`}
       aria-label={ariaLabel}
       title={ariaLabel}
       onClick={onClick}

@@ -6,7 +6,7 @@ This document defines **reusable patterns** for the LX Software admin SPA (`apps
 
 1. **Editors above tables** — Any form that creates or updates rows belongs in a dedicated block **above** the related table, never inline-only inside table rows (except icon actions).
 2. **Save actions bottom-left** — Within each editor card, primary actions (`Save`, `Update`, etc.) sit in the footer, **left-aligned** (`justify-content-start`). Secondary actions (e.g. `Clear`) sit beside them to the right in the same footer row.
-3. **Tables** — Use `AdminDataTable` for list views: one **search/filter** input at the top of the card, then a striped Bootstrap table. The **last column is always “operations”**: row actions only, no heading text (use a visually hidden label for screen readers).
+3. **Tables** — Use `AdminDataTable` for list views: one **search/filter** input at the top of the card, then a striped Bootstrap table. The **last column is always “operations”**: row actions only, no heading text (use a visually hidden label for screen readers). On phones, mark non-essential columns with `priority: "secondary"` (`md+`) or `"tertiary"` (`lg+`) and repeat the most useful hidden value under the identifying cell with `AdminDataTableCellMeta`. Apply `adminColumnPriorityClass` on the matching `<td>`s so headers and cells hide together. A record table should stay readable at ~390px without sideways scrolling to reach the name and Operations.
 4. **Operations use icons only** — Row actions use `TableIconButton` with Bootstrap Icons classes (`bi bi-pencil`, `bi bi-trash`, …). Every control **must** have a meaningful `aria-label` (and `title` mirrors it). No visible text on these buttons.
 
 ## Shared components (`src/components/ui/`)
@@ -17,8 +17,8 @@ This document defines **reusable patterns** for the LX Software admin SPA (`apps
 | `CurrencySelect` | Bootstrap `form-select` for admin-supported currency codes only (`src/lib/currencies.ts`). Props: `id`, `value`, `onChange`, optional `className`, `disabled`. |
 | `DateTimeDisplay` | Formats an ISO instant for **Hong Kong** wall time, e.g. `May 26, 2026 at 10:12pm HKT`. Uses `formatDateTimeHKT` in `src/lib/formatDisplay.ts`. |
 | `AdminEditorSection` | Card wrapper for editor blocks: optional title/description, body content, optional **footer** for Save/Update/Clear. |
-| `AdminDataTable` | Card + single filter field + standard table (`table-sm`, `table-striped`). Pass columns and row `<tr>` children. Use `AdminDataTableEmptyRow` for empty/filter-empty states. |
-| `AdminTabList` | Horizontally scrollable Bootstrap tab list for page sections. Use this instead of a wrapping `nav-tabs` row so every tab stays reachable on mobile. |
+| `AdminDataTable` | Card + single filter field + standard table (`table-sm`, `table-striped`). Pass columns and row `<tr>` children. Use `AdminDataTableEmptyRow` for empty/filter-empty states. Optional `priority` hides secondary/tertiary columns on small screens; pair with `AdminDataTableCellMeta`. |
+| `AdminTabList` | Page-section switcher. On phones the controls fill a **two-column grid** so every tab stays visible; from `md` they become a horizontally scrollable `nav-tabs` row. |
 | `TableIconButton` | Icon-only button for the operations column. |
 
 Import from the barrel: `import { MoneyAmount, … } from "../components/ui"` (adjust path).

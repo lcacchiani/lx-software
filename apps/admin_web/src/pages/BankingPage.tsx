@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   AdminEditorSection,
   DateTimeDisplay,
   MoneyAmount,
@@ -254,9 +256,9 @@ export function BankingPage() {
         <AdminDataTable
           columns={[
             { key: "bank", header: "Bank" },
-            { key: "country", header: "Country" },
-            { key: "accounts", header: "Accounts" },
-            { key: "validUntil", header: "Consent valid until" },
+            { key: "country", header: "Country", priority: "secondary" },
+            { key: "accounts", header: "Accounts", priority: "secondary" },
+            { key: "validUntil", header: "Consent valid until", priority: "tertiary" },
             {
               key: "ops",
               header: <span className="visually-hidden">Operations</span>,
@@ -279,9 +281,17 @@ export function BankingPage() {
           ) : (
             filteredSessions.map((session) => (
               <tr key={session.sessionId}>
-                <td>{session.bankName}</td>
-                <td>{session.bankCountry}</td>
                 <td>
+                  {session.bankName}
+                  <AdminDataTableCellMeta>
+                    {session.bankCountry}
+                    {session.accounts.length
+                      ? ` · ${session.accounts.length} account${session.accounts.length === 1 ? "" : "s"}`
+                      : ""}
+                  </AdminDataTableCellMeta>
+                </td>
+                <td className={adminColumnPriorityClass("secondary")}>{session.bankCountry}</td>
+                <td className={adminColumnPriorityClass("secondary")}>
                   {session.accounts.length === 0 ? (
                     <span className="text-muted">none</span>
                   ) : (
@@ -297,7 +307,7 @@ export function BankingPage() {
                     </ul>
                   )}
                 </td>
-                <td>
+                <td className={adminColumnPriorityClass("tertiary")}>
                   {session.validUntil ? (
                     <DateTimeDisplay iso={session.validUntil} />
                   ) : (
@@ -363,7 +373,7 @@ export function BankingPage() {
                         {account.currency ? ` · ${account.currency}` : ""}
                       </span>
                     </td>
-                    <td style={{ maxWidth: "22rem" }}>
+                    <td className="admin-mapping-select">
                       <label
                         className="visually-hidden"
                         htmlFor={`mapping-${account.uid}`}
@@ -411,7 +421,7 @@ export function BankingPage() {
               Ran <DateTimeDisplay iso={lastSync.at} />
             </p>
             <div className="table-responsive">
-              <table className="table table-sm align-middle mb-0">
+              <table className="table table-sm align-middle mb-0 admin-data-table">
                 <thead>
                   <tr>
                     <th scope="col">Record</th>
@@ -419,7 +429,7 @@ export function BankingPage() {
                     <th scope="col" className="text-end">
                       Balance
                     </th>
-                    <th scope="col">Details</th>
+                    <th scope="col" className="admin-col-secondary">Details</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -455,7 +465,7 @@ export function BankingPage() {
                             <span className="text-muted">—</span>
                           )}
                         </td>
-                        <td className="small text-muted">
+                        <td className="small text-muted admin-col-secondary">
                           {result.status === "ok"
                             ? result.balanceType
                             : result.message}

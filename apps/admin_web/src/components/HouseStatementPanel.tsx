@@ -23,7 +23,9 @@ import {
 import { uploadFinanceAsset } from "../lib/uploadFinanceAsset";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
@@ -178,22 +180,24 @@ export type HouseStatementPanelProps = {
 };
 
 const TABLE_COLUMNS: AdminDataTableColumn[] = [
-  { key: "when", header: "Date (UTC)", className: "small" },
-  { key: "type", header: "Type", className: "small" },
+  { key: "when", header: "Date (UTC)", className: "small", priority: "secondary" },
+  { key: "type", header: "Type", className: "small", priority: "secondary" },
   { key: "desc", header: "Description", className: "small" },
   {
     key: "net",
     header: "Net",
     className: "small text-end",
     headerClassName: "small text-end",
+    priority: "tertiary",
   },
   {
     key: "vat",
     header: "VAT",
     className: "small text-end",
     headerClassName: "small text-end",
+    priority: "tertiary",
   },
-  { key: "ccy", header: "Currency", className: "small" },
+  { key: "ccy", header: "Currency", className: "small", priority: "secondary" },
   {
     key: "gross",
     header: "Gross",
@@ -528,7 +532,7 @@ export function HouseStatementPanel({
         }
       >
         <div className="row g-2 align-items-end flex-wrap">
-          <div className="col-auto" style={{ minWidth: "6.5rem" }}>
+          <div className="col-12 col-sm-6 col-md-auto admin-field-min">
             <label className="form-label small mb-0" htmlFor={`${houseKey}-house-default-ccy`}>
               Default currency
             </label>
@@ -547,7 +551,7 @@ export function HouseStatementPanel({
           </div>
         </div>
         <div className="row g-2 align-items-end flex-wrap mt-2">
-          <div className="col-auto">
+          <div className="col-12 col-sm-6 col-md-auto">
             <label className="form-label small mb-0" htmlFor={`float-amt-${houseKey}`}>
               Float amount
             </label>
@@ -560,7 +564,7 @@ export function HouseStatementPanel({
               onChange={(ev) => setFloatAmount(ev.target.value)}
             />
           </div>
-          <div className="col-auto" style={{ minWidth: "6.5rem" }}>
+          <div className="col-12 col-sm-6 col-md-auto admin-field-min">
             <label className="form-label small mb-0" htmlFor={`float-cur-${houseKey}`}>
               Float currency
             </label>
@@ -728,7 +732,7 @@ export function HouseStatementPanel({
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-3">
+            <div className="col-12 col-sm-6 col-md-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-date-utc`}>
                 Date (UTC)
               </label>
@@ -744,7 +748,7 @@ export function HouseStatementPanel({
               />
             </div>
             {lockedLineType ? null : (
-            <div className="col-3">
+            <div className="col-12 col-sm-6 col-md-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-type`}>
                 Type
               </label>
@@ -765,7 +769,7 @@ export function HouseStatementPanel({
               </select>
             </div>
             )}
-            <div className="col-6">
+            <div className="col-12 col-md-6">
               <label className="form-label small" htmlFor={`${houseKey}-fin-desc`}>
                 Description
               </label>
@@ -781,7 +785,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-3">
+            <div className="col-12 col-sm-6 col-md-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-net`}>
                 Net amount
               </label>
@@ -797,7 +801,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-3">
+            <div className="col-12 col-sm-6 col-md-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-vat`}>
                 VAT
               </label>
@@ -813,7 +817,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-3">
+            <div className="col-12 col-sm-6 col-md-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-gross`}>
                 Gross amount
               </label>
@@ -829,7 +833,7 @@ export function HouseStatementPanel({
                 }
               />
             </div>
-            <div className="col-3">
+            <div className="col-12 col-sm-6 col-md-3">
               <label className="form-label small" htmlFor={`${houseKey}-fin-cur`}>
                 Currency
               </label>
@@ -944,15 +948,20 @@ export function HouseStatementPanel({
           {filteredLines.length ? (
             filteredLines.map((line) => (
               <tr key={line.id}>
-                <td className="small text-nowrap">
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                   {formatDateUtc(line.dateUtc)}
                 </td>
-                <td className="small">
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                   <span className={statementLineTypeClass(line.type)}>
                     {statementLineTypeLabel(line.type, lockedLineType)}
                   </span>
                 </td>
                 <td className="small">
+                  <AdminDataTableCellMeta>
+                    {formatDateUtc(line.dateUtc)}
+                    {" · "}
+                    {statementLineTypeLabel(line.type, lockedLineType)}
+                  </AdminDataTableCellMeta>
                   <div className="d-flex flex-wrap align-items-center gap-2">
                     <span>{line.description}</span>
                     {statementLineAssetKeys(line).map((assetKey) => (
@@ -972,21 +981,21 @@ export function HouseStatementPanel({
                     ))}
                   </div>
                 </td>
-                <td className="small text-end">
+                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
                   <MoneyAmount
                     amount={line.netAmount}
                     currency={line.currency}
                     amountOnly
                   />
                 </td>
-                <td className="small text-end">
+                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
                   <MoneyAmount
                     amount={line.vat}
                     currency={line.currency}
                     amountOnly
                   />
                 </td>
-                <td className="small">{line.currency}</td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{line.currency}</td>
                 <td className="small text-end">
                   <MoneyAmount
                     amount={line.grossAmount}

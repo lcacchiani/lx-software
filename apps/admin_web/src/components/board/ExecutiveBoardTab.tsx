@@ -153,7 +153,7 @@ export function ExecutiveBoardTab() {
             startError={errorText(startMeeting.error)}
           />
 
-          <ul className="nav nav-pills mb-4 flex-nowrap overflow-auto board-section-nav">
+          <ul className="nav nav-pills mb-4 board-section-nav">
             {SECTIONS.map((s) => (
               <li className="nav-item" key={s.id}>
                 <button

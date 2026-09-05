@@ -23,7 +23,9 @@ import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
@@ -381,6 +383,7 @@ export function FinanceLedgerSheetPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("cat"),
       },
       {
@@ -402,6 +405,7 @@ export function FinanceLedgerSheetPanel({
         key: "flags",
         header: <span className="fw-semibold text-nowrap">Tags</span>,
         className: "small",
+        priority: "secondary",
       });
     }
     if (showRelatedHouseCol) {
@@ -416,6 +420,7 @@ export function FinanceLedgerSheetPanel({
           />
         ),
         className: "small",
+        priority: "tertiary",
         thAriaSort: thAria("house"),
       });
     }
@@ -446,6 +451,7 @@ export function FinanceLedgerSheetPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -888,10 +894,13 @@ export function FinanceLedgerSheetPanel({
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.category}</td>
-                <td className="small">{r.description}</td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.category}</td>
+                <td className="small">
+                  {r.description}
+                  <AdminDataTableCellMeta>{r.category}</AdminDataTableCellMeta>
+                </td>
                 {showIncomeFlagsCol || showExpenseFlagsCol ? (
-                  <td className="small text-muted">
+                  <td className={`small text-muted ${adminColumnPriorityClass("secondary")}`}>
                     {showIncomeFlagsCol ? (
                       r.isDerivedFromAllocation ? (
                         "Allocation"
@@ -906,7 +915,7 @@ export function FinanceLedgerSheetPanel({
                   </td>
                 ) : null}
                 {showRelatedHouseCol ? (
-                  <td className="small text-muted">
+                  <td className={`small text-muted ${adminColumnPriorityClass("tertiary")}`}>
                     {r.relatedHouse
                       ? (relatedHouseLabelByValue.get(r.relatedHouse) ?? r.relatedHouse)
                       : "—"}
@@ -919,7 +928,7 @@ export function FinanceLedgerSheetPanel({
                     amountOnly
                   />
                 </td>
-                <td className="small">{r.currency}</td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
                 <td className="small text-end">
                   {r.isDerivedFromTaggedIncome ? (
                     <span className="text-muted small">Derived</span>
@@ -955,17 +964,32 @@ export function FinanceLedgerSheetPanel({
           )}
           {tableSourceRecords.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
+              <td className={`small ${adminColumnPriorityClass("secondary")}`}>Total</td>
               <td className="small text-muted fw-normal">
-                <FrankfurterRatesFooterNote
-                  needsFx={needsFx}
-                  fxError={fxError}
-                  fxLoading={fxLoading}
-                  ratesQuery={ratesQuery}
-                />
+                <span className="d-md-none fw-semibold text-body">Total</span>
+                <span className="d-none d-md-inline">
+                  <FrankfurterRatesFooterNote
+                    needsFx={needsFx}
+                    fxError={fxError}
+                    fxLoading={fxLoading}
+                    ratesQuery={ratesQuery}
+                  />
+                </span>
+                <AdminDataTableCellMeta>
+                  <FrankfurterRatesFooterNote
+                    needsFx={needsFx}
+                    fxError={fxError}
+                    fxLoading={fxLoading}
+                    ratesQuery={ratesQuery}
+                  />
+                </AdminDataTableCellMeta>
               </td>
-              {showIncomeFlagsCol || showExpenseFlagsCol ? <td className="small" /> : null}
-              {showRelatedHouseCol ? <td className="small" /> : null}
+              {showIncomeFlagsCol || showExpenseFlagsCol ? (
+                <td className={`small ${adminColumnPriorityClass("secondary")}`} />
+              ) : null}
+              {showRelatedHouseCol ? (
+                <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
+              ) : null}
               <td className="small text-end">
                 {convertedTotal !== null ? (
                   <MoneyAmount
@@ -976,8 +1000,17 @@ export function FinanceLedgerSheetPanel({
                 ) : (
                   <span className="text-muted">—</span>
                 )}
+                <AdminDataTableCellMeta>
+                  <CurrencySelect
+                    id={`${sheetId}-ledger-total-ccy-mobile`}
+                    className="form-select form-select-sm"
+                    value={totalDisplayCurrency}
+                    onChange={(code) => setTotalDisplayCurrency(code)}
+                    disabled={fxLoading}
+                  />
+                </AdminDataTableCellMeta>
               </td>
-              <td className="small">
+              <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                 <CurrencySelect
                   id={`${sheetId}-ledger-total-ccy`}
                   className="form-select form-select-sm"

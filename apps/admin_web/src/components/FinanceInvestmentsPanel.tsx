@@ -29,7 +29,9 @@ import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTot
 import { formatDateUtc } from "../lib/formatDisplay";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
@@ -278,6 +280,7 @@ export function FinanceInvestmentsPanel({
         />
       ),
       className: "small",
+      priority: "secondary",
       thAriaSort: thAria("details"),
     });
     cols.push(
@@ -292,6 +295,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("atype"),
       },
       {
@@ -305,6 +309,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("prov"),
       },
       {
@@ -333,6 +338,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -348,6 +354,7 @@ export function FinanceInvestmentsPanel({
         ),
         className: "small text-end",
         headerClassName: "small text-end",
+        priority: "tertiary",
         thAriaSort: thAria("unit"),
       },
       {
@@ -363,6 +370,7 @@ export function FinanceInvestmentsPanel({
         ),
         className: "small text-end",
         headerClassName: "small text-end",
+        priority: "secondary",
         thAriaSort: thAria("currVal"),
       },
       {
@@ -376,6 +384,7 @@ export function FinanceInvestmentsPanel({
           />
         ),
         className: "small text-nowrap",
+        priority: "tertiary",
         thAriaSort: thAria("lastUpd"),
       },
       {
@@ -951,20 +960,28 @@ export function FinanceInvestmentsPanel({
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.category}</td>
-                <td className="small text-muted">
+                <td className="small">
+                  {r.category}
+                  <AdminDataTableCellMeta>
+                    {r.provider}
+                    {investmentDetailsDisplay(r, relatedHouseLabelByValue)
+                      ? ` · ${investmentDetailsDisplay(r, relatedHouseLabelByValue)}`
+                      : ""}
+                  </AdminDataTableCellMeta>
+                </td>
+                <td className={`small text-muted ${adminColumnPriorityClass("secondary")}`}>
                   {investmentDetailsDisplay(r, relatedHouseLabelByValue) || "—"}
                 </td>
-                <td className="small">{r.assetType}</td>
-                <td className="small">{r.provider}</td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.assetType}</td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.provider}</td>
                 <td className="small text-end">
                   <MoneyAmount amount={r.principalAmount} currency={r.currency} amountOnly />
                 </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-end">
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
+                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
                   {r.category === "Real Estate" ? "—" : formatUnitCell(r.unit)}
                 </td>
-                <td className="small text-end">
+                <td className={`small text-end ${adminColumnPriorityClass("secondary")}`}>
                   {(() => {
                     const marketPriced = isInvestmentMarketPriced(r);
                     if (marketPriced) {
@@ -1013,7 +1030,7 @@ export function FinanceInvestmentsPanel({
                     );
                   })()}
                 </td>
-                <td className="small text-muted">
+                <td className={`small text-muted ${adminColumnPriorityClass("tertiary")}`}>
                   {investmentLastUpdatedDisplay(r.lastUpdated)}
                   <StaleValuationBadge lastUpdated={r.lastUpdated} />
                 </td>
@@ -1042,8 +1059,26 @@ export function FinanceInvestmentsPanel({
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
-              <td className="small text-muted fw-normal">
+              <td className="small">
+                Total
+                <AdminDataTableCellMeta>
+                  {quotesPending ? (
+                    "Loading quotes…"
+                  ) : quotesErrored ? (
+                    <span className="text-danger">
+                      {quotesQuery.error?.message ?? "Could not load quotes."}
+                    </span>
+                  ) : (
+                    <FrankfurterRatesFooterNote
+                      needsFx={needsFx}
+                      fxError={fxError}
+                      fxLoading={fxLoading}
+                      ratesQuery={ratesQuery}
+                    />
+                  )}
+                </AdminDataTableCellMeta>
+              </td>
+              <td className={`small text-muted fw-normal ${adminColumnPriorityClass("secondary")}`}>
                 {quotesPending ? (
                   "Loading quotes…"
                 ) : quotesErrored ? (
@@ -1059,8 +1094,8 @@ export function FinanceInvestmentsPanel({
                   />
                 )}
               </td>
-              <td className="small" />
-              <td className="small" />
+              <td className={`small ${adminColumnPriorityClass("secondary")}`} />
+              <td className={`small ${adminColumnPriorityClass("secondary")}`} />
               <td className="small text-end">
                 {(() => {
                   if (needsFx && ratesQuery.isPending) {
@@ -1080,8 +1115,17 @@ export function FinanceInvestmentsPanel({
                   }
                   return <span className="text-muted">—</span>;
                 })()}
+                <AdminDataTableCellMeta>
+                  <CurrencySelect
+                    id={`${sheetId}-total-ccy-mobile`}
+                    className="form-select form-select-sm"
+                    value={totalDisplayCurrency}
+                    onChange={(code) => setTotalDisplayCurrency(code)}
+                    disabled={fxLoading}
+                  />
+                </AdminDataTableCellMeta>
               </td>
-              <td className="small">
+              <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                 <CurrencySelect
                   id={`${sheetId}-total-ccy`}
                   className="form-select form-select-sm"
@@ -1090,8 +1134,8 @@ export function FinanceInvestmentsPanel({
                   disabled={fxLoading}
                 />
               </td>
-              <td className="small" />
-              <td className="small text-end">
+              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
+              <td className={`small text-end ${adminColumnPriorityClass("secondary")}`}>
                 {(() => {
                   if (needsFx && ratesQuery.isPending) {
                     return <span className="text-muted">—</span>;
@@ -1111,7 +1155,7 @@ export function FinanceInvestmentsPanel({
                   return <span className="text-muted">—</span>;
                 })()}
               </td>
-              <td className="small" />
+              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
               <td className="small text-end" />
             </tr>
           ) : null}

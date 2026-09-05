@@ -11,8 +11,9 @@ export type AdminTabListProps<T extends string> = {
 };
 
 /**
- * Horizontally scrollable Bootstrap tab list so every tab stays reachable on
- * narrow viewports instead of wrapping off-screen or becoming untappable.
+ * Page-section switcher. On phones the tabs fill a two-column grid so every
+ * section stays visible; from `md` they become a horizontally scrollable
+ * `nav-tabs` row.
  */
 export function AdminTabList<T extends string>({
   tabs,

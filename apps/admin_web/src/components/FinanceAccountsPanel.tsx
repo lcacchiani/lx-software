@@ -18,7 +18,9 @@ import { scheduleFocusRecordEditor } from "../lib/focusRecordEditor";
 import { useFrankfurterRatesForTotals } from "../hooks/useFrankfurterRatesForTotals";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   type AdminDataTableColumn,
   AdminEditorSection,
   CurrencySelect,
@@ -177,6 +179,7 @@ export function FinanceAccountsPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("atype"),
       },
       {
@@ -205,6 +208,7 @@ export function FinanceAccountsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "text-end",
+        priority: "tertiary",
         thAriaSort: thAria("stmt"),
       },
       {
@@ -218,6 +222,7 @@ export function FinanceAccountsPanel(props: {
           />
         ),
         className: "small",
+        priority: "secondary",
         thAriaSort: thAria("ccy"),
       },
       {
@@ -232,6 +237,7 @@ export function FinanceAccountsPanel(props: {
         ),
         className: "small text-end",
         headerClassName: "text-end",
+        priority: "tertiary",
         thAriaSort: thAria("day"),
       },
       {
@@ -245,6 +251,7 @@ export function FinanceAccountsPanel(props: {
           />
         ),
         className: "small text-nowrap",
+        priority: "tertiary",
         thAriaSort: thAria("lastUpdated"),
       },
       {
@@ -443,7 +450,7 @@ export function FinanceAccountsPanel(props: {
             </div>
           ) : null}
           <div className="row g-3">
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-description`}>
                 Description
               </label>
@@ -457,7 +464,7 @@ export function FinanceAccountsPanel(props: {
                 autoComplete="off"
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-account-type`}>
                 Account Type
               </label>
@@ -480,7 +487,7 @@ export function FinanceAccountsPanel(props: {
                 ))}
               </select>
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-value`}>
                 Current Balance
               </label>
@@ -494,7 +501,7 @@ export function FinanceAccountsPanel(props: {
                 onChange={(ev) => setValueStr(ev.target.value)}
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label
                 className="form-label small"
                 htmlFor={accountTypeIsCreditCard(accountTypeInput) ? `${sheetId}-last-statement` : undefined}
@@ -517,7 +524,7 @@ export function FinanceAccountsPanel(props: {
                 </div>
               )}
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label className="form-label small" htmlFor={`${sheetId}-ccy`}>
                 Currency
               </label>
@@ -529,7 +536,7 @@ export function FinanceAccountsPanel(props: {
                 }
               />
             </div>
-            <div className="col-2">
+            <div className="col-12 col-sm-6 col-lg-2">
               <label
                 className="form-label small"
                 htmlFor={
@@ -577,12 +584,15 @@ export function FinanceAccountsPanel(props: {
           {filtered.length ? (
             filtered.map((r) => (
               <tr key={r.id}>
-                <td className="small">{r.description || "—"}</td>
-                <td className="small">{r.accountType}</td>
+                <td className="small">
+                  {r.description || "—"}
+                  <AdminDataTableCellMeta>{r.accountType}</AdminDataTableCellMeta>
+                </td>
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.accountType}</td>
                 <td className="small text-end">
                   <MoneyAmount amount={r.recordedValue} currency={r.currency} amountOnly />
                 </td>
-                <td className="small text-end">
+                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
                   {accountTypeIsCreditCard(r.accountType) ? (
                     <MoneyAmount
                       amount={r.lastStatementAmount ?? 0}
@@ -593,11 +603,11 @@ export function FinanceAccountsPanel(props: {
                     "—"
                   )}
                 </td>
-                <td className="small">{r.currency}</td>
-                <td className="small text-end">
+                <td className={`small ${adminColumnPriorityClass("secondary")}`}>{r.currency}</td>
+                <td className={`small text-end ${adminColumnPriorityClass("tertiary")}`}>
                   {accountTypeUsesBillingCycleDay(r.accountType) ? r.billingCycleDay : "—"}
                 </td>
-                <td className="small text-nowrap">
+                <td className={`small ${adminColumnPriorityClass("tertiary")}`}>
                   {accountLastUpdatedDisplay(r.lastUpdated)}
                   <StaleValuationBadge lastUpdated={r.lastUpdated} />
                 </td>
@@ -624,8 +634,18 @@ export function FinanceAccountsPanel(props: {
           )}
           {records.length > 0 ? (
             <tr className="table-group-divider table-secondary fw-semibold">
-              <td className="small">Total</td>
-              <td className="small text-muted fw-normal">
+              <td className="small">
+                Total
+                <AdminDataTableCellMeta>
+                  <FrankfurterRatesFooterNote
+                    needsFx={needsFx}
+                    fxError={fxError}
+                    fxLoading={fxLoading}
+                    ratesQuery={ratesQuery}
+                  />
+                </AdminDataTableCellMeta>
+              </td>
+              <td className={`small text-muted fw-normal ${adminColumnPriorityClass("secondary")}`}>
                 <FrankfurterRatesFooterNote
                   needsFx={needsFx}
                   fxError={fxError}
@@ -643,9 +663,18 @@ export function FinanceAccountsPanel(props: {
                 ) : (
                   <span className="text-muted">—</span>
                 )}
+                <AdminDataTableCellMeta>
+                  <CurrencySelect
+                    id={`${sheetId}-total-ccy-mobile`}
+                    className="form-select form-select-sm"
+                    value={totalDisplayCurrency}
+                    onChange={(code) => setTotalDisplayCurrency(code)}
+                    disabled={fxLoading}
+                  />
+                </AdminDataTableCellMeta>
               </td>
-              <td className="small" />
-              <td className="small">
+              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
+              <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                 <CurrencySelect
                   id={`${sheetId}-total-ccy`}
                   className="form-select form-select-sm"
@@ -654,8 +683,8 @@ export function FinanceAccountsPanel(props: {
                   disabled={fxLoading}
                 />
               </td>
-              <td className="small" />
-              <td className="small" />
+              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
+              <td className={`small ${adminColumnPriorityClass("tertiary")}`} />
               <td className="small text-end" />
             </tr>
           ) : null}

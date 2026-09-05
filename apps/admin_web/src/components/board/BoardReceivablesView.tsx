@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { AdminDataTable, AdminDataTableEmptyRow, MoneyAmount } from "../ui";
+import {
+  AdminDataTable,
+  AdminDataTableCellMeta,
+  AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
+  MoneyAmount,
+} from "../ui";
 import { useBoardReceivables } from "../../hooks/useBoardReceivables";
 import type { BoardReceivablesInvoice, BoardReceivablesSubscription } from "../../lib/boardModel";
 
@@ -10,17 +16,17 @@ export type BoardReceivablesViewProps = {
 
 const INVOICE_COLUMNS = [
   { key: "number", header: "Number" },
-  { key: "due", header: "Due" },
+  { key: "due", header: "Due", priority: "secondary" as const },
   { key: "amount", header: "Amount", className: "text-end" },
-  { key: "status", header: "Status" },
-  { key: "fps", header: "FPS" },
+  { key: "status", header: "Status", priority: "secondary" as const },
+  { key: "fps", header: "FPS", priority: "tertiary" as const },
 ] as const;
 
 const SUB_COLUMNS = [
   { key: "plan", header: "Plan" },
-  { key: "status", header: "Status" },
-  { key: "renews", header: "Renews" },
-  { key: "payer", header: "Payer" },
+  { key: "status", header: "Status", priority: "secondary" as const },
+  { key: "renews", header: "Renews", priority: "secondary" as const },
+  { key: "payer", header: "Payer", priority: "tertiary" as const },
 ] as const;
 
 const BUCKETS: readonly { readonly id: string; readonly label: string }[] = [
@@ -43,15 +49,21 @@ function InvoiceRows({ rows }: { readonly rows: readonly BoardReceivablesInvoice
     <>
       {rows.map((inv) => (
         <tr key={inv.id}>
-          <td>{inv.number}</td>
-          <td>{inv.due_on ?? "—"}</td>
+          <td>
+            {inv.number}
+            <AdminDataTableCellMeta>
+              {inv.status}
+              {inv.due_on ? ` · due ${inv.due_on}` : ""}
+            </AdminDataTableCellMeta>
+          </td>
+          <td className={adminColumnPriorityClass("secondary")}>{inv.due_on ?? "—"}</td>
           <td className="text-end">
             <MoneyAmount amount={Number(inv.amount_hkd)} currency="HKD" />
           </td>
-          <td>
+          <td className={adminColumnPriorityClass("secondary")}>
             <span className="badge text-bg-light border">{inv.status}</span>
           </td>
-          <td className="font-monospace small">{inv.fps_reference ?? "—"}</td>
+          <td className={`font-monospace small ${adminColumnPriorityClass("tertiary")}`}>{inv.fps_reference ?? "—"}</td>
         </tr>
       ))}
     </>
@@ -146,10 +158,14 @@ export function BoardReceivablesView({ overdueCount, errorText }: BoardReceivabl
                     <td>
                       {s.plan_name ?? "—"}{" "}
                       {s.price_hkd != null ? <MoneyAmount amount={Number(s.price_hkd)} currency="HKD" /> : null}
+                      <AdminDataTableCellMeta>
+                        {s.status}
+                        {s.renews_on ? ` · renews ${s.renews_on}` : ""}
+                      </AdminDataTableCellMeta>
                     </td>
-                    <td>{s.status}</td>
-                    <td>{s.renews_on ?? "—"}</td>
-                    <td>{s.payer_contact ?? "—"}</td>
+                    <td className={adminColumnPriorityClass("secondary")}>{s.status}</td>
+                    <td className={adminColumnPriorityClass("secondary")}>{s.renews_on ?? "—"}</td>
+                    <td className={adminColumnPriorityClass("tertiary")}>{s.payer_contact ?? "—"}</td>
                   </tr>
                 ))
               )}

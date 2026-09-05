@@ -289,7 +289,7 @@ export function BoardApprovalsList({
               aria-label="Decision note"
               onChange={(ev) => setNoteDrafts((d) => ({ ...d, [a.approvalId]: ev.target.value }))}
             />
-            <div className="d-flex gap-2 text-nowrap">
+            <div className="d-flex flex-wrap gap-2">
               <button type="button" className="btn btn-sm btn-success" disabled={isDeciding} onClick={() => approve(a)}>
                 <i className="bi bi-check2 me-1" aria-hidden="true" />
                 {editingArgsId === a.approvalId ? "Approve edited" : "Approve"}

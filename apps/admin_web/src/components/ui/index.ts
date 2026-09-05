@@ -1,5 +1,11 @@
-export { AdminDataTable, AdminDataTableEmptyRow } from "./AdminDataTable";
+export {
+  AdminDataTable,
+  AdminDataTableCellMeta,
+  AdminDataTableEmptyRow,
+} from "./AdminDataTable";
 export type { AdminDataTableColumn, AdminDataTableProps } from "./AdminDataTable";
+export { adminColumnPriorityClass } from "../../lib/adminTablePriority";
+export type { AdminTableColumnPriority } from "../../lib/adminTablePriority";
 export { AdminTabList } from "./AdminTabList";
 export type { AdminTabItem, AdminTabListProps } from "./AdminTabList";
 export { AdminEditorSection } from "./AdminEditorSection";

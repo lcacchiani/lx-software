@@ -2,7 +2,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   AdminDataTable,
+  AdminDataTableCellMeta,
   AdminDataTableEmptyRow,
+  adminColumnPriorityClass,
   TableIconButton,
 } from "../components/ui";
 import {
@@ -88,9 +90,9 @@ function AssetOpenLink({
 }
 
 const ASSET_TABLE_COLUMNS = [
-  { key: "uploaded", header: "Uploaded" },
+  { key: "uploaded", header: "Uploaded", priority: "secondary" as const },
   { key: "file", header: "File" },
-  { key: "entity", header: "Entity" },
+  { key: "entity", header: "Entity", priority: "secondary" as const },
   { key: "actions", header: "Actions", className: "text-end text-nowrap" },
 ] as const;
 
@@ -200,7 +202,7 @@ export function AssetsPage() {
                 const objectKey = objectKeyFromAssetPk(row.pk);
                 return (
                   <tr key={row.pk}>
-                    <td className="text-nowrap small">
+                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>
                       {formatUploadedInstant(row.uploadedAt)}
                     </td>
                     <td>
@@ -210,8 +212,12 @@ export function AssetsPage() {
                           {formatFileSizeBytes(row.size)}
                         </div>
                       ) : null}
+                      <AdminDataTableCellMeta>
+                        {houseDisplayLabel(row.house)}
+                        {row.uploadedAt ? ` · ${formatUploadedInstant(row.uploadedAt)}` : ""}
+                      </AdminDataTableCellMeta>
                     </td>
-                    <td className="small">{houseDisplayLabel(row.house)}</td>
+                    <td className={`small ${adminColumnPriorityClass("secondary")}`}>{houseDisplayLabel(row.house)}</td>
                     <td className="text-end">
                       <div className="d-inline-flex align-items-center gap-1">
                         <AssetOpenLink
